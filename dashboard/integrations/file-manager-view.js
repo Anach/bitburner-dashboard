@@ -1,0 +1,44 @@
+export const DASHBOARD_VIEW_METADATA = {
+    "id": "files",
+    "renderer": "file-manager",
+    "menuGroup": "globalOptions",
+    "menuLabel": "File Manager",
+    "title": "Home File Manager",
+    "subtitle": "Two-pane filesystem control for home scripts and data.",
+    "searchPlaceholder": "Filter current directories…",
+    "widgets": [],
+    "layout": {
+        "leftPath": "",
+        "rightPath": "dashboard",
+        "showIgnoredDefault": true
+    },
+    "commands": {
+        "edit": "nano {path}"
+    },
+    "archive": {
+        "root": "trashbin"
+    },
+    "preview": {
+        "maxChars": 80000
+    },
+    "manifest": {
+        "path": "data/deploy_manifest.json",
+        "currentFilesKey": "files",
+        "previousFilesKey": "previousFiles",
+        "staleFilesKey": "staleFiles",
+        "generatedAtKey": "generatedAt"
+    },
+    "protection": {
+        "protectRunning": true,
+        "paths": [
+            "dashboard/automation-dashboard.jsx",
+            "dashboard/service-supervisor.js",
+            "dashboard/integrations/file-manager-view.js",
+            "data/dashboard_options.json",
+            "data/deploy_manifest.json"
+        ],
+        "prefixes": [
+            "dashboard/libs/"
+        ]
+    }
+};

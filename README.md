@@ -1,0 +1,280 @@
+# Bitburner Automation Dashboard
+
+A metadata-driven dashboard framework for [Bitburner](https://github.com/bitburner-official/bitburner-src). It turns a script tail into a responsive control surface for user-owned Netscript services without coupling the dashboard to those services.
+
+The framework discovers declarative integration descriptors, reads JSON telemetry, and supplies the common UI: status and health, script controls, options, commands, graphs, resource cards, full-window views, logs, and file management. Your automation remains independent and continues to work when the dashboard is not running.
+
+> [!IMPORTANT]
+> This project is approaching public beta. Back up your Bitburner save and scripts before testing file-management or kill controls. The metadata contract may still change before a stable release.
+
+## What the framework provides
+
+- Responsive windowed, maximized, and minimized tail layouts.
+- A native dashboard theme and an adapter that follows the active game theme.
+- Metadata-discovered services with no service-specific imports in dashboard core.
+- Generic start, stop, restart, edit, option, action, and requirement controls.
+- A metadata-driven supervisor for integrated daemon services.
+- JSON telemetry fields, quick statistics, gauges, history graphs, lists, and resource cards.
+- Metadata-driven full-window overview, network-map, file-manager, and script-log views.
+- Health filtering and daemon/on-demand lifecycle presentation.
+- Persistent dashboard options stored on `home`.
+- Safe metadata parsing with `JSON.parse`; integration source is never evaluated.
+
+No game DOM modification is required. The interface is rendered inside a normal Netscript tail window.
+
+## Requirements
+
+- Bitburner 3.0.x. The current beta is developed against Bitburner 3.0.2.
+- A method of synchronizing the framework files into the game while preserving their relative folders.
+- Enough free `home` RAM for the dashboard and any integrations you choose to run.
+
+The dashboard itself does not require Singularity. An individual integration can declare Singularity or another capability as required or optional.
+
+## Install and run
+
+1. Clone or download the framework repository locally.
+2. Sync the `dashboard/` tree to Bitburner's `home`, preserving its relative paths.
+3. In the Bitburner terminal, start the dashboard:
+
+   ```text
+   run dashboard/automation-dashboard.jsx
+   ```
+
+### Add a terminal alias
+
+Bitburner's terminal can replace a short command with the full dashboard launch command. Run this once:
+
+```text
+alias dashboard="run dashboard/automation-dashboard.jsx"
+```
+
+You can then open the dashboard by typing:
+
+```text
+dashboard
+```
+
+A normal alias is sufficient because `dashboard` is the first word entered in the terminal; the global `-g` option is not needed. To inspect existing aliases, run `alias`. To remove or recreate this one, use:
+
+```text
+unalias dashboard
+```
+
+You can substitute a shorter name such as `dash` if preferred:
+
+```text
+alias dash="run dashboard/automation-dashboard.jsx"
+```
+
+The dashboard opens its own tail, prevents duplicate dashboard instances, and starts `dashboard/service-supervisor.js`. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, HUD visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
+
+The integration supervisor rescans metadata periodically, starts eligible integrations declared with `"daemon": true`, and restarts them if they stop. Integrations declared with `"daemon": false` remain on demand. Selecting **Start integrations** in the Plugin List restarts the supervisor after it has been stopped.
+
+The separate **Start services** control in the Script List launches `init/init-services.js` when that user-owned script exists. This is an optional convenience for personal startup workflows; it is not imported or required by the dashboard framework.
+
+Runtime settings are written to:
+
+```text
+data/dashboard_options.json
+```
+
+Stopping the dashboard does not stop the supervisor or integrated automation scripts. The prominent kill controls are explicit exceptions and should be used deliberately.
+
+## Add an integration
+
+An integration has two independent parts:
+
+1. Your runtime script, which owns all automation and telemetry production.
+2. A JSON-compatible descriptor, which tells the dashboard how to present and control it.
+
+Start with [dashboard/examples/example-monitor-integration.js](dashboard/examples/example-monitor-integration.js). It is stored outside the discovery directory, so it does nothing by itself.
+
+To activate a descriptor:
+
+1. Choose a runtime basename, for example `example-monitor.js`.
+2. Ensure exactly one script with that basename exists outside `dashboard/integrations/`, `dashboard/`, `libs/`, and `trashbin/`. The containing folder is your choice.
+3. Copy the example to `dashboard/integrations/example-monitor-integration.js`.
+4. Change its service identity, presentation, telemetry path, options, and command port.
+5. Start or restart the dashboard. Discovery is automatic; dashboard core does not need editing.
+
+The filename pairing is intentional:
+
+```text
+automation/example-monitor.js
+dashboard/integrations/example-monitor-integration.js
+                     ^ pairs with example-monitor.js
+```
+
+If zero or multiple runtime files share the expected basename, the descriptor is skipped.
+
+### Descriptor rules
+
+Every service descriptor must export this exact declaration:
+
+```js
+export const DASHBOARD_PLUGIN_METADATA = {
+    "adapter": "script",
+    "serviceId": "example.monitor",
+    "menuGroup": "automation",
+    "menuLabel": "Example Monitor",
+    "description": "A short user-facing description.",
+    "requirements": [],
+    "daemon": true,
+    "panels": [
+        { "id": "status", "label": "Status", "title": "Example Monitor" }
+    ],
+    "telemetry": {
+        "path": "data/example_monitor.json",
+        "fields": [
+            { "key": "state", "label": "State", "tone": "info" }
+        ]
+    },
+    "alwaysVisible": true,
+    "defaultPanelId": "status"
+};
+```
+
+The object must be valid JSON syntax inside the JavaScript export:
+
+- Use only objects, arrays, strings, numbers, booleans, and `null`.
+- Quote object keys and strings with double quotes.
+- Do not use imports, functions, callbacks, getters, variables, template strings, or executable expressions.
+- Do not add trailing commas or comments inside the object.
+- Keep runtime logic and Netscript calls in the runtime script.
+
+The dashboard currently accepts these `menuGroup` values:
+
+```text
+overview
+affiliations
+hacking
+finances
+hardware
+automation
+globalOptions
+```
+
+Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation.
+
+### Publish telemetry
+
+The runtime publishes a JSON object to the descriptor's `telemetry.path`. For the supplied example, `data/example_monitor.json` could contain:
+
+```json
+{
+  "generatedAt": 1785643200000,
+  "state": "running",
+  "cycles": 42,
+  "profit": 1250000,
+  "history": [
+    { "timestamp": 1785643140000, "profit": 900000 },
+    { "timestamp": 1785643200000, "profit": 1250000 }
+  ]
+}
+```
+
+Publish a complete snapshot each time; the runtime owns sampling frequency, history retention, and schema stability. The dashboard only reads and formats the data.
+
+Telemetry field keys and graph series keys support dot-separated paths such as `economics.netProfit`.
+
+Supported field formats include:
+
+```text
+money
+signedMoney
+ram
+number
+time
+uppercase
+shortDurationText
+```
+
+Common field tones include `neutral`, `info`, `success`, `warn`, `danger`, `signed`, and `warnWhenPositive`.
+
+### Add options and commands
+
+Options are stored with the dashboard configuration. The dashboard can send their values to a runtime through a Netscript port:
+
+```js
+"options": {
+    "sampleInterval": { "default": 5000, "type": "integer", "min": 1000 },
+    "notifications": { "default": true, "type": "boolean" }
+},
+"inputs": [
+    { "id": "sample-interval", "label": "Sample Interval (ms)", "optionKey": "sampleInterval", "type": "number", "min": 1000 },
+    { "id": "notifications", "label": "Notifications", "optionKey": "notifications", "type": "checkbox" }
+],
+"commands": {
+    "port": 20,
+    "optionBindings": [
+        { "optionKey": "sampleInterval", "prefix": "SampleInterval:" },
+        { "optionKey": "notifications", "trueValue": "Notifications:on", "falseValue": "Notifications:off" }
+    ]
+}
+```
+
+Allocate an unused port for each interactive runtime. The runtime is responsible for reading that port and applying commands. Custom action buttons use the same boundary through an `actions` array; see the complete example descriptor.
+
+### Declare requirements
+
+Requirements inform health and availability displays without putting capability checks in the descriptor. Supported requirement types are:
+
+- `api`: `singularity`, `bladeburner`, `gang`, `corporation`, `sleeve`, `stanek`, or `darknet`.
+- `sourceFile`: a Source-File number, optionally with `level`.
+- `augmentation`: an augmentation name.
+- `program`: a filename present on `home`.
+- `stock`: `wse`, `tix`, `4s`, or `4s-tix`.
+- `bitNode`: a BitNode number.
+
+Set `"required": false` to display a capability as optional.
+
+## Metadata capabilities
+
+The example intentionally demonstrates the most common integration path. The framework also supports:
+
+- Additional telemetry snapshots merged with `telemetry.sources`.
+- Quick-stat fields with `overview`, `overviewLabel`, and `overviewOrder`.
+- Circular quick gauges with `telemetry.overviewGauges`.
+- `graph`, `string-list`, `items`, `message`, and `resource-cards` sections.
+- Numeric, checkbox, and select inputs.
+- Telemetry-driven action variants and lock states.
+- On-demand runtimes with `"daemon": false`.
+- Starting an on-demand runtime when a configured limit increases.
+- Metadata-driven HUD groups and full-window view descriptors.
+
+These capabilities are optional and remain subject to beta schema changes. The framework does not prescribe or ship automation behavior; integrations belong to the user.
+
+## Framework boundaries
+
+The project keeps three responsibilities separate:
+
+- `dashboard/automation-dashboard.jsx` owns discovery, normalized state, generic action dispatch, and framework rendering.
+- `dashboard/service-supervisor.js` discovers and supervises eligible daemon integrations.
+- `dashboard/libs/` contains reusable dashboard behavior and renderers.
+- `dashboard/integrations/` contains data-only descriptors supplied with a release or added by the user.
+
+Runtime scripts must not import dashboard code. Dashboard core and libraries must not import a runtime or an integration descriptor. The loader reads descriptor source as JSON and never evaluates it.
+
+## Full-window views
+
+Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service descriptors. Supported renderers currently include:
+
+- `home-overview`
+- `network-map`
+- `file-manager`
+- `script-log`
+
+These are advanced framework extensions. Their metadata is discovered from `dashboard/integrations/*-view.js`; adding a new renderer still requires a generic renderer implementation in dashboard core.
+
+## Beta notes
+
+- Preserve folder paths when syncing; Netscript imports are path-based.
+- The runtime framework imports only files beneath `dashboard/`; `data/` files are user or runtime state rather than code dependencies.
+- Keep runtime basenames unique so descriptors pair deterministically.
+- Dashboard Options exclusions affect the Script List only; they do not disable integration discovery.
+- Keep telemetry files valid JSON. Invalid or missing snapshots fail closed and show telemetry as unavailable.
+- Port numbers are shared game-wide; integrations must not reuse ports unintentionally.
+- File-manager actions can move, archive, or delete files on `home`. Running and descriptor-protected files are blocked, but a save backup remains strongly recommended.
+- Metadata and view schemas are still beta contracts. Review release notes before updating an existing integration.
+
+Bug reports should include the Bitburner version, the descriptor, a small telemetry sample, the dashboard log output, and reproduction steps.
