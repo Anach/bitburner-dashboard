@@ -1,13 +1,12 @@
 export const DASHBOARD_VIEW_METADATA = {
-    "id": "home",
-    "renderer": "home-overview",
+    "id": "system-overview",
+    "renderer": "system-overview",
     "menuGroup": "overview",
     "menuLabel": "System Overview",
     "title": "System Overview",
     "subtitle": "Live automation, progression, capacity, and economic signals.",
     "layout": {
-        "columns": 5,
-        "columnsWithoutPlayerStats": 4,
+        "columns": 4,
         "gap": 10
     },
     "widgets": [
@@ -17,7 +16,7 @@ export const DASHBOARD_VIEW_METADATA = {
             "title": "Live Summary",
             "subtitle": "Current quick-view signals",
             "columnStart": 1,
-            "columnSpan": 5,
+            "columnSpan": 4,
             "rowStart": 1,
             "includeSystem": true,
             "itemIds": [
@@ -29,19 +28,6 @@ export const DASHBOARD_VIEW_METADATA = {
                 "automation.batcher:modeLabel",
                 "system:runningScripts"
             ]
-        },
-        {
-            "id": "player-status",
-            "type": "player-stats",
-            "title": "Player Status",
-            "columnStart": 5,
-            "columnSpan": 1,
-            "rowStart": 2,
-            "rowSpan": 2,
-            "orientation": "vertical",
-            "serviceIds": ["system.playerStatus"],
-            "groupIds": ["core", "location", "work", "history"],
-            "emptyText": "Waiting for Player Status telemetry."
         },
         {
             "id": "system-health",

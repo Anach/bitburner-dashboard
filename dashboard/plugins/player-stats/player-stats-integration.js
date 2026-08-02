@@ -18,6 +18,26 @@ export const DASHBOARD_PLUGIN_METADATA = {
             { "key": "generatedAt", "label": "Last Updated", "tone": "neutral", "format": "time", "panelId": "status" }
         ]
     },
+    "viewWidgets": [
+        {
+            "viewId": "system-overview",
+            "viewLayout": {
+                "columns": 5,
+                "columnsWithoutPlayerStats": 4
+            },
+            "id": "player-stats",
+            "type": "player-stats",
+            "title": "Player Status",
+            "columnStart": 5,
+            "columnSpan": 1,
+            "rowStart": 2,
+            "rowSpan": 2,
+            "orientation": "vertical",
+            "serviceIds": ["system.playerStatus"],
+            "groupIds": ["core", "location", "work", "history"],
+            "emptyText": "Waiting for Player Status telemetry."
+        }
+    ],
     "hud": {
         "title": "Player",
         "updatedAtKey": "generatedAt",

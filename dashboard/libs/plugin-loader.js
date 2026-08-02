@@ -1,6 +1,7 @@
 import { parseDashboardMetadataFromSource } from "dashboard/libs/metadata-parser.js";
 
 const DASHBOARD_INTEGRATION_FOLDER_PREFIX = "dashboard/integrations/";
+const DASHBOARD_PLUGIN_FOLDER_PREFIX = "dashboard/plugins/";
 const DASHBOARD_PLUGIN_INTEGRATION_SUFFIX = "-integration.js";
 const DASHBOARD_PLUGIN_METADATA_DECLARATION = "export const DASHBOARD_PLUGIN_METADATA =";
 const DASHBOARD_VIEW_SUFFIX = "-view.js";
@@ -15,7 +16,11 @@ export function discoverDashboardViews(ns, scriptFilenames = []) {
         .map((filename) => filename.replace(/\\/g, "/"));
 
     for (const filename of normalizedFilenames) {
-        if (!filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) continue;
+        const integrationDescriptor = filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)
+            && !filename.slice(DASHBOARD_INTEGRATION_FOLDER_PREFIX.length).includes("/");
+        const pluginDescriptor = filename.startsWith(DASHBOARD_PLUGIN_FOLDER_PREFIX)
+            && filename.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/").length === 2;
+        if (!integrationDescriptor && !pluginDescriptor) continue;
         if (!filename.endsWith(DASHBOARD_VIEW_SUFFIX)) continue;
         if (!ns.fileExists(filename, "home")) continue;
 
@@ -36,6 +41,9 @@ export function discoverDashboardViews(ns, scriptFilenames = []) {
         discovered.push({
             ...metadata,
             descriptorFile: filename,
+            pluginFolder: pluginDescriptor
+                ? filename.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/")[0]
+                : "",
         });
     }
 
@@ -56,7 +64,11 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         : [];
     const discovered = [];
     for (const normalized of normalizedFilenames) {
-        if (!normalized.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) continue;
+        const integrationDescriptor = normalized.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)
+            && !normalized.slice(DASHBOARD_INTEGRATION_FOLDER_PREFIX.length).includes("/");
+        const pluginDescriptor = normalized.startsWith(DASHBOARD_PLUGIN_FOLDER_PREFIX)
+            && normalized.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/").length === 2;
+        if (!integrationDescriptor && !pluginDescriptor) continue;
         if (!normalized.endsWith(DASHBOARD_PLUGIN_INTEGRATION_SUFFIX)) continue;
         if (!ns.fileExists(normalized, "home")) continue;
 
@@ -71,19 +83,20 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         if (!metadata) continue;
         if (metadata.enabled === false) continue;
         if (typeof metadata.adapter !== "string" || metadata.adapter.length === 0) continue;
-        const pluginName = normalized.slice(
-            DASHBOARD_INTEGRATION_FOLDER_PREFIX.length,
-            -DASHBOARD_PLUGIN_INTEGRATION_SUFFIX.length
-        );
-        if (!pluginName || pluginName.includes("/")) continue;
+        const descriptorFilename = normalized.slice(normalized.lastIndexOf("/") + 1);
+        const pluginName = descriptorFilename.slice(0, -DASHBOARD_PLUGIN_INTEGRATION_SUFFIX.length);
+        if (!pluginName) continue;
         const runtimeFilename = `${pluginName}.js`;
-        const runtimeCandidates = normalizedFilenames.filter((filename) => {
-            if (filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) return false;
-            if (excludedRuntimeFolders.some((folder) => filename === folder || filename.startsWith(`${folder}/`))) {
-                return false;
-            }
-            return filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`);
-        });
+        const runtimeCandidates = pluginDescriptor
+            ? [normalized.slice(0, normalized.lastIndexOf("/") + 1) + runtimeFilename]
+                .filter((filename) => normalizedFilenames.includes(filename))
+            : normalizedFilenames.filter((filename) => {
+                if (filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) return false;
+                if (excludedRuntimeFolders.some((folder) => filename === folder || filename.startsWith(`${folder}/`))) {
+                    return false;
+                }
+                return filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`);
+            });
         if (runtimeCandidates.length !== 1) continue;
         const scriptPath = runtimeCandidates[0];
         if (!ns.fileExists(scriptPath, "home")) continue;

@@ -33,7 +33,7 @@ export const DASHBOARD_VIEW_METADATA = {
         "paths": [
             "dashboard/automation-dashboard.jsx",
             "dashboard/service-supervisor.js",
-            "dashboard/integrations/file-manager-view.js",
+            "dashboard/plugins/file-manager/file-manager-view.js",
             "data/dashboard_options.json",
             "data/deploy_manifest.json"
         ],

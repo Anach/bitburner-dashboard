@@ -250,21 +250,26 @@ The project keeps three responsibilities separate:
 
 - `dashboard/automation-dashboard.jsx` owns discovery, normalized state, generic action dispatch, and framework rendering.
 - `dashboard/service-supervisor.js` discovers and supervises eligible daemon integrations.
-- `dashboard/libs/` contains reusable dashboard behavior and renderers.
-- `dashboard/integrations/` contains data-only descriptors supplied with a release or added by the user.
+- `dashboard/libs/` contains behavior shared by the framework and multiple plugins.
+- `dashboard/integrations/` contains data-only descriptors for runtime scripts that do not require the dashboard.
+- `dashboard/plugins/<plugin>/` contains dashboard-dependent features and their descriptors, renderers, and plugin-specific helpers.
 
 Runtime scripts must not import dashboard code. Dashboard core and libraries must not import a runtime or an integration descriptor. The loader reads descriptor source as JSON and never evaluates it.
+
+A direct plugin must keep all plugin-specific files in its own folder. Removing that folder removes the plugin; shared code belongs in `dashboard/libs/` only when more than one dashboard feature uses it.
 
 ## Full-window views
 
 Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service descriptors. Supported renderers currently include:
 
-- `home-overview`
+- `system-overview`
 - `network-map`
 - `file-manager`
 - `script-log`
 
-These are advanced framework extensions. Their metadata is discovered from `dashboard/integrations/*-view.js`; adding a new renderer still requires a generic renderer implementation in dashboard core.
+The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
+
+Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata. Player Stats uses this contract to add itself to System Overview; neither plugin requires the other to be installed.
 
 ## Beta notes
 

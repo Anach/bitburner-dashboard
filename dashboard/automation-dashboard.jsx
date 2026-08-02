@@ -40,9 +40,11 @@ import {
     getDashboardFrameControlOverlayStyle,
     getDashboardFrameControlStyle,
 } from "dashboard/libs/frame-controls.js";
-import { buildGroupedNetworkLayout, buildLayeredNetworkLayout, fitNetworkLayout } from "dashboard/libs/network-map.js";
-import { FileManagerView } from "dashboard/libs/file-manager-view.jsx";
-import { ScriptLogView } from "dashboard/libs/script-log-view.jsx";
+import { buildGroupedNetworkLayout, buildLayeredNetworkLayout, fitNetworkLayout } from "dashboard/libs/network-layout.js";
+import { FileManagerView } from "dashboard/plugins/file-manager/file-manager-view.jsx";
+import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/plugins/file-manager/file-manager-snapshot.js";
+import { ScriptLogView } from "dashboard/plugins/script-log/script-log-view.jsx";
+import { buildScriptLogSnapshot } from "dashboard/plugins/script-log/script-log-snapshot.js";
 import {
     buildArchivePath,
     getFileExtension,
@@ -54,9 +56,10 @@ import {
     isProtectedFile,
     isScriptFile,
     isValidManagedFilePath,
+    joinFilePath,
     normalizeFileManifest,
     normalizeFilePath,
-} from "dashboard/libs/file-manager.js";
+} from "dashboard/libs/file-utils.js";
 import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "dashboard/libs/action-ids.js";
 import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs/script-actions.js";
 import {
@@ -665,7 +668,7 @@ const WIDGET_STYLES = {
         width: "100%",
         overflow: "hidden"
     },
-    homeOverview: {
+    systemOverview: {
         position: "relative",
         minHeight: 0,
         flex: "1 1 auto",
@@ -1199,12 +1202,13 @@ function loadUiState() {
         upgradedExpandedGroups.affiliations = savedExpandedGroups.progression;
     }
     delete upgradedExpandedGroups.progression;
+    const savedActiveViewId = typeof saved.activeViewId === "string"
+        ? saved.activeViewId
+        : saved.homeMode ? "system-overview" : "";
 
     return {
         expandedGroups: upgradedExpandedGroups,
-        activeViewId: typeof saved.activeViewId === "string"
-            ? saved.activeViewId
-            : saved.homeMode ? "home" : "",
+        activeViewId: savedActiveViewId === "home" ? "system-overview" : savedActiveViewId,
         healthFilter: HEALTH_FILTER_MODES.has(saved.healthFilter) ? saved.healthFilter : base.healthFilter,
         selectedItem: getServiceById(upgradedSelectedItem) ? upgradedSelectedItem : base.selectedItem,
         centerPanels: upgradedCenterPanels
@@ -1244,159 +1248,6 @@ function setDashboardFileActionResult(viewId, status, message, details = {}) {
         timestamp: Date.now(),
         ...details,
     };
-}
-
-function loadDashboardFileManifest(ns, view) {
-    const path = normalizeFilePath(view?.manifest?.path);
-    if (!ns || !path || !ns.fileExists(path, "home")) return null;
-    try {
-        const raw = ns.read(path);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-function getDashboardHomeFileSnapshot(ns) {
-    if (!ns) return [];
-    const processList = ns.ps("home");
-    const runningByFile = new Map();
-    for (const process of processList) {
-        const path = normalizeFilePath(process?.filename);
-        if (!path) continue;
-        const current = runningByFile.get(path) ?? { threads: 0, pids: [] };
-        current.threads += Number(process?.threads) || 0;
-        if (Number.isFinite(process?.pid)) current.pids.push(process.pid);
-        runningByFile.set(path, current);
-    }
-
-    return ns.ls("home").map((rawPath) => {
-        const path = normalizeFilePath(rawPath);
-        const running = runningByFile.get(path) ?? { threads: 0, pids: [] };
-        let metadata = null;
-        if (isEditableFile(path)) {
-            try {
-                metadata = ns.getFileMetadata(path, "home");
-            } catch (error) {
-                metadata = null;
-            }
-        }
-        let ramPerThread = 0;
-        if (isScriptFile(path)) {
-            try {
-                ramPerThread = ns.getScriptRam(path, "home") || 0;
-            } catch (error) {
-                ramPerThread = 0;
-            }
-        }
-        return {
-            path,
-            name: getFileName(path),
-            extension: getFileExtension(path),
-            kind: getFileKind(path),
-            exists: true,
-            createdAt: Number(metadata?.btime) || 0,
-            modifiedAt: Number(metadata?.mtime) || 0,
-            accessedAt: Number(metadata?.atime) || 0,
-            running: running.threads > 0,
-            runningThreads: running.threads,
-            runningPids: running.pids,
-            ramPerThread,
-            runningRam: ramPerThread * running.threads,
-        };
-    });
-}
-
-function buildDashboardFileManagerSnapshots(ns, views = []) {
-    const fileManagerViews = (Array.isArray(views) ? views : []).filter((view) => view?.renderer === "file-manager");
-    if (fileManagerViews.length === 0) return {};
-    const files = getDashboardHomeFileSnapshot(ns);
-    return Object.fromEntries(fileManagerViews.map((view) => [view.id, {
-        generatedAt: Date.now(),
-        host: "home",
-        files,
-        manifest: loadDashboardFileManifest(ns, view),
-    }]));
-}
-
-function formatDashboardScriptArgs(args) {
-    return (Array.isArray(args) ? args : []).map((arg) => {
-        if (typeof arg === "string") return JSON.stringify(arg);
-        if (arg === null) return "null";
-        return String(arg);
-    }).join(" ");
-}
-
-function normalizeDashboardLogLines(lines, maxLines) {
-    return (Array.isArray(lines) ? lines : [])
-        .filter((line) => typeof line === "string")
-        .map((line) => line
-            .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-            .replace(/\r/g, ""))
-        .filter((line) => line !== "[object Object]")
-        .slice(-maxLines);
-}
-
-function buildDashboardScriptLogSnapshot(ns, view) {
-    const layout = view?.layout ?? {};
-    const host = String(layout.host ?? "home");
-    const maxLines = Math.max(20, Math.min(2000, Math.floor(Number(layout.maxLines) || 500)));
-    const recentLimit = Math.max(0, Math.min(100, Math.floor(Number(layout.recentLimit) || 30)));
-    const generatedAt = Date.now();
-    const running = ns.ps(host).map((process) => {
-        let details = null;
-        try {
-            details = ns.getRunningScript(process.pid);
-        } catch (error) {
-            details = null;
-        }
-        const args = Array.isArray(details?.args) ? details.args : process.args;
-        const logs = normalizeDashboardLogLines(details?.logs, maxLines);
-        return {
-            id: `running:${process.pid}`,
-            status: "running",
-            filename: String(process.filename ?? details?.filename ?? "unknown"),
-            host,
-            pid: Number(process.pid) || 0,
-            threads: Number(process.threads) || Number(details?.threads) || 0,
-            args: Array.isArray(args) ? args : [],
-            argsText: formatDashboardScriptArgs(args),
-            logs,
-            lastLine: logs.at(-1) ?? "",
-            timestamp: generatedAt,
-        };
-    }).sort((left, right) => left.filename.localeCompare(right.filename) || left.pid - right.pid);
-
-    let recentScripts = [];
-    try {
-        recentScripts = ns.getRecentScripts();
-    } catch (error) {
-        recentScripts = [];
-    }
-    const recent = recentScripts
-        .filter((entry) => entry?.server === host)
-        .slice(0, recentLimit)
-        .map((entry) => {
-            const deathTime = Date.parse(String(entry.timeOfDeath ?? "")) || 0;
-            const logs = normalizeDashboardLogLines(entry.logs, maxLines);
-            return {
-                id: `recent:${entry.pid}:${deathTime}`,
-                status: "recent",
-                filename: String(entry.filename ?? "unknown"),
-                host,
-                pid: Number(entry.pid) || 0,
-                threads: Number(entry.threads) || 0,
-                args: Array.isArray(entry.args) ? entry.args : [],
-                argsText: formatDashboardScriptArgs(entry.args),
-                logs,
-                lastLine: logs.at(-1) ?? "",
-                timestamp: deathTime,
-            };
-        });
-
-    return { generatedAt, host, entries: [...running, ...recent] };
 }
 
 function getDashboardFileManagerRenderSignature(viewId, snapshot, themeSignature = "", layoutSignature = "") {
@@ -1479,6 +1330,18 @@ function moveDashboardFile(ns, source, target, view) {
     return { source: normalizedSource, target: normalizedTarget };
 }
 
+function getDashboardRequestedPaths(command) {
+    return [...new Set((Array.isArray(command?.paths) ? command.paths : [])
+        .map(normalizeFilePath)
+        .filter(Boolean))];
+}
+
+function getDashboardBatchTargetDirectory(path) {
+    const normalizedPath = normalizeFilePath(path);
+    if (!isValidManagedFilePath(normalizedPath) && normalizedPath !== "") throw new Error("Invalid destination folder.");
+    return normalizedPath;
+}
+
 function performDashboardFileAction(ns, command) {
     const viewId = String(command?.viewId ?? "");
     const view = getDashboardFileActionView(viewId);
@@ -1534,8 +1397,83 @@ function performDashboardFileAction(ns, command) {
             return;
         }
 
+        if (actionId === "copy-many") {
+            const requestedPaths = getDashboardRequestedPaths(command);
+            const targetDirectory = getDashboardBatchTargetDirectory(command.target);
+            if (requestedPaths.length === 0) throw new Error("No files selected to copy.");
+            let copiedCount = 0;
+            const skipped = [];
+            const reservedTargets = new Set();
+            for (const path of requestedPaths) {
+                try {
+                    const source = validateDashboardFileSource(ns, path);
+                    if (!isEditableFile(source)) throw new Error(`Copy support is limited to scripts and editable text files: ${source}`);
+                    const target = joinFilePath(targetDirectory, getFileName(source));
+                    if (!target || target === source) throw new Error(`Invalid copy destination: ${source}`);
+                    if (reservedTargets.has(target)) throw new Error(`Duplicate destination: ${target}`);
+                    validateDashboardFileTarget(ns, target);
+                    ns.write(target, ns.read(source), "w");
+                    if (!ns.fileExists(target, "home")) throw new Error(`Copy failed: ${source}`);
+                    reservedTargets.add(target);
+                    copiedCount += 1;
+                } catch (error) {
+                    skipped.push(path);
+                }
+            }
+            const message = `Copied ${copiedCount} selected file${copiedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
+            setDashboardFileActionResult(viewId, skipped.length > 0 && copiedCount === 0 ? "error" : "success", message, { actionId, copiedCount, skipped, targetDirectory });
+            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
+            return;
+        }
+
+        if (actionId === "move-many") {
+            const requestedPaths = getDashboardRequestedPaths(command);
+            const targetDirectory = getDashboardBatchTargetDirectory(command.target);
+            if (requestedPaths.length === 0) throw new Error("No files selected to move.");
+            let movedCount = 0;
+            const skipped = [];
+            const reservedTargets = new Set();
+            for (const path of requestedPaths) {
+                try {
+                    const target = joinFilePath(targetDirectory, getFileName(path));
+                    if (!target || reservedTargets.has(target)) throw new Error(`Invalid move destination: ${path}`);
+                    moveDashboardFile(ns, path, target, view);
+                    reservedTargets.add(target);
+                    movedCount += 1;
+                } catch (error) {
+                    skipped.push(path);
+                }
+            }
+            const message = `Moved ${movedCount} selected file${movedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
+            setDashboardFileActionResult(viewId, skipped.length > 0 && movedCount === 0 ? "error" : "success", message, { actionId, movedCount, skipped, targetDirectory });
+            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
+            return;
+        }
+
+        if (actionId === "delete-many") {
+            const requestedPaths = getDashboardRequestedPaths(command);
+            if (requestedPaths.length === 0) throw new Error("No files selected to delete.");
+            let deletedCount = 0;
+            const skipped = [];
+            for (const path of requestedPaths) {
+                try {
+                    const source = validateDashboardFileSource(ns, path);
+                    if (isDashboardFileActionProtected(ns, source, view)) throw new Error(`File is running or protected: ${source}`);
+                    if (!isDeletableFile(source)) throw new Error(`This file type cannot be deleted through Netscript: ${source}`);
+                    if (!ns.rm(source, "home")) throw new Error(`Delete failed: ${source}`);
+                    deletedCount += 1;
+                } catch (error) {
+                    skipped.push(path);
+                }
+            }
+            const message = `Deleted ${deletedCount} selected file${deletedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
+            setDashboardFileActionResult(viewId, skipped.length > 0 && deletedCount === 0 ? "error" : "success", message, { actionId, deletedCount, skipped });
+            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
+            return;
+        }
+
         if (actionId === "archive-many") {
-            const manifest = normalizeFileManifest(loadDashboardFileManifest(ns, view), view.manifest ?? {});
+            const manifest = normalizeFileManifest(loadFileManagerManifest(ns, view), view.manifest ?? {});
             if (!manifest.available) throw new Error("Cleanup requires a deployment manifest.");
             const staleSet = new Set(manifest.staleFiles);
             const requestedPaths = [...new Set((Array.isArray(command.paths) ? command.paths : []).map(normalizeFilePath).filter(Boolean))];
@@ -2262,8 +2200,8 @@ const DASHBOARD_SERVICES = [
                     value: options.dashboardTextSizeMode,
                 },
                 {
-                    id: "dashboard-player-hud-mode",
-                    label: "Player HUD",
+                    id: "dashboard-player-stats-mode",
+                    label: "System Overview player stats",
                     optionKey: "dashboardPlayerHudMode",
                     type: "select",
                     options: DASHBOARD_PLAYER_HUD_MODES,
@@ -2292,7 +2230,7 @@ const DASHBOARD_SERVICES = [
             return [
                 { label: "Theme", value: normalizeDashboardThemeMode(options.dashboardThemeMode), tone: "info" },
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
-                { label: "Player HUD", value: normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode), tone: "info" },
+                { label: "Player Stats", value: normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
                 { label: "Last window mode", value: normalizeDashboardWindowMode(options.dashboardLastWindowMode), tone: "neutral" },
                 { label: "Ignored folders", value: configuredFolders.join(", ") || "None", tone: "info" },
@@ -2387,7 +2325,7 @@ const DASHBOARD_SERVICES = [
 ];
 
 const DASHBOARD_MENU_GROUP_IDS = new Set(DASHBOARD_MENU_GROUPS.map((group) => group.id));
-const DASHBOARD_VIEW_RENDERERS = new Set(["home-overview", "network-map", "file-manager", "script-log"]);
+const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log"]);
 const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health", "gauges", "service-health", "graphs"]);
 const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command"]);
 const SERVICE_HEALTH_LEVELS = new Set(["neutral", "info", "warn", "danger"]);
@@ -2544,6 +2482,41 @@ function getDashboardViewRegistry() {
     return fallback;
 }
 
+function applyDashboardViewWidgetContributions(views, services) {
+    const widgetsByViewId = new Map();
+    const layoutByViewId = new Map();
+    for (const service of Array.isArray(services) ? services : []) {
+        const contributions = service?.pluginMetadata?.viewWidgets;
+        if (!Array.isArray(contributions)) continue;
+        for (const contribution of contributions) {
+            const viewId = typeof contribution?.viewId === "string" ? contribution.viewId : "";
+            if (!viewId) continue;
+            const { viewId: ignoredViewId, viewLayout, ...widget } = contribution;
+            if (viewLayout && typeof viewLayout === "object" && !Array.isArray(viewLayout)) {
+                layoutByViewId.set(viewId, {
+                    ...(layoutByViewId.get(viewId) ?? {}),
+                    ...viewLayout,
+                });
+            }
+            const widgets = widgetsByViewId.get(viewId) ?? [];
+            widgets.push(widget);
+            widgetsByViewId.set(viewId, widgets);
+        }
+    }
+
+    return (Array.isArray(views) ? views : []).map((view) => ({
+        ...view,
+        layout: {
+            ...(view?.layout ?? {}),
+            ...(layoutByViewId.get(view?.id) ?? {}),
+        },
+        widgets: [
+            ...(Array.isArray(view?.widgets) ? view.widgets : []),
+            ...(widgetsByViewId.get(view?.id) ?? []),
+        ],
+    }));
+}
+
 function rebuildDashboardViewRegistry(ns, homeScripts = []) {
     const filenames = homeScripts.map((script) => script.filename).sort(compareScriptPathsByName);
     const cacheKey = filenames.join("|");
@@ -2565,7 +2538,11 @@ function rebuildDashboardViewRegistry(ns, homeScripts = []) {
         };
     }
 
-    const registry = validateDashboardViews(definitions);
+    const contributedDefinitions = applyDashboardViewWidgetContributions(
+        definitions,
+        getDashboardServiceRegistry().services
+    );
+    const registry = validateDashboardViews(contributedDefinitions);
     globalThis[DASHBOARD_VIEW_REGISTRY_KEY] = registry;
     return registry;
 }
@@ -2661,6 +2638,12 @@ function getCenterPanelsForItem(selectedItem, homeScripts = []) {
 
     if (Array.isArray(service.subviews) && service.subviews.length > 0) {
         return service.subviews;
+    }
+
+    // Script and plugin lists should render as empty when there are no eligible scripts,
+    // rather than falling back to a synthetic placeholder panel.
+    if (service.id === "global.options" || service.id === "global.plugins") {
+        return [];
     }
 
     return [{ id: "core-stats", label: "Core stats" }];
@@ -3584,7 +3567,7 @@ function selectDashboardViewServiceGroups(groups, widget) {
         .filter((group) => group.services.length > 0);
 }
 
-function HomeOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
+function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
     const configuredColumns = Math.floor(Number(
         playerStatsEnabled === false
             ? view?.layout?.columnsWithoutPlayerStats ?? view?.layout?.columns
@@ -3756,7 +3739,7 @@ function HomeOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled,
             data-dashboard-theme-role="app-frame"
             ref={scrollRef}
             aria-label="System overview"
-            style={WIDGET_STYLES.homeOverview}
+            style={WIDGET_STYLES.systemOverview}
             onScroll={onScroll}
         >
             <div style={WIDGET_STYLES.homeHeader}>
@@ -4839,70 +4822,6 @@ function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, orientatio
     );
 }
 
-function PlayerHudRail({ definitions, dashboardTheme, scrollRef, onScroll }) {
-    const primary = definitions?.[0] ?? null;
-    const groups = (Array.isArray(definitions) ? definitions : []).flatMap((definition) => definition.groups ?? []);
-    const generatedAt = (Array.isArray(definitions) ? definitions : []).reduce(
-        (latest, definition) => Math.max(latest, Number(definition?.generatedAt) || 0),
-        0
-    );
-    return (
-        <aside
-            ref={scrollRef}
-            data-dashboard-theme-role="workspace-column"
-            style={{ ...WIDGET_STYLES.column, overflowX: "hidden" }}
-            onScroll={onScroll}
-        >
-            <div style={{ ...WIDGET_STYLES.cardHeader, alignItems: "baseline", padding: "1px 0 6px", marginBottom: "6px" }}>
-                <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.cardTitle}>{primary?.title ?? "Player HUD"}</div>
-                <div style={{ ...WIDGET_STYLES.muted, fontSize: "9px", whiteSpace: "nowrap" }}>
-                    {generatedAt ? new Date(generatedAt).toLocaleTimeString() : "Waiting"}
-                </div>
-            </div>
-            {groups.length ? groups.map((group) => (
-                <section key={group.id} style={{ marginBottom: "8px" }}>
-                    <div data-dashboard-theme-role="data-heading" style={{ ...WIDGET_STYLES.heading, marginBottom: "3px" }}>{group.title}</div>
-                    <div style={{ display: "grid" }}>
-                        {group.items.map((item) => {
-                            const palette = getHomeTonePalette(item.tone);
-                            const itemColor = getDashboardHudThemeColor(dashboardTheme, item.themeColor, palette.accent);
-                            const itemThemeRole = item.themeColor ? `player-stat-${item.themeColor}` : "";
-                            const hasProgress = Number.isFinite(item.progress);
-                            const progress = hasProgress ? Math.max(0, Math.min(1, Number(item.progress))) : 0;
-                            return (
-                                <div key={item.id} style={{ padding: "2px 1px 4px" }}>
-                                    <div style={{ display: "grid", gridTemplateColumns: "minmax(58px, auto) minmax(0, 1fr)", alignItems: "baseline", gap: "8px" }}>
-                                        <div data-dashboard-theme-role={itemThemeRole} style={{ ...WIDGET_STYLES.pillLabel, marginBottom: 0, fontSize: "10px", color: itemColor }}>{item.label}</div>
-                                        <div
-                                            data-dashboard-theme-role={itemThemeRole}
-                                            title={String(item.value)}
-                                            style={{ ...WIDGET_STYLES.itemDetail, color: itemColor, minWidth: 0, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
-                                        >
-                                            {item.value}
-                                        </div>
-                                    </div>
-                                    {hasProgress ? (
-                                        <div style={{ marginTop: "3px" }}>
-                                            <div style={{ height: "4px", overflow: "hidden", background: "rgba(125, 160, 212, 0.16)" }}>
-                                                <div data-dashboard-theme-role={itemThemeRole} style={{ width: `${progress * 100}%`, height: "100%", background: itemColor }} />
-                                            </div>
-                                            {item.progressText ? (
-                                                <div title={item.progressText} style={{ ...WIDGET_STYLES.homePanelSubtitle, marginTop: "2px", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                                                    {item.progressText}
-                                                </div>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </section>
-            )) : <div style={WIDGET_STYLES.muted}>Player status will appear after its report service publishes telemetry.</div>}
-        </aside>
-    );
-}
-
 function DashboardWindowModeButton({ layoutSnapshot }) {
     const maximized = Boolean(layoutSnapshot?.maximized);
     const nextMode = maximized ? DASHBOARD_WINDOW_MODE_WINDOWED : DASHBOARD_WINDOW_MODE_MAXIMIZED;
@@ -4978,8 +4897,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const leftColumnRef = React.useRef(null);
     const centerColumnRef = React.useRef(null);
     const rightColumnRef = React.useRef(null);
-    const playerHudRef = React.useRef(null);
-    const homeOverviewRef = React.useRef(null);
+    const systemOverviewRef = React.useRef(null);
     const dashboardViews = getDashboardViewRegistry().views;
     const serviceMenuGroups = getMenuGroups();
     const menuGroups = serviceMenuGroups.map((group) => ({
@@ -5027,8 +4945,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         apply(leftColumnRef, "left");
         apply(centerColumnRef, "center");
         apply(rightColumnRef, "right");
-        apply(playerHudRef, "playerHud");
-        apply(homeOverviewRef, "home");
+        apply(systemOverviewRef, "systemOverview");
     });
 
     React.useEffect(() => {
@@ -5142,15 +5059,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const selectedItem = uiState.selectedItem;
     const activeView = getDashboardViewRegistry().byId.get(uiState.activeViewId) ?? null;
     const playerHudMode = normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode);
-    const showPlayerHud = !activeView && (
-        playerHudMode === DASHBOARD_PLAYER_HUD_MODE_SHOWN
-        || (playerHudMode === DASHBOARD_PLAYER_HUD_MODE_AUTO && dashboardLayout.layoutTier !== "compact")
-    );
     const playerHudDefinitions = buildDashboardHudDefinition(getDashboardServiceRegistry().services, telemetryByServiceId);
     const playerStatsEnabled = playerHudMode !== DASHBOARD_PLAYER_HUD_MODE_HIDDEN;
-    const workspaceColumns = showPlayerHud
-        ? `${responsiveLayout.workspaceColumns} minmax(230px, ${dashboardLayout.layoutTier === "wide" ? 300 : 270}px)`
-        : responsiveLayout.workspaceColumns;
+    const workspaceColumns = responsiveLayout.workspaceColumns;
     const setActiveView = (viewId) => {
         setUiState((current) => ({ ...current, activeViewId: String(viewId ?? "") }));
     };
@@ -6428,8 +6339,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             minHeight: `${dashboardLayout.contentHeight}px`,
             maxHeight: `${dashboardLayout.contentHeight}px`,
         }}>
-            {activeView?.renderer === "home-overview" ? (
-                <HomeOverview
+            {activeView?.renderer === "system-overview" ? (
+                <SystemOverview
                     view={activeView}
                     metrics={statsTiles}
                     playerHudDefinitions={playerHudDefinitions}
@@ -6440,8 +6351,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     serviceGroups={homeServiceGroups}
                     serviceHealthById={serviceHealthById}
                     graphs={homeGraphs}
-                    scrollRef={homeOverviewRef}
-                    onScroll={(event) => rememberScroll("home", event.currentTarget.scrollTop)}
+                    scrollRef={systemOverviewRef}
+                    onScroll={(event) => rememberScroll("systemOverview", event.currentTarget.scrollTop)}
                     onExit={() => setActiveView("")}
                     windowControl={windowControl}
                     killAllControl={(
@@ -6707,14 +6618,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 >
                     {renderDataPanel()}
                 </div>
-                {showPlayerHud ? (
-                    <PlayerHudRail
-                        definitions={playerHudDefinitions}
-                        dashboardTheme={dashboardTheme}
-                        scrollRef={playerHudRef}
-                        onScroll={(event) => rememberScroll("playerHud", event.currentTarget.scrollTop)}
-                    />
-                ) : null}
                 </div>
             </>
             )}
@@ -7005,10 +6908,10 @@ export async function main(ns) {
         const activeDashboardViewId = String(globalThis[DASHBOARD_UI_STATE_KEY]?.activeViewId ?? "");
         const activeDashboardView = dashboardViewRegistry.byId.get(activeDashboardViewId);
         const fileManagerSnapshots = activeDashboardView?.renderer === "file-manager"
-            ? buildDashboardFileManagerSnapshots(ns, [activeDashboardView])
+            ? buildFileManagerSnapshots(ns, [activeDashboardView])
             : {};
         const scriptLogSnapshots = activeDashboardView?.renderer === "script-log"
-            ? { [activeDashboardView.id]: buildDashboardScriptLogSnapshot(ns, activeDashboardView) }
+            ? { [activeDashboardView.id]: buildScriptLogSnapshot(ns, activeDashboardView) }
             : {};
         const activeFileManagerSnapshot = activeDashboardView?.renderer === "file-manager"
             ? fileManagerSnapshots[activeDashboardView.id] ?? null
