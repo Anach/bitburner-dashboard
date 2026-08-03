@@ -184,12 +184,12 @@ export function loadPluginIntegrationStats(ns, integration) {
     return value;
 }
 
-export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAction) {
+export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAction, context = {}) {
     if (!ns) return;
 
     const scriptPath = integration?.scriptPath;
     const displayName = integration?.menuLabel ?? "Plugin";
-    if (typeof scriptPath !== "string" || !ns.scriptRunning(scriptPath, "home")) {
+    if (typeof scriptPath !== "string" || context.running !== true) {
         if (typeof logAction === "function") {
             logAction("warning", `${displayName} is not running; start it before applying options.`);
         }
@@ -219,13 +219,13 @@ export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAc
     }
 }
 
-export function applyPluginIntegrationCommand(ns, integration, command, logAction) {
+export function applyPluginIntegrationCommand(ns, integration, command, logAction, context = {}) {
     if (!ns || typeof command !== "string" || command.length === 0) return;
     const scriptPath = integration?.scriptPath;
     const displayName = integration?.menuLabel ?? "Plugin";
     const commandMetadata = getObject(integration?.commands);
     const requiresRuntime = commandMetadata.requiresRuntime !== false;
-    if (requiresRuntime && (typeof scriptPath !== "string" || !ns.scriptRunning(scriptPath, "home"))) {
+    if (requiresRuntime && (typeof scriptPath !== "string" || context.running !== true)) {
         if (typeof logAction === "function") logAction("warning", `${displayName} is not running; start it before sending commands.`);
         return;
     }

@@ -137,6 +137,7 @@ const DASHBOARD_ACTION_POLL_MS = 50;
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
+let latestHomeProcessFilenames = new Set();
 const dashboardActionWorkerQueue = [];
 let pendingDashboardActionWorker = null;
 let dashboardActionWorkerSequence = 0;
@@ -1551,13 +1552,19 @@ function applyQueuedDashboardActions(ns) {
                 const integration = getServiceById(command.serviceId)?.pluginMetadata;
                 applyPluginIntegrationOptions(ns, integration, command.options, (tone, message) => {
                     logMajorAction(ns, message, tone);
-                });
+                }, { running: latestHomeProcessFilenames.has(integration?.scriptPath) });
                 continue;
             }
 
             if (command.kind === "plugin-command") {
                 const integration = getServiceById(command.serviceId)?.pluginMetadata;
-                applyPluginIntegrationCommand(ns, integration, command.command, (tone, message) => logMajorAction(ns, message, tone));
+                applyPluginIntegrationCommand(
+                    ns,
+                    integration,
+                    command.command,
+                    (tone, message) => logMajorAction(ns, message, tone),
+                    { running: latestHomeProcessFilenames.has(integration?.scriptPath) }
+                );
                 continue;
             }
 
@@ -1774,7 +1781,7 @@ function applyPersistedPluginOptions(ns, filename) {
     if (!integration || Object.keys(integration.options ?? {}).length === 0) return;
     applyPluginIntegrationOptions(ns, integration, loadDashboardOptions(ns), (tone, message) => {
         logMajorAction(ns, message, tone);
-    });
+    }, { running: true });
 }
 
 function performScriptFileAction(ns, action, filename) {
@@ -6539,7 +6546,7 @@ function persistDashboardTailLayout(ns) {
 function syncDashboardTailLayout(ns, options = getDefaultOptions()) {
     let tailProperties = null;
     try {
-        tailProperties = ns.getRunningScript()?.tailProperties ?? null;
+        tailProperties = ns.self()?.tailProperties ?? null;
     } catch (error) {
         tailProperties = null;
     }
@@ -6718,6 +6725,7 @@ export async function main(ns) {
         applyQueuedDashboardActions(ns);
 
         const cycleSnapshot = dashboardSnapshotCoordinator.collectCycle(ns);
+        latestHomeProcessFilenames = new Set(cycleSnapshot.homeProcesses.map((process) => process.filename));
         const scriptCatalog = dashboardSnapshotCoordinator.getOrCreate(
             "script-catalog",
             cycleSnapshot.now,

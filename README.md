@@ -74,7 +74,7 @@ run dashboard/automation-dashboard.jsx --auto-start
 
 Dashboard Restart preserves whether `--auto-start` was active. Starting without the flag leaves an already-running supervisor alone. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, Player Stats visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
 
-The integration supervisor rescans metadata periodically, starts eligible integrations declared with `"daemon": true`, and restarts them if they stop. Integrations declared with `"daemon": false` remain on demand. Selecting **Start integrations** in the Plugin List restarts the supervisor after it has been stopped.
+The integration supervisor checks the `home` file list periodically and reuses parsed descriptors while that list is unchanged. Each active cycle uses one process snapshot to start or restart eligible integrations declared with `"daemon": true`; integrations declared with `"daemon": false` remain on demand. The supervisor exits when no enabled daemon integration is discovered. Selecting **Start integrations** in the Plugin List starts the supervisor again after it has been stopped or after a daemon integration is installed.
 
 The separate **Start services** control in the Script List launches `init/init-services.js` when that user-owned script exists. This is an optional convenience for personal startup workflows; it is not imported or required by the dashboard framework, and `--auto-start` never launches it.
 
