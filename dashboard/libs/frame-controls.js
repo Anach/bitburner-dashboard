@@ -45,13 +45,25 @@ const FRAME_CONTROL_VARIANT_STYLES = Object.freeze({
 const FRAME_CONTROL_GROUP_STYLE = Object.freeze({
     display: "flex",
     alignItems: "center",
+    alignSelf: "flex-start",
     gap: "8px",
     flexWrap: "wrap",
 });
 
+const FRAME_HEADER_STYLE = Object.freeze({
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "start",
+    gap: "12px",
+    flex: "0 0 auto",
+    minHeight: "44px",
+    padding: "10px 10px 7px",
+    boxSizing: "border-box",
+});
+
 const FRAME_CONTROL_OVERLAY_STYLE = Object.freeze({
     position: "absolute",
-    top: "12px",
+    top: "11px",
     right: "12px",
     zIndex: 8,
     ...FRAME_CONTROL_GROUP_STYLE,
@@ -69,6 +81,13 @@ export function getDashboardFrameControlStyle(variant = "neutral", overrides = n
 export function getDashboardFrameControlGroupStyle(overrides = null) {
     return {
         ...FRAME_CONTROL_GROUP_STYLE,
+        ...(overrides && typeof overrides === "object" ? overrides : {}),
+    };
+}
+
+export function getDashboardFrameHeaderStyle(overrides = null) {
+    return {
+        ...FRAME_HEADER_STYLE,
         ...(overrides && typeof overrides === "object" ? overrides : {}),
     };
 }

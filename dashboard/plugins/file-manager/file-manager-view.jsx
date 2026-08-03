@@ -7,6 +7,7 @@ import {
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
+    getDashboardFrameHeaderStyle,
     getDashboardFrameControlStyle,
 } from "dashboard/libs/frame-controls.js";
 import {
@@ -69,14 +70,7 @@ const STYLES = {
         WebkitUserSelect: "none",
     },
     topBar: {
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: "12px",
-        flex: "0 0 auto",
-        minHeight: "43px",
-        padding: "7px 10px",
-        boxSizing: "border-box",
+        ...getDashboardFrameHeaderStyle(),
         borderBottom: `1px solid ${COLORS.border}`,
         background: "rgba(3, 8, 6, 0.94)",
     },

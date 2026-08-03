@@ -6,6 +6,7 @@ import {
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
+    getDashboardFrameHeaderStyle,
     getDashboardFrameControlStyle,
 } from "dashboard/libs/frame-controls.js";
 
@@ -38,13 +39,8 @@ const STYLES = {
         color: COLORS.text,
     },
     header: {
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: "12px",
-        padding: "8px 10px",
+        ...getDashboardFrameHeaderStyle(),
         borderBottom: `1px solid ${COLORS.border}`,
-        flex: "0 0 auto",
     },
     title: {
         color: COLORS.green,

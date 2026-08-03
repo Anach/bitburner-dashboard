@@ -39,6 +39,7 @@ import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } fro
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
+    getDashboardFrameHeaderStyle,
     getDashboardFrameControlOverlayStyle,
     getDashboardFrameControlStyle,
 } from "dashboard/libs/frame-controls.js";
@@ -434,14 +435,12 @@ const WIDGET_STYLES = {
         fontSize: "11px"
     },
     hero: {
+        ...getDashboardFrameHeaderStyle(),
         display: "flex",
-        alignItems: "center",
         justifyContent: "space-between",
-        gap: "16px",
         border: "1px solid #1d3d1d",
         borderRadius: "8px",
         background: "rgba(8, 12, 8, 0.95)",
-        padding: "10px 12px",
         minWidth: 0
     },
     heroCopy: {
@@ -673,22 +672,23 @@ const WIDGET_STYLES = {
         overflowY: "auto",
         border: "1px solid rgba(108, 180, 255, 0.3)",
         borderRadius: "10px",
-        padding: "12px",
+        padding: "10px 12px 12px",
         boxSizing: "border-box",
         cursor: "default",
         outline: "none",
         background: "radial-gradient(circle at 8% 0%, rgba(47, 108, 80, 0.22), transparent 31%), radial-gradient(circle at 94% 10%, rgba(62, 89, 150, 0.2), transparent 34%), #030605"
     },
     homeHeader: {
+        ...getDashboardFrameHeaderStyle(),
         position: "sticky",
         top: 0,
         zIndex: 5,
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "flex-end",
         gap: "20px",
         marginBottom: "10px",
-        padding: "2px 2px 8px",
+        minHeight: "44px",
+        padding: "0 2px 8px",
         borderBottom: "1px solid rgba(108, 180, 255, 0.18)",
         background: "rgba(3, 6, 5, 0.96)"
     },
@@ -916,7 +916,7 @@ const WIDGET_STYLES = {
         position: "absolute",
         zIndex: 20,
         left: "12px",
-        top: "12px",
+        top: "11px",
         display: "flex",
         alignItems: "center",
         gap: "10px",
@@ -1006,23 +1006,6 @@ const WIDGET_STYLES = {
         background: "rgba(7, 12, 10, 0.8)",
         color: "#b9d3c1",
         fontSize: "10px",
-        cursor: "pointer"
-    },
-    networkCloseButton: {
-        position: "absolute",
-        minWidth: "94px",
-        minHeight: "24px",
-        zIndex: 30,
-        right: "12px",
-        top: "12px",
-        border: "1px solid rgba(143, 197, 255, 0.58)",
-        borderRadius: "5px",
-        background: "rgba(7, 13, 17, 0.82)",
-        color: "#c8e0ff",
-        padding: "4px 10px",
-        fontSize: "12px",
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
         cursor: "pointer"
     },
     networkNode: {
