@@ -28,24 +28,39 @@ function readCurrentWork(ns) {
     }
 }
 
+function calculateSkillLevel(experience, multiplier) {
+    const mult = Math.max(0.000001, Number(multiplier) || 1);
+    return Math.max(1, Math.floor(mult * (32 * Math.log(Math.max(0, Number(experience) || 0) + 534.6) - 200)));
+}
+
+function calculateSkillExperience(level, multiplier) {
+    const skill = Math.max(1, Math.floor(Number(level) || 1));
+    const mult = Math.max(0.000001, Number(multiplier) || 1);
+    const baseExperience = Math.exp((skill / mult + 200) / 32) - 534.6;
+    if (!Number.isFinite(baseExperience)) return 0;
+    let experience = Math.max(0, baseExperience);
+    let increment = Math.abs(experience * Number.EPSILON);
+    while (calculateSkillLevel(experience, mult) < skill) {
+        experience = Math.max(0, baseExperience + increment);
+        increment *= 2;
+    }
+    return experience;
+}
+
 function readSkillProgress(ns, player, skill) {
     const level = Math.max(1, Math.floor(Number(player?.skills?.[skill]) || 1));
     const experience = Math.max(0, Number(player?.exp?.[skill]) || 0);
     const multiplier = Math.max(0.000001, Number(player?.mults?.[skill]) || 1);
-    try {
-        const levelStart = Number(ns.formulas.skills.calculateExp(level, multiplier));
-        const nextLevel = Number(ns.formulas.skills.calculateExp(level + 1, multiplier));
-        const required = Math.max(0, nextLevel - levelStart);
-        const earned = Math.max(0, experience - levelStart);
-        return {
-            ratio: required > 0 ? Math.max(0, Math.min(1, earned / required)) : 1,
-            current: Math.floor(earned),
-            required: Math.ceil(required),
-            nextLevel: level + 1,
-        };
-    } catch (error) {
-        return null;
-    }
+    const levelStart = calculateSkillExperience(level, multiplier);
+    const nextLevel = calculateSkillExperience(level + 1, multiplier);
+    const required = Math.max(0, nextLevel - levelStart);
+    const earned = Math.max(0, experience - levelStart);
+    return {
+        ratio: required > 0 ? Math.max(0, Math.min(1, earned / required)) : 1,
+        current: Math.floor(earned),
+        required: Math.ceil(required),
+        nextLevel: level + 1,
+    };
 }
 
 export function buildPlayerStatus(ns) {
