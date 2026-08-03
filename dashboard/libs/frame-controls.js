@@ -98,3 +98,14 @@ export function getDashboardFrameControlOverlayStyle(overrides = null) {
         ...(overrides && typeof overrides === "object" ? overrides : {}),
     };
 }
+
+export function runDashboardFrameControlMouseDown(event, action) {
+    event?.stopPropagation?.();
+    if (typeof action === "function") action();
+}
+
+export function runDashboardFrameControlClick(event, action) {
+    event?.stopPropagation?.();
+    if (event?.detail !== 0 || typeof action !== "function") return;
+    action();
+}

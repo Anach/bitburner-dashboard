@@ -1,11 +1,27 @@
 import { buildDashboardActions, DASHBOARD_ACTION_GROUPS } from "dashboard/libs/dashboard-actions.js";
+import {
+    DASHBOARD_PLAYER_HUD_MODE_HIDDEN,
+    DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
+    DEFAULT_IGNORED_SCRIPT_FOLDERS,
+    DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
+    dashboardOptionsEqual,
+    getDefaultDashboardOptions,
+    normalizeDashboardOptions,
+    normalizeDashboardPlayerHudMode,
+} from "dashboard/libs/dashboard-options.js";
+import {
+    applyDashboardViewWidgetContributions as applyDashboardViewWidgetContributionsDefinition,
+    buildDashboardMenuGroups,
+    getDefaultSelectedServiceId as getDefaultSelectedServiceIdDefinition,
+    validateDashboardServices as validateDashboardServicesDefinition,
+    validateDashboardViews as validateDashboardViewsDefinition,
+} from "dashboard/libs/dashboard-registry.js";
 import { getDashboardPluginAdapterFactories } from "dashboard/libs/plugin-adapters.js";
 import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews } from "dashboard/libs/plugin-loader.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
 import {
     DASHBOARD_THEME_MODE_DASHBOARD,
     DASHBOARD_THEME_MODES,
-    DASHBOARD_TEXT_SIZE_COMFORTABLE,
     DASHBOARD_TEXT_SIZE_MODES,
     buildDashboardTheme,
     createDashboardThemedReact,
@@ -16,7 +32,6 @@ import {
 } from "dashboard/libs/theme-adapter.js";
 import {
     DASHBOARD_STARTUP_MODES,
-    DASHBOARD_STARTUP_MODE_REMEMBER,
     DASHBOARD_WINDOW_MODE_MAXIMIZED,
     DASHBOARD_WINDOW_MODE_WINDOWED,
     DEFAULT_TAIL_HEIGHT,
@@ -41,6 +56,9 @@ import {
     normalizeActionWorkerEnvelope,
     parseActionWorkerResult,
 } from "dashboard/libs/action-worker-contract.js";
+import { createActionWorkerQueue } from "dashboard/libs/action-worker-queue.js";
+import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispatch.js";
+import { buildDashboardWorkerCommand as buildWorkerCommand } from "dashboard/libs/dashboard-worker-command.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
 import {
@@ -49,12 +67,38 @@ import {
     getDashboardFrameHeaderStyle,
     getDashboardFrameControlOverlayStyle,
     getDashboardFrameControlStyle,
+    runDashboardFrameControlClick,
+    runDashboardFrameControlMouseDown,
 } from "dashboard/libs/frame-controls.js";
-import { buildGroupedNetworkLayout, buildLayeredNetworkLayout, fitNetworkLayout } from "dashboard/libs/network-layout.js";
 import { FileManagerView } from "dashboard/renderers/file-manager-view.jsx";
 import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/renderers/file-manager-snapshot.js";
+import { configureNetworkMapView, NetworkMapView } from "dashboard/renderers/network-map-view.jsx";
+import { configureDashboardShell, DashboardShell } from "dashboard/renderers/dashboard-shell.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
+import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
+import { configureDashboardMetrics, RamGauge, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
+import {
+    configureSystemOverviewPanels,
+    HomePanel,
+    PluginRuntimeWarning,
+} from "dashboard/renderers/system-overview-panels.jsx";
+import { configureDashboardGraphs, DataGraph as DashboardDataGraph } from "dashboard/renderers/dashboard-graphs.jsx";
+import {
+    configureSystemOverviewView,
+    SystemOverview as SystemOverviewRenderer,
+} from "dashboard/renderers/system-overview-view.jsx";
+import {
+    configurePlayerStatsOverview,
+    PlayerStatsOverview as PlayerStatsOverviewRenderer,
+} from "dashboard/renderers/player-stats-overview.jsx";
+import {
+    configureDashboardViewState,
+    getDashboardViewInteractionState,
+    getDashboardViewValue,
+    saveDashboardViewInteractionState,
+    setDashboardViewDragActiveState,
+} from "dashboard/libs/dashboard-view-state.js";
 import {
     normalizeFileManifest,
     normalizeFilePath,
@@ -64,7 +108,6 @@ import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs
 import {
     applyPluginIntegrationCommand,
     applyPluginIntegrationOptions,
-    getPluginIntegrationDefaultOptions,
     getPluginIntegrationOverviewGauges,
     getPluginIntegrationGraphs,
     getPluginIntegrationOverviewLines,
@@ -118,29 +161,17 @@ const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const USER_INIT_SCRIPT = "init/init-services.js";
 const DASHBOARD_VIEW_ITEM_PREFIX = "dashboard.view:";
-const DEFAULT_IGNORED_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
-const DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_IGNORED_SCRIPT_FOLDERS);
-const DEFAULT_IGNORED_SCRIPT_FILES_OPTION = "";
-const DEFAULT_DASHBOARD_THEME_MODE = DASHBOARD_THEME_MODE_DASHBOARD;
-const DEFAULT_DASHBOARD_TEXT_SIZE_MODE = DASHBOARD_TEXT_SIZE_COMFORTABLE;
-const DEFAULT_DASHBOARD_WINDOW_STARTUP_MODE = DASHBOARD_STARTUP_MODE_REMEMBER;
-const DASHBOARD_PLAYER_HUD_MODE_AUTO = "Auto";
-const DASHBOARD_PLAYER_HUD_MODE_SHOWN = "Shown";
-const DASHBOARD_PLAYER_HUD_MODE_HIDDEN = "Hidden";
-const DEFAULT_DASHBOARD_PLAYER_HUD_MODE = DASHBOARD_PLAYER_HUD_MODE_AUTO;
 const PLAYER_STATS_WIDGET_WIDTH = 360;
 const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_IGNORED_SCRIPT_FOLDERS;
 const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
+const DASHBOARD_MINIMIZED_UI_TICK_MS = 250;
 const DASHBOARD_ACTION_POLL_MS = 50;
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
 let latestHomeProcessFilenames = new Set();
-const dashboardActionWorkerQueue = [];
-let pendingDashboardActionWorker = null;
-let dashboardActionWorkerSequence = 0;
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -157,13 +188,6 @@ const dashboardTailLayoutState = {
 };
 
 const HEALTH_FILTER_MODES = new Set(["all", "warn", "danger"]);
-
-function normalizeDashboardPlayerHudMode(value) {
-    const normalized = String(value ?? "").trim().toLowerCase();
-    if (normalized === DASHBOARD_PLAYER_HUD_MODE_SHOWN.toLowerCase()) return DASHBOARD_PLAYER_HUD_MODE_SHOWN;
-    if (normalized === DASHBOARD_PLAYER_HUD_MODE_HIDDEN.toLowerCase()) return DASHBOARD_PLAYER_HUD_MODE_HIDDEN;
-    return DASHBOARD_PLAYER_HUD_MODE_AUTO;
-}
 const WIDGET_STYLES = {
     shell: {
         background: "#020202",
@@ -1115,6 +1139,64 @@ const WIDGET_STYLES = {
     }
 };
 
+function configureDashboardRenderers() {
+    configureDashboardPanels({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+    });
+
+    configureDashboardMetrics({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+        getRamHealth: getRamHealthLevel,
+        formatPercent: formatUtilizationPercent,
+    });
+
+    configureSystemOverviewPanels({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+        formatResource: formatResourceCardValue,
+    });
+
+    configureDashboardGraphs({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+        getValue: getGraphValue,
+        formatCompact: formatCompactDashboardValue,
+        formatX: formatGraphXValue,
+    });
+
+    configureSystemOverviewView({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+        getTone: getHomeTonePalette,
+        playerStatsWidth: PLAYER_STATS_WIDGET_WIDTH,
+        renderPlayerStats: PlayerStatsOverviewRenderer,
+    });
+
+    configurePlayerStatsOverview({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+        getTone: getHomeTonePalette,
+    });
+
+    configureNetworkMapView({
+        getTheme: () => activeDashboardTheme,
+        getStyles: () => WIDGET_STYLES,
+    });
+
+    configureDashboardShell({
+        getTheme: () => activeDashboardTheme,
+    });
+}
+
+configureDashboardRenderers();
+
+configureDashboardViewState({
+    interactionKey: DASHBOARD_VIEW_INTERACTION_STATE_KEY,
+    dragKey: DASHBOARD_VIEW_DRAG_ACTIVE_KEY,
+});
+
 function getReactLib() {
     const nextRawReact = globalThis.React ?? null;
     if (!nextRawReact) return null;
@@ -1208,10 +1290,6 @@ function setDashboardOptionsInputFocusState(focused) {
     globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY] = Boolean(focused);
 }
 
-function setDashboardViewDragActiveState(isActive) {
-    globalThis[DASHBOARD_VIEW_DRAG_ACTIVE_KEY] = Boolean(isActive);
-}
-
 function enqueueDashboardAction(command) {
     if (!command || typeof command !== "object") return;
     const existingQueue = Array.isArray(globalThis[DASHBOARD_ACTION_QUEUE_KEY]) ? globalThis[DASHBOARD_ACTION_QUEUE_KEY] : [];
@@ -1279,76 +1357,15 @@ function getDashboardFileActionView(viewId) {
 }
 
 function getDefaultOptions() {
-    const defaults = {
-        reservedHomeRam: 1024,
-        dashboardThemeMode: DEFAULT_DASHBOARD_THEME_MODE,
-        dashboardTextSizeMode: DEFAULT_DASHBOARD_TEXT_SIZE_MODE,
-        dashboardPlayerHudMode: DEFAULT_DASHBOARD_PLAYER_HUD_MODE,
-        dashboardWindowStartupMode: DEFAULT_DASHBOARD_WINDOW_STARTUP_MODE,
-        dashboardLastWindowMode: DASHBOARD_WINDOW_MODE_WINDOWED,
-        dashboardWindowedX: -1,
-        dashboardWindowedY: -1,
-        dashboardWindowedWidth: TAIL_WIDTH,
-        dashboardWindowedHeight: TAIL_HEIGHT,
-        ignoredScriptFolders: DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
-        ignoredScriptFiles: DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
-    };
-    for (const service of getDashboardServiceRegistry().services) {
-        Object.assign(defaults, getPluginIntegrationDefaultOptions(service.pluginMetadata));
-    }
-    return defaults;
-}
-
-function migrateIgnoredScriptFolders(rawFolders) {
-    const migrated = parseScriptFolders(rawFolders).map((folder) => {
-        if (folder === "dashboard-core" || folder === "dashboard-integrations" || folder === "dashboard-libs") {
-            return "dashboard";
-        }
-        return folder;
-    });
-    return normalizeScriptFolders(migrated);
+    return getDefaultDashboardOptions(getDashboardServiceRegistry().services);
 }
 
 function normalizeDashboardOptionsForCompare(rawOptions = {}) {
-    const defaults = getDefaultOptions();
-    const normalizeGeometryNumber = (value, fallback, minimum = Number.NEGATIVE_INFINITY) => {
-        if (value === null || value === undefined || value === "") return fallback;
-        const numeric = Number(value);
-        return Number.isFinite(numeric) ? Math.max(minimum, Math.floor(numeric)) : fallback;
-    };
-    const normalized = {
-        reservedHomeRam: Number(rawOptions.reservedHomeRam) >= 0 ? Math.floor(Number(rawOptions.reservedHomeRam)) : defaults.reservedHomeRam,
-        dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
-        dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
-        dashboardPlayerHudMode: normalizeDashboardPlayerHudMode(rawOptions.dashboardPlayerHudMode ?? defaults.dashboardPlayerHudMode),
-        dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),
-        dashboardLastWindowMode: normalizeDashboardWindowMode(rawOptions.dashboardLastWindowMode ?? defaults.dashboardLastWindowMode),
-        dashboardWindowedX: normalizeGeometryNumber(rawOptions.dashboardWindowedX, defaults.dashboardWindowedX, -1),
-        dashboardWindowedY: normalizeGeometryNumber(rawOptions.dashboardWindowedY, defaults.dashboardWindowedY, -1),
-        dashboardWindowedWidth: normalizeGeometryNumber(rawOptions.dashboardWindowedWidth, defaults.dashboardWindowedWidth, 150),
-        dashboardWindowedHeight: normalizeGeometryNumber(rawOptions.dashboardWindowedHeight, defaults.dashboardWindowedHeight, DEFAULT_TAIL_TITLE_HEIGHT),
-        ignoredScriptFolders: migrateIgnoredScriptFolders(
-            rawOptions.ignoredScriptFolders === undefined
-                ? defaults.ignoredScriptFolders
-                : rawOptions.ignoredScriptFolders
-        ),
-        ignoredScriptFiles: normalizeScriptFiles(
-            rawOptions.ignoredScriptFiles === undefined
-                ? defaults.ignoredScriptFiles
-                : rawOptions.ignoredScriptFiles
-        ),
-    };
-    for (const service of getDashboardServiceRegistry().services) {
-        Object.assign(normalized, normalizePluginIntegrationOptions(service.pluginMetadata, rawOptions));
-    }
-    return normalized;
+    return normalizeDashboardOptions(rawOptions, getDashboardServiceRegistry().services);
 }
 
 function areDashboardOptionsEqual(leftOptions, rightOptions) {
-    const left = normalizeDashboardOptionsForCompare(leftOptions);
-    const right = normalizeDashboardOptionsForCompare(rightOptions);
-    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-    return [...keys].every((key) => left[key] === right[key]);
+    return dashboardOptionsEqual(leftOptions, rightOptions, getDashboardServiceRegistry().services);
 }
 
 function loadDashboardOptions(ns) {
@@ -1377,7 +1394,6 @@ function loadDashboardOptions(ns) {
         return defaults;
     }
 }
-
 function saveDashboardOptions(ns, options) {
     if (!ns) return;
     const raw = JSON.stringify(options);
@@ -1396,54 +1412,26 @@ function getDashboardPluginFiles() {
 }
 
 function buildDashboardWorkerCommand(ns, command) {
-    if (command?.kind === "dashboard") {
-        const workerCommand = { kind: "dashboard", actionId: command.actionId };
-        if (command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
-            workerCommand.dashboardPid = ns.pid;
-            workerCommand.args = getDashboardRestartArgs(ns.args);
-        }
-        if (String(command.actionId).includes("script-list")) {
-            const options = loadDashboardOptions(ns);
-            workerCommand.ignoredFolders = parseScriptFolders(options.ignoredScriptFolders);
-            workerCommand.ignoredFiles = parseScriptFiles(options.ignoredScriptFiles);
-        }
-        if (String(command.actionId).includes("script-list") || String(command.actionId).includes("plugin-list")) {
-            workerCommand.pluginFiles = getDashboardPluginFiles();
-        }
-        return workerCommand;
-    }
-    if (command?.kind === "script") {
-        const execution = resolveScriptActionExecution(command.actionId, command.filename);
-        if (!execution || !["start", "stop", "restart"].includes(execution.executeType)) return null;
-        if (command.filename === DASHBOARD_SCRIPT && execution.executeType === "restart") {
-            return buildDashboardWorkerCommand(ns, {
-                kind: "dashboard",
-                actionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
-            });
-        }
-        return {
-            kind: "script",
-            actionId: execution.executeType,
-            filename: command.filename,
-            args: getScriptLaunchArgs(command.filename),
-        };
-    }
-    if (command?.kind === "file") {
-        const view = getDashboardFileActionView(command.viewId);
-        if (!view) throw new Error("File Manager view is unavailable.");
-        const workerCommand = {
-            ...command,
-            protection: view.protection ?? {},
-            archiveRoot: normalizeFilePath(view?.archive?.root ?? "trashbin") || "trashbin",
-        };
-        if (command.actionId === "archive-many") {
-            const manifest = normalizeFileManifest(loadFileManagerManifest(ns, view), view.manifest ?? {});
-            if (!manifest.available) throw new Error("Cleanup requires a deployment manifest.");
-            workerCommand.stalePaths = manifest.staleFiles;
-        }
-        return workerCommand;
-    }
-    return null;
+    return buildWorkerCommand(ns, command, {
+        restartDashboardActionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
+        dashboardScript: DASHBOARD_SCRIPT,
+        getDashboardPid: (workerNs) => workerNs.pid,
+        getDashboardRestartArgs: (workerNs) => getDashboardRestartArgs(workerNs.args),
+        getScriptListSettings: (workerNs) => {
+            const options = loadDashboardOptions(workerNs);
+            return {
+                ignoredFolders: parseScriptFolders(options.ignoredScriptFolders),
+                ignoredFiles: parseScriptFiles(options.ignoredScriptFiles),
+            };
+        },
+        getPluginFiles: getDashboardPluginFiles,
+        resolveScriptActionExecution,
+        getScriptLaunchArgs,
+        getFileActionView: getDashboardFileActionView,
+        normalizeFilePath,
+        loadFileManagerManifest,
+        normalizeFileManifest,
+    });
 }
 
 function completeDashboardWorkerAction(ns, pending, result) {
@@ -1462,147 +1450,82 @@ function completeDashboardWorkerAction(ns, pending, result) {
     }
 }
 
-function startNextDashboardWorkerAction(ns) {
-    if (pendingDashboardActionWorker || dashboardActionWorkerQueue.length === 0) return;
-    const rawCommand = dashboardActionWorkerQueue.shift();
-    const requestId = `${ns.pid}-${Date.now()}-${++dashboardActionWorkerSequence}`;
-    let envelope = null;
-    try {
-        envelope = normalizeActionWorkerEnvelope({ requestId, command: rawCommand });
-    } catch (error) {
-        const message = String(error?.message ?? error);
-        completeDashboardWorkerAction(ns, { command: rawCommand }, { ok: false, message, tone: "error" });
-        startNextDashboardWorkerAction(ns);
-        return;
-    }
-
-    ns.write(DASHBOARD_ACTION_WORKER_RESULT_FILE, "", "w");
-    const workerPid = ns.run(DASHBOARD_ACTION_WORKER_SCRIPT, 1, JSON.stringify(envelope));
-    if (!(workerPid > 0)) {
-        completeDashboardWorkerAction(ns, { command: envelope.command }, {
-            ok: false,
-            message: "Could not start the dashboard action worker. Check available home RAM.",
-            tone: "error",
-        });
-        startNextDashboardWorkerAction(ns);
-        return;
-    }
-    pendingDashboardActionWorker = {
-        requestId,
-        command: envelope.command,
-        workerPid,
-        startedAt: Date.now(),
-    };
-}
+const dashboardActionWorker = createActionWorkerQueue({
+    workerScript: DASHBOARD_ACTION_WORKER_SCRIPT,
+    resultFile: DASHBOARD_ACTION_WORKER_RESULT_FILE,
+    timeoutMs: DASHBOARD_ACTION_WORKER_TIMEOUT_MS,
+    normalizeEnvelope: normalizeActionWorkerEnvelope,
+    parseResult: parseActionWorkerResult,
+    onComplete: completeDashboardWorkerAction,
+});
 
 function pollDashboardWorkerAction(ns) {
-    if (pendingDashboardActionWorker) {
-        const result = parseActionWorkerResult(
-            ns.read(DASHBOARD_ACTION_WORKER_RESULT_FILE),
-            pendingDashboardActionWorker.requestId
-        );
-        if (result) {
-            const completed = pendingDashboardActionWorker;
-            pendingDashboardActionWorker = null;
-            completeDashboardWorkerAction(ns, completed, result);
-        } else if (Date.now() - pendingDashboardActionWorker.startedAt >= DASHBOARD_ACTION_WORKER_TIMEOUT_MS) {
-            const timedOut = pendingDashboardActionWorker;
-            pendingDashboardActionWorker = null;
-            completeDashboardWorkerAction(ns, timedOut, {
-                ok: false,
-                message: "Dashboard action worker timed out.",
-                tone: "error",
-            });
-        }
-    }
-    startNextDashboardWorkerAction(ns);
+    dashboardActionWorker.poll(ns);
 }
 
 function queueDashboardWorkerAction(ns, command) {
     const workerCommand = buildDashboardWorkerCommand(ns, command);
     if (!workerCommand) return false;
-    dashboardActionWorkerQueue.push(workerCommand);
-    startNextDashboardWorkerAction(ns);
+    dashboardActionWorker.enqueue(ns, workerCommand);
     return true;
 }
 
 function applyQueuedDashboardActions(ns) {
     if (!ns) return;
     pollDashboardWorkerAction(ns);
-
     const queue = flushDashboardActionQueue();
     if (!Array.isArray(queue) || queue.length === 0) return;
-
-    for (const command of queue) {
-        if (!command || typeof command !== "object") continue;
-
-        try {
-            if (command.kind === "window-mode") {
-                const requestedMode = normalizeDashboardWindowMode(command.mode);
-                if (requestedMode !== dashboardTailLayoutState.mode) {
-                    dashboardTailLayoutState.requestedMode = requestedMode;
-                }
-                continue;
+    dispatchDashboardActions(ns, queue, {
+        "window-mode": (command) => {
+            const requestedMode = normalizeDashboardWindowMode(command.mode);
+            if (requestedMode !== dashboardTailLayoutState.mode) {
+                dashboardTailLayoutState.requestedMode = requestedMode;
             }
-
-            if (command.kind === "save-options") {
-                const rawOptions = command.options;
-                if (!rawOptions || typeof rawOptions !== "object") continue;
-                const defaults = getDefaultOptions();
-                const safeOptions = normalizeDashboardOptionsForCompare(rawOptions);
-                saveDashboardOptions(ns, safeOptions);
-                continue;
+        },
+        "save-options": (command) => {
+            const rawOptions = command.options;
+            if (!rawOptions || typeof rawOptions !== "object") return;
+            saveDashboardOptions(ns, normalizeDashboardOptionsForCompare(rawOptions));
+        },
+        "plugin-options": (command) => {
+            const integration = getServiceById(command.serviceId)?.pluginMetadata;
+            applyPluginIntegrationOptions(ns, integration, command.options, (tone, message) => {
+                logMajorAction(ns, message, tone);
+            }, { running: latestHomeProcessFilenames.has(integration?.scriptPath) });
+        },
+        "plugin-command": (command) => {
+            const integration = getServiceById(command.serviceId)?.pluginMetadata;
+            applyPluginIntegrationCommand(
+                ns,
+                integration,
+                command.command,
+                (tone, message) => logMajorAction(ns, message, tone),
+                { running: latestHomeProcessFilenames.has(integration?.scriptPath) }
+            );
+        },
+        dashboard: (command) => {
+            if (typeof command.actionId === "string") queueDashboardWorkerAction(ns, command);
+        },
+        file: (command) => {
+            if (command.actionId === "refresh") {
+                setDashboardFileActionResult(command.viewId, "success", "Home filesystem rescanned.");
+            } else {
+                queueDashboardWorkerAction(ns, command);
             }
-
-            if (command.kind === "plugin-options") {
-                const integration = getServiceById(command.serviceId)?.pluginMetadata;
-                applyPluginIntegrationOptions(ns, integration, command.options, (tone, message) => {
-                    logMajorAction(ns, message, tone);
-                }, { running: latestHomeProcessFilenames.has(integration?.scriptPath) });
-                continue;
+        },
+        script: (command) => {
+            if (typeof command.actionId === "string" && typeof command.filename === "string") {
+                performScriptFileAction(ns, command.actionId, command.filename);
             }
-
-            if (command.kind === "plugin-command") {
-                const integration = getServiceById(command.serviceId)?.pluginMetadata;
-                applyPluginIntegrationCommand(
-                    ns,
-                    integration,
-                    command.command,
-                    (tone, message) => logMajorAction(ns, message, tone),
-                    { running: latestHomeProcessFilenames.has(integration?.scriptPath) }
-                );
-                continue;
-            }
-
-            if (command.kind === "dashboard") {
-                if (typeof command.actionId === "string") {
-                    queueDashboardWorkerAction(ns, command);
-                }
-                continue;
-            }
-
-            if (command.kind === "file") {
-                if (command.actionId === "refresh") {
-                    setDashboardFileActionResult(command.viewId, "success", "Home filesystem rescanned.");
-                } else {
-                    queueDashboardWorkerAction(ns, command);
-                }
-                continue;
-            }
-
-            if (command.kind === "script") {
-                if (typeof command.actionId === "string" && typeof command.filename === "string") {
-                    performScriptFileAction(ns, command.actionId, command.filename);
-                }
-            }
-        } catch (error) {
+        },
+        onError: (command, error) => {
             const actionName = typeof command.kind === "string" ? command.kind : "unknown";
             const message = error && typeof error === "object" && "message" in error
                 ? String(error.message)
                 : String(error);
             logMajorAction(ns, `Dashboard action failed (${actionName}): ${message}`, "danger");
-        }
-    }
+        },
+    });
     pollDashboardWorkerAction(ns);
 }
 
@@ -2112,65 +2035,7 @@ function getRamHealthLevel(ramStatus) {
 }
 
 function validateDashboardServices(services) {
-    const issues = [];
-    const validServices = [];
-    const seenIds = new Set();
-
-    for (const service of services) {
-        if (!service || typeof service !== "object") {
-            issues.push("Service entry is not an object.");
-            continue;
-        }
-
-        if (typeof service.id !== "string" || service.id.length === 0) {
-            issues.push("Service is missing a valid id.");
-            continue;
-        }
-
-        if (seenIds.has(service.id)) {
-            issues.push(`Duplicate service id: ${service.id}`);
-            continue;
-        }
-        seenIds.add(service.id);
-
-        if (!DASHBOARD_MENU_GROUP_IDS.has(service.menuGroup)) {
-            issues.push(`Service ${service.id} references unknown menu group: ${service.menuGroup}`);
-            continue;
-        }
-
-        if (typeof service.menuLabel !== "string" || service.menuLabel.length === 0) {
-            issues.push(`Service ${service.id} is missing menuLabel.`);
-            continue;
-        }
-
-        if (service.subviews != null && !Array.isArray(service.subviews)) {
-            issues.push(`Service ${service.id} has non-array subviews.`);
-            continue;
-        }
-
-        if (Array.isArray(service.subviews)) {
-            const panelIds = new Set();
-            for (const panel of service.subviews) {
-                if (!panel || typeof panel.id !== "string" || typeof panel.label !== "string") {
-                    issues.push(`Service ${service.id} has invalid subview.`);
-                    continue;
-                }
-                panelIds.add(panel.id);
-            }
-
-            if (service.defaultPanelId && !panelIds.has(service.defaultPanelId)) {
-                issues.push(`Service ${service.id} defaultPanelId is not present in subviews.`);
-                if (SERVICE_CONTRACT_STRICT_MODE) {
-                    continue;
-                }
-            }
-        }
-
-        validServices.push(service);
-    }
-
-    const byId = new Map(validServices.map((service) => [service.id, service]));
-    return { services: validServices, byId, issues };
+    return validateDashboardServicesDefinition(services, DASHBOARD_MENU_GROUP_IDS, SERVICE_CONTRACT_STRICT_MODE);
 }
 
 function getDashboardServiceRegistry() {
@@ -2190,35 +2055,12 @@ function setDashboardServiceRegistry(registry) {
 }
 
 function validateDashboardViews(views = []) {
-    const validViews = [];
-    const seenIds = new Set();
-    for (const view of views) {
-        if (!view || typeof view !== "object") continue;
-        if (typeof view.id !== "string" || !view.id || seenIds.has(view.id)) continue;
-        if (!DASHBOARD_MENU_GROUP_IDS.has(view.menuGroup)) continue;
-        if (!DASHBOARD_VIEW_RENDERERS.has(view.renderer)) continue;
-        if (!Array.isArray(view.widgets)) continue;
-
-        const widgetIds = new Set();
-        const widgets = view.widgets.filter((widget) => {
-            const valid = widget
-                && typeof widget === "object"
-                && widget.enabled !== false
-                && typeof widget.id === "string"
-                && widget.id.length > 0
-                && !widgetIds.has(widget.id)
-                && DASHBOARD_HOME_WIDGET_TYPES.has(widget.type);
-            if (valid) widgetIds.add(widget.id);
-            return valid;
-        });
-        seenIds.add(view.id);
-        validViews.push({ ...view, widgets });
-    }
-
-    return {
-        views: validViews,
-        byId: new Map(validViews.map((view) => [view.id, view])),
-    };
+    return validateDashboardViewsDefinition(
+        views,
+        DASHBOARD_MENU_GROUP_IDS,
+        DASHBOARD_VIEW_RENDERERS,
+        DASHBOARD_HOME_WIDGET_TYPES
+    );
 }
 
 function getDashboardViewRegistry() {
@@ -2230,38 +2072,7 @@ function getDashboardViewRegistry() {
 }
 
 function applyDashboardViewWidgetContributions(views, services) {
-    const widgetsByViewId = new Map();
-    const layoutByViewId = new Map();
-    for (const service of Array.isArray(services) ? services : []) {
-        const contributions = service?.pluginMetadata?.viewWidgets;
-        if (!Array.isArray(contributions)) continue;
-        for (const contribution of contributions) {
-            const viewId = typeof contribution?.viewId === "string" ? contribution.viewId : "";
-            if (!viewId) continue;
-            const { viewId: ignoredViewId, viewLayout, ...widget } = contribution;
-            if (viewLayout && typeof viewLayout === "object" && !Array.isArray(viewLayout)) {
-                layoutByViewId.set(viewId, {
-                    ...(layoutByViewId.get(viewId) ?? {}),
-                    ...viewLayout,
-                });
-            }
-            const widgets = widgetsByViewId.get(viewId) ?? [];
-            widgets.push(widget);
-            widgetsByViewId.set(viewId, widgets);
-        }
-    }
-
-    return (Array.isArray(views) ? views : []).map((view) => ({
-        ...view,
-        layout: {
-            ...(view?.layout ?? {}),
-            ...(layoutByViewId.get(view?.id) ?? {}),
-        },
-        widgets: [
-            ...(Array.isArray(view?.widgets) ? view.widgets : []),
-            ...(widgetsByViewId.get(view?.id) ?? []),
-        ],
-    }));
+    return applyDashboardViewWidgetContributionsDefinition(views, services);
 }
 
 function rebuildDashboardViewRegistry(ns, homeScripts = []) {
@@ -2359,27 +2170,11 @@ function getServiceById(serviceId) {
 }
 
 function getDefaultSelectedServiceId() {
-    const services = getDashboardServiceRegistry().services;
-    for (const group of DASHBOARD_MENU_GROUPS) {
-        const service = services.find((candidate) => candidate.menuGroup === group.id);
-        if (service) return service.id;
-    }
-    return services[0]?.id ?? "";
+    return getDefaultSelectedServiceIdDefinition(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS);
 }
 
 function getMenuGroups() {
-    const registry = getDashboardServiceRegistry();
-    return DASHBOARD_MENU_GROUPS.map((group) => ({
-        id: group.id,
-        title: group.title,
-        items: registry.services
-            .filter((service) => service.menuGroup === group.id && service.menuVisible !== false)
-            .map((service) => ({
-                id: service.id,
-                label: service.menuLabel,
-                alwaysVisible: Boolean(service.alwaysVisible),
-            })),
-    }));
+    return buildDashboardMenuGroups(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS);
 }
 
 function getCenterPanelsForItem(selectedItem, homeScripts = []) {
@@ -2492,24 +2287,6 @@ function getServiceHealth(service, context) {
     };
 }
 
-function TonePill({ label, value, tone = "neutral" }) {
-    const tones = {
-        neutral: { border: "rgba(125, 160, 212, 0.18)", value: "#eef5ff" },
-        warn: { border: "rgba(255, 198, 92, 0.35)", value: "#ffd88a" },
-        danger: { border: "rgba(255, 122, 122, 0.35)", value: "#ffb0b0" },
-        success: { border: "rgba(110, 231, 168, 0.35)", value: "#baf6d2" },
-        info: { border: "rgba(108, 180, 255, 0.35)", value: "#c8e0ff" }
-    };
-    const style = tones[tone] ?? tones.neutral;
-
-    return (
-        <div data-dashboard-theme-role="quick-stat" style={{ ...WIDGET_STYLES.pill, borderColor: style.border }}>
-            <div style={WIDGET_STYLES.pillLabel}>{label}</div>
-            <div data-dashboard-theme-role="stat-value" style={{ ...WIDGET_STYLES.pillValue, color: style.value }}>{value}</div>
-        </div>
-    );
-}
-
 function formatUtilizationPercent(ratio) {
     const percentage = Math.max(0, Number(ratio) || 0) * 100;
     if (percentage === 0) return "0%";
@@ -2517,104 +2294,6 @@ function formatUtilizationPercent(ratio) {
     if (percentage < 1) return `${percentage.toFixed(2)}%`;
     if (percentage < 10) return `${percentage.toFixed(1)}%`;
     return `${Math.round(percentage)}%`;
-}
-
-function RamGauge({ label, shortLabel, used: rawUsed, total: rawTotal, ratio: rawRatio, valueFormat = "ram", size: rawSize = 60 }) {
-    const used = Math.max(0, Number(rawUsed) || 0);
-    const total = Math.max(0, Number(rawTotal) || 0);
-    const size = Math.max(48, Math.min(120, Math.floor(Number(rawSize) || 60)));
-    const center = size / 2;
-    const strokeWidth = Math.max(5, Math.round(size * 0.066));
-    const radius = center - strokeWidth - 2;
-    const configuredRatio = Number(rawRatio);
-    const ratio = Number.isFinite(configuredRatio) && configuredRatio >= 0
-        ? configuredRatio
-        : total > 0
-            ? used / total
-            : 0;
-    const hasCapacity = total > 0;
-    const clampedRatio = Math.max(0, Math.min(1, ratio));
-    const health = getRamHealthLevel({ ratio });
-    const stroke = !hasCapacity
-        ? "#759875"
-        : health === "danger"
-        ? "#ff7a7a"
-        : health === "warn"
-            ? "#ffc65c"
-            : "#6ee7a8";
-    const circumference = 2 * Math.PI * radius;
-    const percentage = hasCapacity ? formatUtilizationPercent(ratio) : "n/a";
-    const formattedUsed = valueFormat === "ram" ? formatRam(used) : used.toLocaleString();
-    const formattedTotal = valueFormat === "ram" ? formatRam(total) : total.toLocaleString();
-    const title = hasCapacity
-        ? `${label}: ${formattedUsed} / ${formattedTotal} (${percentage})`
-        : `${label}: no capacity`;
-
-    return (
-        <div
-            role="meter"
-            aria-label={`${label} utilization`}
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow={Math.min(100, ratio * 100)}
-            title={title}
-            style={{
-                position: "relative",
-                width: `${size}px`,
-                height: `${size}px`,
-                flex: "0 0 auto",
-            }}
-        >
-            <svg
-                viewBox={`0 0 ${size} ${size}`}
-                width={size}
-                height={size}
-                aria-hidden="true"
-                style={{ display: "block", transform: "rotate(-90deg)" }}
-            >
-                <circle
-                    cx={center}
-                    cy={center}
-                    r={radius}
-                    fill="rgba(8, 8, 8, 0.96)"
-                    stroke="rgba(125, 160, 212, 0.18)"
-                    strokeWidth={strokeWidth}
-                />
-                <circle
-                    cx={center}
-                    cy={center}
-                    r={radius}
-                    fill="none"
-                    stroke={stroke}
-                    strokeWidth={strokeWidth}
-                    strokeLinecap="round"
-                    style={{
-                        strokeDasharray: circumference,
-                        strokeDashoffset: circumference * (1 - clampedRatio),
-                    }}
-                />
-            </svg>
-            <div
-                style={{
-                    position: "absolute",
-                    inset: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    lineHeight: 1.05,
-                    pointerEvents: "none",
-                }}
-            >
-                <div style={{ color: stroke, fontSize: percentage.length > 5 ? `${Math.max(9, size * 0.14)}px` : `${Math.max(10, size * 0.16)}px`, fontWeight: 800 }}>
-                    {percentage}
-                </div>
-                <div style={{ color: "#7fda7f", fontSize: `${Math.max(7, size * 0.095)}px`, letterSpacing: "0.08em", marginTop: "2px" }}>
-                    {shortLabel}
-                </div>
-            </div>
-        </div>
-    );
 }
 
 function getGraphValue(record, key) {
@@ -2885,247 +2564,6 @@ function formatGraphXValue(value, format = "number") {
     return formatCompactDashboardValue(numeric);
 }
 
-function DataGraph({ section, index = 0, presentation = "default" }) {
-    const terminalMode = presentation === "terminal" && activeDashboardTheme?.followGame === true;
-    const rawData = Array.isArray(section?.data) ? section.data : [];
-    const requestedPointLimit = Math.floor(Number(section?.maxPoints));
-    const pointLimit = Number.isFinite(requestedPointLimit)
-        ? Math.max(2, Math.min(2000, requestedPointLimit))
-        : 240;
-    const xKey = typeof section?.xKey === "string" ? section.xKey : "";
-    const series = (Array.isArray(section?.series) ? section.series : [])
-        .filter((entry) => {
-            return entry
-                && typeof entry.key === "string"
-                && entry.key.length > 0
-                && typeof entry.label === "string";
-        });
-    const points = rawData
-        .slice(-pointLimit)
-        .map((record, pointIndex) => {
-            const rawX = xKey ? Number(getGraphValue(record, xKey)) : pointIndex;
-            if (!Number.isFinite(rawX)) return null;
-            return { record, x: rawX };
-        })
-        .filter(Boolean)
-        .sort((left, right) => left.x - right.x);
-    const yValues = points.flatMap(({ record }) => {
-        return series
-            .map((entry) => Number(getGraphValue(record, entry.key)))
-            .filter(Number.isFinite);
-    });
-    const frameStyle = {
-        ...WIDGET_STYLES.sectionFrame,
-        marginTop: index > 0 ? "5px" : 0,
-        ...(terminalMode ? {
-            padding: "7px 8px 5px",
-            background: "#000000",
-        } : {}),
-    };
-    const title = section?.title || "History";
-
-    if (points.length === 0 || series.length === 0 || yValues.length === 0) {
-        return (
-            <div data-dashboard-theme-role="graph-panel" style={frameStyle}>
-                <div
-                    data-dashboard-theme-role="data-heading"
-                    title={title}
-                    style={{ ...WIDGET_STYLES.strong, ...WIDGET_STYLES.graphTitle, marginBottom: "5px" }}
-                >
-                    {terminalMode ? "> " : ""}{title}
-                </div>
-                <div style={WIDGET_STYLES.muted}>
-                    {section?.emptyText || "Collecting history data..."}
-                </div>
-            </div>
-        );
-    }
-
-    let yMin = Math.min(...yValues);
-    let yMax = Math.max(...yValues);
-    if (section?.includeZero === true) {
-        yMin = Math.min(0, yMin);
-        yMax = Math.max(0, yMax);
-    }
-    if (yMin === yMax) {
-        const adjustment = Math.max(1, Math.abs(yMin) * 0.08);
-        yMin -= adjustment;
-        yMax += adjustment;
-    } else {
-        const padding = (yMax - yMin) * 0.08;
-        yMin -= padding;
-        yMax += padding;
-    }
-
-    let xMin = points[0].x;
-    let xMax = points[points.length - 1].x;
-    if (xMin === xMax) {
-        xMin -= 1;
-        xMax += 1;
-    }
-
-    const graphWidth = 760;
-    const graphHeight = Math.max(140, Math.min(320, Math.floor(Number(section?.height)) || 190));
-    const plot = {
-        left: 68,
-        right: graphWidth - 12,
-        top: 10,
-        bottom: graphHeight - 25,
-    };
-    const plotWidth = plot.right - plot.left;
-    const plotHeight = plot.bottom - plot.top;
-    const scaleX = (value) => plot.left + ((value - xMin) / (xMax - xMin)) * plotWidth;
-    const scaleY = (value) => plot.bottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
-    const gridTicks = Array.from({ length: 5 }, (_, tickIndex) => {
-        const ratio = tickIndex / 4;
-        const value = yMax - ratio * (yMax - yMin);
-        return { value, y: plot.top + ratio * plotHeight };
-    });
-    const yFormat = section?.yFormat ?? "number";
-    const xFormat = section?.xFormat ?? "number";
-
-    const renderedSeries = series.map((entry, seriesIndex) => {
-        let path = "";
-        let drawing = false;
-        let latest = null;
-        for (const point of points) {
-            const value = Number(getGraphValue(point.record, entry.key));
-            if (!Number.isFinite(value)) {
-                drawing = false;
-                continue;
-            }
-            const x = scaleX(point.x);
-            const y = scaleY(value);
-            path += `${drawing ? " L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-            drawing = true;
-            latest = { x, y, value, timestamp: point.x };
-        }
-        return {
-            ...entry,
-            color: entry.color || ["#6ee7a8", "#6cb4ff", "#c084fc", "#ffc66c"][seriesIndex % 4],
-            path,
-            latest,
-        };
-    }).filter((entry) => entry.path && entry.latest);
-
-    return (
-        <div data-dashboard-theme-role="graph-panel" style={frameStyle}>
-            <div style={WIDGET_STYLES.graphHeader}>
-                <div data-dashboard-theme-role="data-heading" title={title} style={{ ...WIDGET_STYLES.strong, ...WIDGET_STYLES.graphTitle }}>
-                    {terminalMode ? "> " : ""}{title}
-                </div>
-                <div style={{ ...WIDGET_STYLES.muted, ...WIDGET_STYLES.tiny, ...WIDGET_STYLES.graphPointCount }}>
-                    {terminalMode ? `[${points.length} pts]` : `${points.length} point${points.length === 1 ? "" : "s"}`}
-                </div>
-            </div>
-            <div style={WIDGET_STYLES.graphLegend}>
-                {renderedSeries.map((entry) => (
-                    <div key={entry.key} style={WIDGET_STYLES.graphLegendItem}>
-                        <span style={{ ...WIDGET_STYLES.graphSwatch, borderRadius: terminalMode ? 0 : WIDGET_STYLES.graphSwatch.borderRadius, background: entry.color }} />
-                        <span data-dashboard-theme-role="data-value">
-                            {entry.label}{terminalMode ? " = " : ": "}{formatCompactDashboardValue(entry.latest.value, yFormat)}
-                        </span>
-                    </div>
-                ))}
-            </div>
-            <svg
-                role="img"
-                aria-label={title}
-                viewBox={`0 0 ${graphWidth} ${graphHeight}`}
-                preserveAspectRatio="none"
-                style={{ ...WIDGET_STYLES.graphCanvas, height: `${graphHeight}px` }}
-            >
-                <title>{title}</title>
-                {gridTicks.map((tick, tickIndex) => (
-                    <g key={`grid-${tickIndex}`}>
-                        <line
-                            x1={plot.left}
-                            y1={tick.y}
-                            x2={plot.right}
-                            y2={tick.y}
-                            stroke={terminalMode ? "rgba(238, 245, 255, 0.11)" : "rgba(125, 160, 125, 0.16)"}
-                            strokeDasharray={terminalMode ? "2 5" : undefined}
-                            strokeWidth="1"
-                            vectorEffect="non-scaling-stroke"
-                        />
-                        <text
-                            x={plot.left - 7}
-                            y={tick.y}
-                            fill={terminalMode ? "#999999" : "#759875"}
-                            fontSize="9"
-                            textAnchor="end"
-                            dominantBaseline="middle"
-                        >
-                            {formatCompactDashboardValue(tick.value, yFormat)}
-                        </text>
-                    </g>
-                ))}
-                {terminalMode ? React.createElement("path", {
-                    "aria-hidden": "true",
-                    d: `M ${plot.left} ${plot.top} V ${plot.bottom} H ${plot.right} v 4`,
-                    fill: "none",
-                    stroke: "rgba(238, 245, 255, 0.34)",
-                    strokeWidth: "1",
-                    vectorEffect: "non-scaling-stroke",
-                }) : null}
-                {yMin < 0 && yMax > 0 ? (
-                    <line
-                        x1={plot.left}
-                        y1={scaleY(0)}
-                        x2={plot.right}
-                        y2={scaleY(0)}
-                        stroke="rgba(238, 245, 255, 0.38)"
-                        strokeDasharray="4 4"
-                        strokeWidth="1"
-                        vectorEffect="non-scaling-stroke"
-                    />
-                ) : null}
-                {renderedSeries.map((entry) => (
-                    <g key={entry.key}>
-                        <path
-                            d={entry.path}
-                            fill="none"
-                            stroke={entry.color}
-                            strokeWidth={Number(entry.strokeWidth) || 2}
-                            strokeLinejoin={terminalMode ? "miter" : "round"}
-                            strokeLinecap={terminalMode ? "square" : "round"}
-                            vectorEffect="non-scaling-stroke"
-                        />
-                        {terminalMode ? React.createElement("rect", {
-                            x: entry.latest.x - 3,
-                            y: entry.latest.y - 3,
-                            width: "6",
-                            height: "6",
-                            fill: entry.color,
-                            vectorEffect: "non-scaling-stroke",
-                        }, React.createElement("title", null,
-                            `${entry.label}: ${formatCompactDashboardValue(entry.latest.value, yFormat)}`
-                        )) : (
-                            <circle
-                                cx={entry.latest.x}
-                                cy={entry.latest.y}
-                                r="3"
-                                fill={entry.color}
-                                vectorEffect="non-scaling-stroke"
-                            >
-                                <title>
-                                    {entry.label}: {formatCompactDashboardValue(entry.latest.value, yFormat)}
-                                </title>
-                            </circle>
-                        )}
-                    </g>
-                ))}
-                <text x={plot.left} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="start">
-                    {formatGraphXValue(xMin, xFormat)}
-                </text>
-                <text x={plot.right} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="end">
-                    {formatGraphXValue(xMax, xFormat)}
-                </text>
-            </svg>
-        </div>
-    );
-}
-
 function getHomeTonePalette(tone = "neutral") {
     const palettes = {
         neutral: { accent: "#9ab0cc", border: "rgba(125, 160, 212, 0.2)", glow: "rgba(125, 160, 212, 0.08)" },
@@ -3137,1366 +2575,6 @@ function getHomeTonePalette(tone = "neutral") {
     return palettes[tone] ?? palettes.neutral;
 }
 
-function HomePanel({ title, subtitle = "", children }) {
-    return (
-        <section data-dashboard-theme-role="card-frame" style={WIDGET_STYLES.homePanel}>
-            <div style={WIDGET_STYLES.homePanelHeader}>
-                <div style={WIDGET_STYLES.homePanelTitle}>{title}</div>
-                {subtitle ? <div style={WIDGET_STYLES.homePanelSubtitle}>{subtitle}</div> : null}
-            </div>
-            {children}
-        </section>
-    );
-}
-
-function PluginRuntimeWarning({ statuses = [] }) {
-    const stoppedStatuses = (Array.isArray(statuses) ? statuses : [])
-        .filter((status) => status?.requiresRuntime && !status?.running);
-    if (stoppedStatuses.length === 0) return null;
-
-    const serviceNames = stoppedStatuses
-        .map((status) => String(status.label ?? status.serviceId ?? "Plugin"))
-        .join(", ");
-    return (
-        <div
-            role="status"
-            style={{
-                marginBottom: "8px",
-                padding: "6px 8px",
-                color: "#ffd17a",
-                fontSize: "9px",
-                lineHeight: 1.35,
-                border: "1px solid rgba(255, 198, 92, 0.35)",
-                borderRadius: "6px",
-                background: "rgba(34, 24, 10, 0.92)",
-            }}
-        >
-            <strong>{serviceNames}</strong> {stoppedStatuses.length === 1 ? "service is" : "services are"} stopped. Showing cached data.
-        </div>
-    );
-}
-
-function HomeMetricCard({ metric }) {
-    const palette = getHomeTonePalette(metric?.tone);
-    return (
-        <div
-            title={`${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"}`}
-            style={{
-                ...WIDGET_STYLES.homeMetric,
-                borderColor: palette.border,
-                background: `linear-gradient(140deg, ${palette.glow}, rgba(5, 9, 8, 0.82) 58%)`,
-                boxShadow: `inset 0 -2px 0 ${palette.accent}`,
-            }}
-        >
-            <div style={WIDGET_STYLES.homeMetricLabel}>{metric?.label ?? "Metric"}</div>
-            <div data-dashboard-theme-role="stat-value" style={{ ...WIDGET_STYLES.homeMetricValue, color: palette.accent }}>
-                {metric?.value ?? "n/a"}
-            </div>
-            {metric?.sourceLabel ? (
-                <div style={WIDGET_STYLES.homeMetricSource}>{metric.sourceLabel}</div>
-            ) : null}
-        </div>
-    );
-}
-
-function HomeHealthRing({ counts }) {
-    const segments = [
-        { id: "danger", label: "Danger", count: Math.max(0, Number(counts?.danger) || 0), color: "#ff7a7a" },
-        { id: "warn", label: "Warning", count: Math.max(0, Number(counts?.warn) || 0), color: "#ffc65c" },
-        { id: "healthy", label: "Healthy", count: Math.max(0, Number(counts?.healthy) || 0), color: "#6ee7a8" },
-    ];
-    const total = segments.reduce((sum, segment) => sum + segment.count, 0);
-    const radius = 42;
-    const circumference = 2 * Math.PI * radius;
-    let offset = 0;
-    const ringSegments = segments.map((segment) => {
-        const length = total > 0 ? (segment.count / total) * circumference : 0;
-        const ring = { ...segment, length, offset };
-        offset += length;
-        return ring;
-    });
-
-    return (
-        <div style={WIDGET_STYLES.homeHealthLayout}>
-            <div style={{ position: "relative", width: "108px", height: "108px" }}>
-                <svg viewBox="0 0 108 108" width="108" height="108" aria-label={`${total} monitored services`}>
-                    <circle cx="54" cy="54" r={radius} fill="rgba(4, 8, 7, 0.86)" stroke="rgba(125, 160, 212, 0.14)" strokeWidth="10" />
-                    {ringSegments.filter((segment) => segment.length > 0).map((segment) => (
-                        <circle
-                            key={segment.id}
-                            cx="54"
-                            cy="54"
-                            r={radius}
-                            fill="none"
-                            stroke={segment.color}
-                            strokeWidth="10"
-                            strokeDasharray={`${segment.length} ${circumference - segment.length}`}
-                            strokeDashoffset={-segment.offset}
-                            transform="rotate(-90 54 54)"
-                        />
-                    ))}
-                </svg>
-                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-                    <div style={{ color: "#e7fff0", fontSize: "20px", fontWeight: 800 }}>{total}</div>
-                    <div style={{ color: "#6c8b78", fontSize: "7px", letterSpacing: "0.12em" }}>SERVICES</div>
-                </div>
-            </div>
-            <div style={WIDGET_STYLES.homeHealthLegend}>
-                {segments.map((segment) => (
-                    <div key={segment.id} style={WIDGET_STYLES.homeHealthLegendRow}>
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: segment.color }} />
-                        <span>{segment.label}</span>
-                        <span style={{ color: segment.color, fontWeight: 800 }}>{segment.count}</span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function HomeGaugeCard({ gauge, size = 84 }) {
-    const used = Math.max(0, Number(gauge?.used) || 0);
-    const total = Math.max(0, Number(gauge?.total) || 0);
-    const valueFormat = gauge?.valueFormat ?? "number";
-    return (
-        <div style={WIDGET_STYLES.homeGaugeCard}>
-            <RamGauge {...gauge} size={size} />
-            <div style={WIDGET_STYLES.homeGaugeValue}>
-                {formatResourceCardValue(used, valueFormat)} / {formatResourceCardValue(total, valueFormat)}
-            </div>
-        </div>
-    );
-}
-
-function HomeServiceLandscape({ groups, healthById }) {
-    return (
-        <div style={WIDGET_STYLES.homeServiceGrid}>
-            {groups.map((group) => {
-                const counts = group.services.reduce((result, service) => {
-                    const level = healthById?.[service.id]?.level ?? "neutral";
-                    if (level === "danger") result.danger += 1;
-                    else if (level === "warn") result.warn += 1;
-                    else result.healthy += 1;
-                    return result;
-                }, { danger: 0, warn: 0, healthy: 0 });
-                const total = group.services.length;
-                const segments = [
-                    { id: "danger", count: counts.danger, color: "#ff7a7a" },
-                    { id: "warn", count: counts.warn, color: "#ffc65c" },
-                    { id: "healthy", count: counts.healthy, color: "#6ee7a8" },
-                ];
-                return (
-                    <div key={group.id} style={WIDGET_STYLES.homeServiceRow}>
-                        <div style={WIDGET_STYLES.homeServiceLabel}>
-                            <span>{group.title}</span>
-                            <span>{total}</span>
-                        </div>
-                        <div style={WIDGET_STYLES.homeServiceBar} title={`${group.title}: ${counts.healthy} healthy, ${counts.warn} warning, ${counts.danger} danger`}>
-                            {segments.filter((segment) => segment.count > 0).map((segment) => (
-                                <span
-                                    key={segment.id}
-                                    style={{
-                                        width: `${(segment.count / total) * 100}%`,
-                                        background: segment.color,
-                                        boxShadow: `0 0 8px ${segment.color}44`,
-                                    }}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                );
-            })}
-        </div>
-    );
-}
-
-function selectDashboardViewItems(items, widget) {
-    const candidates = Array.isArray(items) ? items : [];
-    let selected = candidates;
-
-    if (widget?.includeSystem === false) {
-        selected = selected.filter((item) => item?.sourceKind !== "system");
-    }
-    if (Array.isArray(widget?.serviceIds) && widget.serviceIds.length > 0) {
-        const serviceIds = new Set(widget.serviceIds.filter((value) => typeof value === "string"));
-        selected = selected.filter((item) => serviceIds.has(item?.serviceId));
-    }
-    if (Array.isArray(widget?.menuGroups) && widget.menuGroups.length > 0) {
-        const menuGroups = new Set(widget.menuGroups.filter((value) => typeof value === "string"));
-        selected = selected.filter((item) => menuGroups.has(item?.menuGroup));
-    }
-    if (Array.isArray(widget?.itemIds) && widget.itemIds.length > 0) {
-        const byId = new Map(selected.map((item) => [item.id, item]));
-        selected = widget.itemIds.map((itemId) => byId.get(itemId)).filter(Boolean);
-    }
-
-    const maximum = Math.floor(Number(widget?.maxItems));
-    return Number.isFinite(maximum) && maximum >= 0 ? selected.slice(0, maximum) : selected;
-}
-
-function selectDashboardViewServiceGroups(groups, widget) {
-    const menuGroups = Array.isArray(widget?.menuGroups) && widget.menuGroups.length > 0
-        ? new Set(widget.menuGroups.filter((value) => typeof value === "string"))
-        : null;
-    const serviceIds = Array.isArray(widget?.serviceIds) && widget.serviceIds.length > 0
-        ? new Set(widget.serviceIds.filter((value) => typeof value === "string"))
-        : null;
-
-    return (Array.isArray(groups) ? groups : [])
-        .filter((group) => !menuGroups || menuGroups.has(group.id))
-        .map((group) => ({
-            ...group,
-            services: serviceIds
-                ? group.services.filter((service) => serviceIds.has(service.id))
-                : group.services,
-        }))
-        .filter((group) => group.services.length > 0);
-}
-
-function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
-    const widgets = Array.isArray(view?.widgets) ? view.widgets : [];
-    const hasPlayerStatsWidget = playerStatsEnabled !== false && widgets.some((widget) => widget?.type === "player-stats");
-    const configuredColumns = Math.floor(Number(
-        playerStatsEnabled === false
-            ? view?.layout?.columnsWithoutPlayerStats ?? view?.layout?.columns
-            : view?.layout?.columns
-    ));
-    const columns = Number.isFinite(configuredColumns) ? Math.max(1, Math.min(6, configuredColumns)) : 3;
-    const configuredGap = Math.floor(Number(view?.layout?.gap));
-    const gap = Number.isFinite(configuredGap) ? Math.max(0, Math.min(24, configuredGap)) : 10;
-    const gridTemplateColumns = hasPlayerStatsWidget && columns > 1
-        ? `repeat(${columns - 1}, minmax(0, 1fr)) ${PLAYER_STATS_WIDGET_WIDTH}px`
-        : `repeat(${columns}, minmax(0, 1fr))`;
-    const renderWidget = (widget) => {
-        const configuredSpan = Math.floor(Number(widget?.columnSpan));
-        const columnSpan = Number.isFinite(configuredSpan)
-            ? Math.max(1, Math.min(columns, configuredSpan))
-            : 1;
-        const configuredColumnStart = Math.floor(Number(widget?.columnStart));
-        const columnStart = Number.isFinite(configuredColumnStart)
-            ? Math.max(1, Math.min(columns, configuredColumnStart))
-            : null;
-        const effectiveColumnSpan = columnStart == null
-            ? columnSpan
-            : Math.max(1, Math.min(columnSpan, columns - columnStart + 1));
-        const configuredRowStart = Math.floor(Number(widget?.rowStart));
-        const rowStart = Number.isFinite(configuredRowStart) ? Math.max(1, configuredRowStart) : null;
-        const configuredRowSpan = Math.floor(Number(widget?.rowSpan));
-        const rowSpan = Number.isFinite(configuredRowSpan) ? Math.max(1, configuredRowSpan) : 1;
-        const wrapperStyle = {
-            minWidth: 0,
-            gridColumn: columnStart == null ? `span ${effectiveColumnSpan}` : `${columnStart} / span ${effectiveColumnSpan}`,
-            gridRow: rowStart == null
-                ? (rowSpan > 1 ? `span ${rowSpan}` : undefined)
-                : `${rowStart} / span ${rowSpan}`,
-        };
-        const title = typeof widget?.title === "string" ? widget.title : "Overview";
-        const subtitle = typeof widget?.subtitle === "string" ? widget.subtitle : "";
-        const emptyText = typeof widget?.emptyText === "string" ? widget.emptyText : "No data available.";
-
-        if (widget.type === "metrics") {
-            const selectedMetrics = selectDashboardViewItems(metrics, widget);
-            return (
-                <div key={widget.id} style={wrapperStyle}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        {selectedMetrics.length > 0 ? (
-                            <div style={WIDGET_STYLES.homeMetricGrid}>
-                                {selectedMetrics.map((metric) => <HomeMetricCard key={metric.id} metric={metric} />)}
-                            </div>
-                        ) : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        if (widget.type === "player-stats") {
-            if (playerStatsEnabled === false) return null;
-            const widgetServiceIds = Array.isArray(widget.serviceIds)
-                ? widget.serviceIds.filter((value) => typeof value === "string")
-                : [];
-            const serviceIds = widgetServiceIds.length > 0
-                ? new Set(widgetServiceIds)
-                : null;
-            const selectedDefinitions = (Array.isArray(playerHudDefinitions) ? playerHudDefinitions : [])
-                .filter((definition) => (!serviceIds || serviceIds.has(definition.serviceId)) && (definition.groups?.length ?? 0) > 0);
-            const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
-            return (
-                <div key={widget.id} style={{ ...wrapperStyle, ...WIDGET_STYLES.playerStatusColumn }}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        <PluginRuntimeWarning statuses={runtimeStatuses} />
-                        {selectedDefinitions.length > 0
-                            ? <PlayerStatsOverview definitions={selectedDefinitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation} />
-                            : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        if (widget.type === "health") {
-            const selectedServices = selectDashboardViewItems(healthServices, widget);
-            const counts = selectedServices.reduce((result, service) => {
-                if (service.level === "danger") result.danger += 1;
-                else if (service.level === "warn") result.warn += 1;
-                else result.healthy += 1;
-                return result;
-            }, { danger: 0, warn: 0, healthy: 0 });
-            const alerts = selectedServices
-                .filter((service) => service.level === "warn" || service.level === "danger")
-                .sort((left, right) => {
-                    if (left.level === right.level) return left.label.localeCompare(right.label);
-                    return left.level === "danger" ? -1 : 1;
-                });
-            const configuredAlertLimit = Math.floor(Number(widget.maxAlerts));
-            const alertLimit = Number.isFinite(configuredAlertLimit) ? Math.max(0, configuredAlertLimit) : 2;
-            const visibleAlerts = alerts.slice(0, alertLimit);
-            const hiddenAlertCount = Math.max(0, alerts.length - visibleAlerts.length);
-            return (
-                <div key={widget.id} style={wrapperStyle}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        <HomeHealthRing counts={counts} />
-                        <div style={WIDGET_STYLES.homeAlertList}>
-                            {visibleAlerts.length > 0 ? visibleAlerts.map((alert) => {
-                                const palette = getHomeTonePalette(alert.level);
-                                return (
-                                    <div key={alert.id} style={{ ...WIDGET_STYLES.homeAlert, borderColor: palette.border }}>
-                                        <span style={{ color: palette.accent, fontWeight: 800 }}>{alert.level === "danger" ? "!!" : "!"}</span>
-                                        <span><span style={{ color: palette.accent }}>{alert.label}</span>{alert.summary ? ` — ${alert.summary}` : ""}</span>
-                                    </div>
-                                );
-                            }) : (
-                                <div style={{ ...WIDGET_STYLES.homeAlert, borderColor: "rgba(110, 231, 168, 0.2)", color: "#8ef0b5" }}>
-                                    <span>✓</span><span>No warnings or danger alerts.</span>
-                                </div>
-                            )}
-                            {hiddenAlertCount > 0 ? <div style={WIDGET_STYLES.homePanelSubtitle}>+{hiddenAlertCount} more alert{hiddenAlertCount === 1 ? "" : "s"}</div> : null}
-                        </div>
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        if (widget.type === "gauges") {
-            const selectedGauges = selectDashboardViewItems(gauges, widget);
-            const configuredGaugeSize = Math.floor(Number(widget.gaugeSize));
-            const gaugeSize = Number.isFinite(configuredGaugeSize) ? configuredGaugeSize : 84;
-            return (
-                <div key={widget.id} style={wrapperStyle}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        {selectedGauges.length > 0 ? (
-                            <div style={WIDGET_STYLES.homeGaugeGrid}>
-                                {selectedGauges.map((gauge) => <HomeGaugeCard key={gauge.id} gauge={gauge} size={gaugeSize} />)}
-                            </div>
-                        ) : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        if (widget.type === "service-health") {
-            const selectedGroups = selectDashboardViewServiceGroups(serviceGroups, widget);
-            return (
-                <div key={widget.id} style={wrapperStyle}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        {selectedGroups.length > 0
-                            ? <HomeServiceLandscape groups={selectedGroups} healthById={serviceHealthById} />
-                            : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        if (widget.type === "graphs") {
-            const selectedGraphs = selectDashboardViewItems(graphs, widget);
-            const configuredGraphColumns = Math.floor(Number(widget.graphColumns));
-            const graphColumns = Number.isFinite(configuredGraphColumns) ? Math.max(1, Math.min(4, configuredGraphColumns)) : 2;
-            const configuredGraphHeight = Math.floor(Number(widget.graphHeight));
-            const graphHeight = Number.isFinite(configuredGraphHeight) ? configuredGraphHeight : 160;
-            return (
-                <div key={widget.id} style={wrapperStyle}>
-                    <HomePanel title={title} subtitle={subtitle}>
-                        {selectedGraphs.length > 0 ? (
-                            <div style={{ ...WIDGET_STYLES.homeGraphGrid, marginTop: 0, gridTemplateColumns: `repeat(${graphColumns}, minmax(0, 1fr))` }}>
-                                {selectedGraphs.map((graph) => (
-                                    <DataGraph key={graph.id} section={{ ...graph, height: graphHeight }} index={0} presentation="terminal" />
-                                ))}
-                            </div>
-                        ) : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
-                    </HomePanel>
-                </div>
-            );
-        }
-
-        return null;
-    };
-
-    return (
-        <main
-            data-dashboard-theme-role="app-frame"
-            ref={scrollRef}
-            aria-label="System overview"
-            style={WIDGET_STYLES.systemOverview}
-            onScroll={onScroll}
-        >
-            <div style={WIDGET_STYLES.homeHeader}>
-                <div>
-                    <div style={WIDGET_STYLES.homeTitle}>{view?.title ?? view?.menuLabel ?? "Overview"}</div>
-                    {view?.subtitle ? <div style={{ ...WIDGET_STYLES.muted, marginTop: "3px" }}>{view.subtitle}</div> : null}
-                </div>
-                <div style={getDashboardFrameControlGroupStyle()}>
-                    {killAllControl}
-                    {windowControl}
-                    <button
-                        type="button"
-                        title="Close System Overview and return to dashboard controls"
-                        style={getDashboardFrameControlStyle("neutral")}
-                        onClick={onExit}
-                    >
-                        {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
-                    </button>
-                </div>
-            </div>
-
-            <div
-                style={{
-                    ...WIDGET_STYLES.homeWidgetGrid,
-                    gridTemplateColumns,
-                    gap: `${gap}px`,
-                }}
-            >
-                {widgets.map(renderWidget)}
-            </div>
-        </main>
-    );
-}
-
-function getDashboardViewValue(source, key) {
-    if (!source || typeof source !== "object" || typeof key !== "string" || !key) return undefined;
-    return key.split(".").reduce((value, segment) => {
-        if (!value || typeof value !== "object" || !(segment in value)) return undefined;
-        return value[segment];
-    }, source);
-}
-
-function getDashboardViewInteractionState(viewId) {
-    const registry = globalThis[DASHBOARD_VIEW_INTERACTION_STATE_KEY];
-    if (!registry || typeof registry !== "object") return {};
-    const saved = registry[viewId];
-    return saved && typeof saved === "object" ? saved : {};
-}
-
-function saveDashboardViewInteractionState(viewId, state) {
-    const registry = globalThis[DASHBOARD_VIEW_INTERACTION_STATE_KEY];
-    globalThis[DASHBOARD_VIEW_INTERACTION_STATE_KEY] = {
-        ...(registry && typeof registry === "object" ? registry : {}),
-        [viewId]: state,
-    };
-}
-
-function formatNetworkMapMetric(primary, secondary, format) {
-    const left = Number(primary) || 0;
-    const right = Number(secondary) || 0;
-    if (format === "ramRatio") return `${formatRam(left)} / ${formatRam(right)}`;
-    if (format === "moneyRatio") return `${formatMoney(left)} / ${formatMoney(right)}`;
-    if (format === "ratio") return `${left.toLocaleString()} / ${right.toLocaleString()}`;
-    if (format === "percent") return `${(left * 100).toFixed(1)}%`;
-    if (format === "decimal") return left.toLocaleString(undefined, { maximumFractionDigits: 2 });
-    if (format === "boolean") return primary ? "Yes" : "No";
-    if (format === "ram") return formatRam(left);
-    if (format === "money") return formatMoney(left);
-    if (format === "number") return left.toLocaleString();
-    return secondary === undefined ? String(primary ?? "n/a") : `${primary ?? 0} / ${secondary ?? 0}`;
-}
-
-function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl }) {
-    const dataConfig = view?.data ?? {};
-    const fields = view?.fields ?? {};
-    const layoutConfig = view?.layout ?? {};
-    const actionConfig = view?.actions ?? {};
-    const filterConfig = view?.filters ?? {};
-    const modeSelector = view?.modeSelector ?? {};
-    const rawModeMaps = getDashboardViewValue(telemetry, dataConfig.mapsKey);
-    const modeMaps = rawModeMaps && typeof rawModeMaps === "object" ? rawModeMaps : null;
-    const rawModeOptions = getDashboardViewValue(telemetry, dataConfig.mapOptionsKey);
-    const modeOptions = Array.isArray(rawModeOptions) ? rawModeOptions : [];
-    const savedInteraction = getDashboardViewInteractionState(view?.id ?? "");
-    const defaultModeId = String(modeSelector.defaultId ?? modeOptions[0]?.[modeSelector.idKey] ?? "");
-    const [selectedModeId, setSelectedModeId] = React.useState(() => String(savedInteraction?.selectedModeId ?? defaultModeId));
-    const activeModeOption = modeOptions.find((option) => String(getDashboardViewValue(option, modeSelector.idKey) ?? "") === selectedModeId)
-        ?? modeOptions.find((option) => String(getDashboardViewValue(option, modeSelector.idKey) ?? "") === defaultModeId)
-        ?? null;
-    const activeModeId = String(getDashboardViewValue(activeModeOption, modeSelector.idKey) ?? selectedModeId ?? defaultModeId);
-    const activeTelemetry = modeMaps?.[activeModeId] ?? telemetry;
-    const layoutStrategy = String(getDashboardViewValue(activeModeOption, modeSelector.layoutKey) ?? "layered");
-    const showRoutes = getDashboardViewValue(activeModeOption, modeSelector.routesKey) !== false;
-    const showCloudControl = getDashboardViewValue(activeModeOption, modeSelector.cloudKey) !== false;
-    const showNodeFilters = getDashboardViewValue(activeModeOption, modeSelector.filtersKey) !== false;
-    const stateSetId = String(getDashboardViewValue(activeModeOption, modeSelector.stateSetKey) ?? "");
-    const metricSetId = String(getDashboardViewValue(activeModeOption, modeSelector.metricSetKey) ?? "");
-    const filterDefinitions = Array.isArray(filterConfig.nodeFilters) ? filterConfig.nodeFilters : [];
-    const stateDefinitions = Array.isArray(view?.stateSets?.[stateSetId])
-        ? view.stateSets[stateSetId]
-        : Array.isArray(view?.states) ? view.states : [];
-    const metricDefinitions = Array.isArray(view?.metricSets?.[metricSetId])
-        ? view.metricSets[metricSetId]
-        : Array.isArray(view?.metrics) ? view.metrics : [];
-    const nodeActionDefinitions = Array.isArray(view?.nodeActions) ? view.nodeActions : [];
-    const rawNodes = getDashboardViewValue(activeTelemetry, dataConfig.nodesKey);
-    const rawEdges = getDashboardViewValue(activeTelemetry, dataConfig.edgesKey);
-    const allNodes = Array.isArray(rawNodes) ? rawNodes : [];
-    const edges = Array.isArray(rawEdges) ? rawEdges : [];
-    const currentId = String(getDashboardViewValue(activeTelemetry, dataConfig.currentKey) ?? "");
-    const canConnect = Boolean(getDashboardViewValue(activeTelemetry, dataConfig.capabilityKey));
-    const updatedAt = Number(getDashboardViewValue(activeTelemetry, dataConfig.updatedKey)) || 0;
-    const lastResult = getDashboardViewValue(activeTelemetry, dataConfig.lastResultKey);
-    const viewportRef = React.useRef(null);
-    const detailsRef = React.useRef(null);
-    const panRef = React.useRef(null);
-    const fittedRef = React.useRef(Boolean(savedInteraction?.transform));
-    const savedViewportBounds = savedInteraction?.viewportBounds && typeof savedInteraction.viewportBounds === "object"
-        ? savedInteraction.viewportBounds
-        : {};
-    const lastViewportBoundsRef = React.useRef({
-        width: Math.max(0, Number(savedViewportBounds.width) || 0),
-        height: Math.max(0, Number(savedViewportBounds.height) || 0),
-    });
-    const [transform, setTransform] = React.useState(() => savedInteraction?.transform ?? { x: 24, y: 70, scale: 1 });
-    const [selectedId, setSelectedId] = React.useState(() => String(savedInteraction?.selectedId ?? ""));
-    const [stepTargetId, setStepTargetId] = React.useState(() => String(savedInteraction?.stepTargetId ?? ""));
-    const [showCloud, setShowCloud] = React.useState(() => typeof savedInteraction?.showCloud === "boolean"
-        ? savedInteraction.showCloud
-        : Boolean(filterConfig.showCloudDefault));
-    const [modeMenuOpen, setModeMenuOpen] = React.useState(() => Boolean(savedInteraction?.modeMenuOpen));
-    const [filtersOpen, setFiltersOpen] = React.useState(() => Boolean(savedInteraction?.filtersOpen));
-    const [selectedFilterIds, setSelectedFilterIds] = React.useState(() => Array.isArray(savedInteraction?.selectedFilterIds)
-        ? savedInteraction.selectedFilterIds.filter((id) => typeof id === "string")
-        : []);
-    const [searchText, setSearchText] = React.useState(() => String(savedInteraction?.searchText ?? ""));
-    const [detailsScrollTop, setDetailsScrollTop] = React.useState(() => Math.max(0, Number(savedInteraction?.detailsScrollTop) || 0));
-    const [isPanning, setIsPanning] = React.useState(false);
-    const [clipboardNotice, setClipboardNotice] = React.useState("");
-    const nodes = showCloudControl
-        ? allNodes.filter((node) => showCloud || !Boolean(getDashboardViewValue(node, fields.cloud)))
-        : allNodes;
-    const cloudCount = allNodes.filter((node) => Boolean(getDashboardViewValue(node, fields.cloud))).length;
-    const layout = layoutStrategy === "grouped"
-        ? buildGroupedNetworkLayout(nodes, fields, layoutConfig)
-        : buildLayeredNetworkLayout(nodes, fields, layoutConfig);
-    const nodeById = new Map(nodes.map((node) => [String(getDashboardViewValue(node, fields.id) ?? ""), node]));
-    const selectedNode = nodeById.get(selectedId) ?? null;
-    const selectedRoute = Array.isArray(getDashboardViewValue(selectedNode, fields.route))
-        ? getDashboardViewValue(selectedNode, fields.route).map(String)
-        : [];
-    const stepTargetNode = nodeById.get(stepTargetId) ?? null;
-    const stepRoute = Array.isArray(getDashboardViewValue(stepTargetNode, fields.route))
-        ? getDashboardViewValue(stepTargetNode, fields.route).map(String)
-        : [];
-    const currentStepIndex = stepRoute.indexOf(currentId);
-    const nextStepId = !stepTargetNode || currentId === stepTargetId
-        ? ""
-        : currentStepIndex >= 0
-            ? String(stepRoute[currentStepIndex + 1] ?? "")
-            : String(stepRoute[0] ?? "");
-    const visibleRoute = stepTargetNode ? stepRoute : selectedRoute;
-    const routeNodeIds = new Set(visibleRoute);
-    const routeFocusActive = showRoutes && visibleRoute.length > 0;
-    const selectedFilterIdSet = new Set(selectedFilterIds);
-    const activeFilterDefinitions = filterDefinitions.filter((filter) => selectedFilterIdSet.has(filter.id));
-    const filterFocusActive = showNodeFilters && activeFilterDefinitions.length > 0;
-    const routeEdgeKeys = new Set(visibleRoute.slice(1).map((id, index) => [visibleRoute[index], id].sort().join("\u0000")));
-    const minimumScale = Math.max(0.05, Number(layoutConfig.minScale) || 0.35);
-    const maximumScale = Math.max(minimumScale, Number(layoutConfig.maxScale) || 1.8);
-    const overlayInsetRight = Math.max(0, Number(layoutConfig.overlayInsetRight) || 0);
-    const inspectorWidth = Math.max(240, Number(layoutConfig.inspectorWidth) || 286);
-    const inspectorLabelWidth = Math.max(90, Math.min(inspectorWidth - 100, Number(layoutConfig.inspectorLabelWidth) || 120));
-    const previousShowCloudRef = React.useRef(showCloud);
-    const previousDetailsSelectedIdRef = React.useRef(selectedId);
-
-    React.useEffect(() => {
-        const releaseDragOnBlur = () => {
-            if (!panRef.current) return;
-            panRef.current = null;
-            setIsPanning(false);
-            setDashboardViewDragActiveState(false);
-        };
-        globalThis.addEventListener?.("blur", releaseDragOnBlur);
-        return () => {
-            globalThis.removeEventListener?.("blur", releaseDragOnBlur);
-            setDashboardViewDragActiveState(false);
-        };
-    }, []);
-
-    const getUsableViewportWidth = (bounds, reserveInspector = Boolean(selectedNode)) => {
-        return Math.max(120, bounds.width - (reserveInspector ? overlayInsetRight : 0));
-    };
-
-    React.useLayoutEffect(() => {
-        const cloudVisibilityChanged = previousShowCloudRef.current !== showCloud;
-        if ((!cloudVisibilityChanged && fittedRef.current) || !viewportRef.current || nodes.length === 0) return;
-        const bounds = viewportRef.current.getBoundingClientRect();
-        lastViewportBoundsRef.current = { width: bounds.width, height: bounds.height };
-        setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-        fittedRef.current = true;
-        previousShowCloudRef.current = showCloud;
-    }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length]);
-
-    React.useLayoutEffect(() => {
-        const element = viewportRef.current;
-        const Observer = globalThis.ResizeObserver;
-        if (!element || typeof Observer !== "function" || nodes.length === 0) return undefined;
-        const observer = new Observer((entries) => {
-            const entry = entries?.[0];
-            const bounds = entry?.contentRect ?? element.getBoundingClientRect();
-            const previous = lastViewportBoundsRef.current;
-            if (
-                Math.abs(bounds.width - previous.width) < 1
-                && Math.abs(bounds.height - previous.height) < 1
-            ) return;
-            lastViewportBoundsRef.current = { width: bounds.width, height: bounds.height };
-            setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-            fittedRef.current = true;
-        });
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length, Boolean(selectedNode)]);
-
-    React.useEffect(() => {
-        saveDashboardViewInteractionState(view?.id ?? "", {
-            transform,
-            selectedId,
-            stepTargetId,
-            showCloud,
-            selectedModeId: activeModeId,
-            modeMenuOpen,
-            filtersOpen,
-            selectedFilterIds,
-            searchText,
-            detailsScrollTop,
-            viewportBounds: lastViewportBoundsRef.current,
-        });
-    }, [view?.id, activeModeId, transform.x, transform.y, transform.scale, selectedId, stepTargetId, showCloud, modeMenuOpen, filtersOpen, selectedFilterIds.join("|"), searchText, detailsScrollTop]);
-
-    React.useLayoutEffect(() => {
-        const element = detailsRef.current;
-        if (!element) return;
-        const selectionChanged = previousDetailsSelectedIdRef.current !== selectedId;
-        previousDetailsSelectedIdRef.current = selectedId;
-        const targetScrollTop = selectionChanged ? 0 : detailsScrollTop;
-        if (selectionChanged && detailsScrollTop !== 0) setDetailsScrollTop(0);
-        if (Math.abs(element.scrollTop - targetScrollTop) > 1) element.scrollTop = targetScrollTop;
-    }, [selectedId, detailsScrollTop]);
-
-    React.useEffect(() => () => onInputFocusChange?.(false), []);
-
-    React.useEffect(() => {
-        setClipboardNotice("");
-    }, [activeModeId, selectedId]);
-
-    const fitView = () => {
-        if (!viewportRef.current) return;
-        const bounds = viewportRef.current.getBoundingClientRect();
-        setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-        fittedRef.current = true;
-    };
-
-    const centerNode = (nodeId, reserveInspector = Boolean(selectedNode)) => {
-        const position = layout.positions.get(nodeId);
-        if (!position || !viewportRef.current) return;
-        const bounds = viewportRef.current.getBoundingClientRect();
-        const usableWidth = getUsableViewportWidth(bounds, reserveInspector);
-        setTransform((current) => ({
-            ...current,
-            x: (usableWidth / 2) - ((position.x + (position.width / 2)) * current.scale),
-            y: (bounds.height / 2) - ((position.y + (position.height / 2)) * current.scale),
-        }));
-    };
-
-    const zoomBy = (factor) => {
-        if (!viewportRef.current) return;
-        const bounds = viewportRef.current.getBoundingClientRect();
-        const usableWidth = getUsableViewportWidth(bounds);
-        setTransform((current) => {
-            const nextScale = Math.max(minimumScale, Math.min(maximumScale, current.scale * factor));
-            const worldX = ((usableWidth / 2) - current.x) / current.scale;
-            const worldY = ((bounds.height / 2) - current.y) / current.scale;
-            return {
-                x: (usableWidth / 2) - (worldX * nextScale),
-                y: (bounds.height / 2) - (worldY * nextScale),
-                scale: nextScale,
-            };
-        });
-    };
-
-    const findNode = () => {
-        const query = searchText.trim().toLowerCase();
-        if (!query) return;
-        const searchableNodes = nodes.filter((node) => getDashboardViewValue(node, fields.selectable) !== false);
-        const match = searchableNodes.find((node) => String(getDashboardViewValue(node, fields.label) ?? "").toLowerCase() === query)
-            ?? searchableNodes.find((node) => String(getDashboardViewValue(node, fields.label) ?? "").toLowerCase().includes(query));
-        if (!match) return;
-        const id = String(getDashboardViewValue(match, fields.id) ?? "");
-        setSelectedId(id);
-        setStepTargetId("");
-        centerNode(id, true);
-    };
-
-    const sendCommand = (prefix, target = "") => {
-        const serviceId = String(actionConfig.serviceId ?? dataConfig.serviceId ?? "");
-        const command = target ? `${prefix}${encodeURIComponent(target)}` : String(prefix ?? "");
-        if (!serviceId || !command) return;
-        onCommand(serviceId, command);
-    };
-
-    const copyNodeActionValue = (value, label) => {
-        const text = String(value ?? "");
-        if (!text) return;
-        try {
-            const clipboard = globalThis?.navigator?.clipboard;
-            if (clipboard && typeof clipboard.writeText === "function") {
-                void Promise.resolve(clipboard.writeText(text))
-                    .then(() => setClipboardNotice(`${label} copied: ${text}`))
-                    .catch(() => setClipboardNotice(`Clipboard unavailable. Terminal command: ${text}`));
-                return;
-            }
-        } catch (error) {
-            // Fall through to the visible command hint.
-        }
-        setClipboardNotice(`Clipboard unavailable. Terminal command: ${text}`);
-    };
-
-    const handleNodeClick = (nodeId) => {
-        const node = nodeById.get(nodeId);
-        if (!node || getDashboardViewValue(node, fields.selectable) === false) return;
-        if (showRoutes && stepTargetNode && nodeId === nextStepId && canConnect) {
-            sendCommand(actionConfig.hopPrefix, nodeId);
-            return;
-        }
-        setSelectedId(nodeId);
-        if (stepTargetNode && nodeId !== stepTargetId) setStepTargetId("");
-    };
-
-    const selectMode = (modeId) => {
-        if (!modeId) return;
-        setSelectedModeId(modeId);
-        setSelectedId("");
-        setStepTargetId("");
-        setSearchText("");
-        setFiltersOpen(false);
-        setModeMenuOpen(false);
-        fittedRef.current = false;
-    };
-
-    const toggleCloudServers = () => {
-        const nextShowCloud = !showCloud;
-        if (!nextShowCloud) {
-            if (selectedNode && Boolean(getDashboardViewValue(selectedNode, fields.cloud))) setSelectedId("");
-            if (stepTargetNode && Boolean(getDashboardViewValue(stepTargetNode, fields.cloud))) setStepTargetId("");
-        }
-        setShowCloud(nextShowCloud);
-    };
-
-    const toggleNodeFilter = (filterId) => {
-        setSelectedFilterIds((current) => current.includes(filterId)
-            ? current.filter((id) => id !== filterId)
-            : [...current, filterId]);
-    };
-
-    const handlePointerDown = (event) => {
-        if (event.button !== 0 || event.target?.closest?.("[data-network-control='true']")) return;
-        event.preventDefault();
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-        panRef.current = {
-            pointerId: event.pointerId,
-            startX: event.clientX,
-            startY: event.clientY,
-            originX: transform.x,
-            originY: transform.y,
-            moved: false,
-        };
-        setDashboardViewDragActiveState(true);
-        setIsPanning(true);
-    };
-
-    const handlePointerMove = (event) => {
-        const pan = panRef.current;
-        if (!pan || pan.pointerId !== event.pointerId) return;
-        const deltaX = event.clientX - pan.startX;
-        const deltaY = event.clientY - pan.startY;
-        if ((deltaX * deltaX) + (deltaY * deltaY) > 16) pan.moved = true;
-        setTransform((current) => ({
-            ...current,
-            x: pan.originX + deltaX,
-            y: pan.originY + deltaY,
-        }));
-    };
-
-    const endPointerPan = (event) => {
-        const pan = panRef.current;
-        if (pan?.pointerId !== event.pointerId) return;
-        panRef.current = null;
-        setDashboardViewDragActiveState(false);
-        setIsPanning(false);
-        event.currentTarget.releasePointerCapture?.(event.pointerId);
-        if (!pan.moved) {
-            setSelectedId("");
-            setStepTargetId("");
-        }
-    };
-
-    const handleWheel = (event) => {
-        if (event.target?.closest?.("[data-network-control='true']")) return;
-        event.preventDefault();
-        const bounds = viewportRef.current?.getBoundingClientRect();
-        if (!bounds) return;
-        const pointerX = event.clientX - bounds.left;
-        const pointerY = event.clientY - bounds.top;
-        setTransform((current) => {
-            const nextScale = Math.max(minimumScale, Math.min(maximumScale, current.scale * (event.deltaY < 0 ? 1.12 : 0.89)));
-            const worldX = (pointerX - current.x) / current.scale;
-            const worldY = (pointerY - current.y) / current.scale;
-            return {
-                x: pointerX - (worldX * nextScale),
-                y: pointerY - (worldY * nextScale),
-                scale: nextScale,
-            };
-        });
-    };
-
-    const resultFields = view?.resultFields ?? {};
-    const lastResultStatus = String(getDashboardViewValue(lastResult, resultFields.status) ?? "");
-    const lastResultMessage = String(getDashboardViewValue(lastResult, resultFields.message) ?? "");
-    const lastResultTime = Number(getDashboardViewValue(lastResult, resultFields.timestamp)) || 0;
-    const activeTitle = String(getDashboardViewValue(activeTelemetry, "title") ?? view?.title ?? view?.menuLabel ?? "Network");
-    const activeSubtitle = String(getDashboardViewValue(activeTelemetry, "subtitle") ?? view?.subtitle ?? "");
-    const activeModeLabel = String(getDashboardViewValue(activeModeOption, modeSelector.labelKey) ?? activeTitle);
-    const selectionLabel = String(getDashboardViewValue(activeModeOption, modeSelector.selectionLabelKey) ?? "Selected node");
-    const selectionSubject = selectionLabel.replace(/^Selected\s+/i, "").toLowerCase();
-    const searchPlaceholder = String(getDashboardViewValue(activeModeOption, modeSelector.searchPlaceholderKey) ?? "Find node");
-
-    return (
-        <main
-            data-dashboard-theme-role="app-frame"
-            ref={viewportRef}
-            aria-label={activeTitle}
-            style={{ ...WIDGET_STYLES.networkView, cursor: isPanning ? "grabbing" : "grab" }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={endPointerPan}
-            onPointerCancel={endPointerPan}
-            onWheel={handleWheel}
-        >
-            <div style={WIDGET_STYLES.networkHeader}>
-                <div>
-                    <div style={WIDGET_STYLES.homeTitle}>{activeTitle}</div>
-                    <div style={{ ...WIDGET_STYLES.muted, marginTop: "2px", fontSize: "9px" }}>
-                        {activeSubtitle}
-                        {updatedAt > 0 ? ` · updated ${new Date(updatedAt).toLocaleTimeString()}` : ""}
-                    </div>
-                    <div style={{ marginTop: "7px" }}>
-                        <PluginRuntimeWarning statuses={serviceStatus ? [serviceStatus] : []} />
-                    </div>
-                </div>
-            </div>
-
-            <div style={getDashboardFrameControlOverlayStyle()} data-network-control="true">
-                {windowControl}
-                <button
-                    type="button"
-                    data-network-control="true"
-                    title="Return to the dashboard"
-                    style={getDashboardFrameControlStyle("neutral", { position: "static" })}
-                    onClick={onExit}
-                >
-                    {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
-                </button>
-            </div>
-
-            <div
-                style={{
-                    ...WIDGET_STYLES.networkWorld,
-                    width: `${layout.width}px`,
-                    height: `${layout.height}px`,
-                    transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                }}
-            >
-                <svg width={layout.width} height={layout.height} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-                    {edges.map((edge, index) => {
-                        const sourceId = String(getDashboardViewValue(edge, fields.edgeSource) ?? "");
-                        const targetId = String(getDashboardViewValue(edge, fields.edgeTarget) ?? "");
-                        const source = layout.positions.get(sourceId);
-                        const target = layout.positions.get(targetId);
-                        if (!source || !target) return null;
-                        const sourceCenterX = source.x + (source.width / 2);
-                        const targetCenterX = target.x + (target.width / 2);
-                        const leftToRight = sourceCenterX <= targetCenterX;
-                        const x1 = source.x + (leftToRight ? source.width : 0);
-                        const x2 = target.x + (leftToRight ? 0 : target.width);
-                        const y1 = source.y + (source.height / 2);
-                        const y2 = target.y + (target.height / 2);
-                        const bend = Math.max(28, Math.abs(x2 - x1) * 0.48);
-                        const edgeKey = [sourceId, targetId].sort().join("\u0000");
-                        const onRoute = routeEdgeKeys.has(edgeKey);
-                        const isNext = nextStepId && (
-                            (sourceId === currentId && targetId === nextStepId)
-                            || (targetId === currentId && sourceId === nextStepId)
-                        );
-                        return (
-                            <path
-                                key={`${edgeKey}:${index}`}
-                                d={`M ${x1} ${y1} C ${x1 + (leftToRight ? bend : -bend)} ${y1}, ${x2 - (leftToRight ? bend : -bend)} ${y2}, ${x2} ${y2}`}
-                                fill="none"
-                                stroke={isNext ? "#ffd17a" : onRoute ? "#6cb4ff" : "rgba(86, 126, 105, 0.48)"}
-                                strokeWidth={isNext ? 2.4 : onRoute ? 1.8 : 1}
-                                vectorEffect="non-scaling-stroke"
-                            />
-                        );
-                    })}
-                </svg>
-
-                {nodes.map((node) => {
-                    const nodeId = String(getDashboardViewValue(node, fields.id) ?? "");
-                    const position = layout.positions.get(nodeId);
-                    if (!position) return null;
-                    const selectable = getDashboardViewValue(node, fields.selectable) !== false;
-                    const isCurrent = nodeId === currentId || Boolean(getDashboardViewValue(node, fields.current));
-                    const isSelected = selectable && nodeId === selectedId;
-                    const onRoute = routeNodeIds.has(nodeId);
-                    const isNext = nodeId === nextStepId;
-                    const matchesFilter = !filterFocusActive || activeFilterDefinitions.some((filter) => {
-                        return Boolean(getDashboardViewValue(node, filter.key));
-                    });
-                    const isFaded = (routeFocusActive && !onRoute) || !matchesFilter;
-                    const hasDanger = stateDefinitions.some((state) => !Boolean(getDashboardViewValue(node, state.key)) && state.falseTone === "danger");
-                    const palette = getHomeTonePalette(isNext ? "warn" : isCurrent ? "info" : hasDanger ? "danger" : onRoute ? "success" : "neutral");
-                    const configuredAccent = String(getDashboardViewValue(node, fields.accent) ?? "");
-                    const nodeAccent = isSelected ? "#faa3dc" : isCurrent ? "#8fc5ff" : configuredAccent || palette.accent;
-                    const nodeStates = stateDefinitions.slice(0, 2);
-                    const nodeStatus = String(getDashboardViewValue(node, fields.status) ?? "");
-                    const nodeStatusTone = String(getDashboardViewValue(node, fields.statusTone) ?? "neutral");
-                    const nodeStatusPalette = getHomeTonePalette(nodeStatusTone);
-                    return (
-                        <button
-                            type="button"
-                            data-dashboard-theme-role="map-node"
-                            data-network-control={selectable ? "true" : undefined}
-                            key={nodeId}
-                            title={`${getDashboardViewValue(node, fields.label) ?? nodeId}${isNext ? " — next route hop" : ""}`}
-                            style={{
-                                ...WIDGET_STYLES.networkNode,
-                                left: `${position.x}px`,
-                                top: `${position.y}px`,
-                                width: `${position.width}px`,
-                                height: `${position.height}px`,
-                                zIndex: isSelected ? 4 : isFaded ? 0 : 1,
-                                opacity: isFaded ? 0.75 : 1,
-                                filter: isFaded ? "saturate(0.3) brightness(0.62)" : "none",
-                                cursor: selectable ? "pointer" : "default",
-                                transition: "opacity 150ms ease, filter 150ms ease, border-color 150ms ease, box-shadow 150ms ease",
-                                borderColor: nodeAccent,
-                                borderWidth: isSelected || isCurrent ? "2px" : "1px",
-                                boxShadow: isSelected
-                                    ? "0 0 0 2px rgba(255, 123, 208, 0.2), 0 0 18px rgba(255, 123, 208, 0.42), inset 0 0 18px rgba(255, 123, 208, 0.08)"
-                                    : isCurrent
-                                        ? "0 0 0 2px rgba(108, 180, 255, 0.24), 0 0 22px rgba(108, 180, 255, 0.58), inset 0 0 18px rgba(108, 180, 255, 0.12)"
-                                        : "0 4px 16px rgba(0, 0, 0, 0.3)",
-                                background: isSelected
-                                    ? "linear-gradient(145deg, rgba(43, 12, 37, 0.98), rgba(19, 8, 24, 0.98))"
-                                    : isCurrent
-                                        ? "linear-gradient(145deg, rgba(11, 32, 37, 0.98), rgba(6, 15, 23, 0.98))"
-                                        : isNext
-                                            ? "linear-gradient(145deg, rgba(37, 29, 9, 0.98), rgba(19, 16, 7, 0.98))"
-                                            : selectable
-                                                ? WIDGET_STYLES.networkNode.background
-                                                : "linear-gradient(145deg, rgba(8, 18, 20, 0.96), rgba(5, 10, 13, 0.96))",
-                            }}
-                            onClick={() => handleNodeClick(nodeId)}
-                            onDoubleClick={() => selectable && centerNode(nodeId, true)}
-                        >
-                            <div style={{ ...WIDGET_STYLES.networkNodeLabel, color: nodeAccent }}>
-                                {getDashboardViewValue(node, fields.label) ?? nodeId}
-                            </div>
-                            <div style={WIDGET_STYLES.networkNodeSubline}>
-                                {getDashboardViewValue(node, fields.detail) || getDashboardViewValue(node, fields.subtitle) || "\u00a0"}
-                            </div>
-                            <div style={WIDGET_STYLES.networkNodeStatus}>
-                                {isCurrent ? <span style={{ color: "#8fc5ff" }}>● current</span> : null}
-                                {isNext ? <span style={{ color: "#ffd17a" }}>→ next</span> : null}
-                                {!isCurrent && !isNext ? nodeStates.map((state) => {
-                                    const active = Boolean(getDashboardViewValue(node, state.key));
-                                    const statePalette = getHomeTonePalette(active ? state.trueTone : state.falseTone);
-                                    return <span key={state.key} style={{ color: statePalette.accent }}>{active ? "●" : "○"} {state.label}</span>;
-                                }) : null}
-                                {!isCurrent && !isNext && nodeStates.length === 0 && nodeStatus ? (
-                                    <span style={{ color: nodeStatusPalette.accent }}>{nodeStatus}</span>
-                                ) : null}
-                            </div>
-                        </button>
-                    );
-                })}
-            </div>
-
-            {modeMenuOpen && modeOptions.length > 0 ? (
-                <div data-network-control="true" style={WIDGET_STYLES.networkModePopup}>
-                    <div style={WIDGET_STYLES.homePanelTitle}>{modeSelector.popupTitle ?? "Map view"}</div>
-                    <div style={WIDGET_STYLES.networkFilterList}>
-                        {modeOptions.map((option) => {
-                            const optionId = String(getDashboardViewValue(option, modeSelector.idKey) ?? "");
-                            const optionLabel = String(getDashboardViewValue(option, modeSelector.labelKey) ?? optionId);
-                            const optionNote = String(getDashboardViewValue(option, modeSelector.noteKey) ?? "");
-                            const optionCurrent = Boolean(getDashboardViewValue(option, modeSelector.currentKey));
-                            const active = optionId === activeModeId;
-                            return (
-                                <button
-                                    type="button"
-                                    key={optionId}
-                                    title={optionCurrent ? `${optionLabel} is the current location` : optionNote}
-                                    style={{
-                                        ...WIDGET_STYLES.networkModeOption,
-                                        ...(active ? {
-                                            color: "#8fc5ff",
-                                            borderColor: "rgba(108, 180, 255, 0.55)",
-                                            background: "rgba(10, 24, 38, 0.95)",
-                                        } : {}),
-                                    }}
-                                    onClick={() => selectMode(optionId)}
-                                >
-                                    <span>{optionCurrent ? "● " : ""}{optionLabel}</span>
-                                    <span style={{ ...WIDGET_STYLES.smallMuted, color: optionCurrent ? "#8ef0b5" : undefined }}>{optionNote}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-            ) : null}
-
-            {showNodeFilters && filtersOpen && filterDefinitions.length > 0 ? (
-                <div data-network-control="true" style={WIDGET_STYLES.networkFilterPopup}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-                        <span style={WIDGET_STYLES.homePanelTitle}>Node filters</span>
-                        {selectedFilterIds.length > 0 ? (
-                            <button
-                                type="button"
-                                style={{ ...WIDGET_STYLES.actionButton, padding: "3px 6px", fontSize: "9px" }}
-                                onClick={() => setSelectedFilterIds([])}
-                            >
-                                Clear
-                            </button>
-                        ) : null}
-                    </div>
-                    <div style={WIDGET_STYLES.networkFilterList}>
-                        {filterDefinitions.map((filter) => {
-                            const checked = selectedFilterIdSet.has(filter.id);
-                            return (
-                                <label
-                                    key={filter.id}
-                                    style={{
-                                        ...WIDGET_STYLES.networkFilterOption,
-                                        ...(checked ? {
-                                            color: filter.accent ?? "#8fc5ff",
-                                            borderColor: filter.accent ?? "rgba(108, 180, 255, 0.45)",
-                                            background: "rgba(12, 24, 20, 0.94)",
-                                        } : {}),
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        style={{ margin: 0, accentColor: filter.accent ?? "#6cb4ff" }}
-                                        onChange={() => toggleNodeFilter(filter.id)}
-                                    />
-                                    <span>{filter.label}</span>
-                                </label>
-                            );
-                        })}
-                    </div>
-                </div>
-            ) : null}
-
-            <div data-network-control="true" style={WIDGET_STYLES.networkToolbar}>
-                {modeOptions.length > 0 ? (
-                    <button
-                        type="button"
-                        title={`Choose map view · ${activeModeLabel}`}
-                        aria-label="Choose map view"
-                        aria-expanded={modeMenuOpen}
-                        style={{
-                            ...WIDGET_STYLES.actionButton,
-                            ...(modeMenuOpen || activeModeId !== defaultModeId ? {
-                                color: "#8fc5ff",
-                                borderColor: "rgba(108, 180, 255, 0.55)",
-                                background: "rgba(10, 24, 38, 0.95)",
-                            } : {}),
-                        }}
-                        onClick={() => {
-                            setModeMenuOpen((current) => !current);
-                            setFiltersOpen(false);
-                        }}
-                    >
-                        {modeSelector.buttonLabel ?? "Map"}
-                    </button>
-                ) : null}
-                {showNodeFilters ? (
-                    <button
-                        type="button"
-                        title="Open node filters"
-                        aria-label="Open node filters"
-                        aria-expanded={filtersOpen}
-                        style={{
-                            ...WIDGET_STYLES.actionButton,
-                            minWidth: "28px",
-                            textAlign: "center",
-                            fontSize: "14px",
-                            lineHeight: 1,
-                            ...(filtersOpen || selectedFilterIds.length > 0 ? {
-                                color: "#8fc5ff",
-                                borderColor: "rgba(108, 180, 255, 0.55)",
-                                background: "rgba(10, 24, 38, 0.95)",
-                            } : {}),
-                        }}
-                        onClick={() => {
-                            setFiltersOpen((current) => !current);
-                            setModeMenuOpen(false);
-                        }}
-                    >
-                        +{selectedFilterIds.length > 0 ? ` ${selectedFilterIds.length}` : ""}
-                    </button>
-                ) : null}
-                <input
-                    value={searchText}
-                    placeholder={searchPlaceholder}
-                    title={searchPlaceholder}
-                    style={{ ...WIDGET_STYLES.input, width: "128px", padding: "5px 7px", userSelect: "text", WebkitUserSelect: "text" }}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    onFocus={() => onInputFocusChange?.(true)}
-                    onBlur={() => onInputFocusChange?.(false)}
-                    onKeyDown={(event) => {
-                        if (event.key === "Enter") findNode();
-                    }}
-                />
-                <button type="button" style={WIDGET_STYLES.actionButton} onClick={findNode}>Find</button>
-                <button type="button" title="Zoom out" style={WIDGET_STYLES.actionButton} onClick={() => zoomBy(0.82)}>−</button>
-                <button type="button" title="Fit current map" style={WIDGET_STYLES.actionButton} onClick={fitView}>Fit</button>
-                <button type="button" title="Zoom in" style={WIDGET_STYLES.actionButton} onClick={() => zoomBy(1.22)}>+</button>
-                {actionConfig.refreshCommand ? (
-                    <button type="button" title="Refresh map telemetry" style={WIDGET_STYLES.actionButton} onClick={() => sendCommand(actionConfig.refreshCommand)}>Refresh</button>
-                ) : null}
-                {showCloudControl && fields.cloud ? (
-                    <button
-                        type="button"
-                        title={`${showCloud ? "Hide" : "Show"} ${filterConfig.cloudLabel ?? "filtered servers"}`}
-                        style={{
-                            ...WIDGET_STYLES.actionButton,
-                            ...(showCloud ? {
-                            color: "#8fc5ff",
-                            borderColor: "rgba(108, 180, 255, 0.55)",
-                            background: "rgba(10, 24, 38, 0.95)",
-                        } : {}),
-                        }}
-                        onClick={toggleCloudServers}
-                    >
-                        {showCloud ? "Hide" : "Show"} {filterConfig.cloudLabel ?? "Filtered"} ({cloudCount})
-                    </button>
-                ) : null}
-                <span style={{ ...WIDGET_STYLES.smallMuted, padding: "0 4px" }}>{Math.round(transform.scale * 100)}%</span>
-            </div>
-
-            <aside
-                ref={detailsRef}
-                data-network-control="true"
-                style={{ ...WIDGET_STYLES.networkDetails, width: `${inspectorWidth}px`, display: selectedNode ? "block" : "none" }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onScroll={(event) => setDetailsScrollTop(Math.max(0, event.currentTarget.scrollTop))}
-            >
-                {selectedNode ? (
-                    <>
-                        <div style={{ ...WIDGET_STYLES.homePanelTitle, color: "#8fc5ff" }}>{selectionLabel}</div>
-                        <div style={{ ...WIDGET_STYLES.homeTitle, marginTop: "5px", fontSize: "15px", textTransform: "none" }}>
-                            {getDashboardViewValue(selectedNode, fields.label) ?? selectedId}
-                        </div>
-                        <div style={{ ...WIDGET_STYLES.muted, fontSize: "9px", marginTop: "2px" }}>
-                            {[getDashboardViewValue(selectedNode, fields.subtitle), getDashboardViewValue(selectedNode, fields.detail)].filter(Boolean).join(" · ") || "No additional identity data"}
-                        </div>
-
-                        <div style={{ ...WIDGET_STYLES.networkDetailGrid, gridTemplateColumns: `${inspectorLabelWidth}px minmax(0, 1fr)` }}>
-                            {stateDefinitions.map((state) => {
-                                const active = Boolean(getDashboardViewValue(selectedNode, state.key));
-                                const palette = getHomeTonePalette(active ? state.trueTone : state.falseTone);
-                                return (
-                                    <React.Fragment key={state.key}>
-                                        <span title={state.label} style={{ ...WIDGET_STYLES.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{state.label}</span>
-                                        <span style={{ color: palette.accent, minWidth: 0, textAlign: "right", overflowWrap: "anywhere" }}>{active ? state.trueText : state.falseText}</span>
-                                    </React.Fragment>
-                                );
-                            })}
-                            {metricDefinitions.filter((metric) => {
-                                return !metric.visibleKey || Boolean(getDashboardViewValue(selectedNode, metric.visibleKey));
-                            }).map((metric) => (
-                                <React.Fragment key={metric.key}>
-                                    <span title={metric.label} style={{ ...WIDGET_STYLES.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{metric.label}</span>
-                                    <span style={{ color: "#c8e0ff", minWidth: 0, textAlign: "right", overflowWrap: "anywhere" }}>
-                                        {formatNetworkMapMetric(
-                                            getDashboardViewValue(selectedNode, metric.key),
-                                            metric.secondaryKey ? getDashboardViewValue(selectedNode, metric.secondaryKey) : undefined,
-                                            metric.format
-                                        )}
-                                    </span>
-                                </React.Fragment>
-                            ))}
-                        </div>
-
-                        {showRoutes ? (
-                            <>
-                                <div style={{ ...WIDGET_STYLES.homePanelTitle, marginTop: "12px" }}>Route from home</div>
-                                <div style={WIDGET_STYLES.networkRoute}>
-                                    {selectedRoute.length > 0 ? selectedRoute.map((hop) => (
-                                        <span key={hop} style={{
-                                            ...WIDGET_STYLES.networkRouteHop,
-                                            ...(hop === currentId ? { color: "#8fc5ff", borderColor: "rgba(108, 180, 255, 0.55)" } : {}),
-                                        }}>{hop}</span>
-                                    )) : <span style={WIDGET_STYLES.muted}>No route available.</span>}
-                                </div>
-
-                                <div style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
-                                    <button
-                                        type="button"
-                                        disabled={!canConnect || !Boolean(getDashboardViewValue(selectedNode, fields.direct))}
-                                        style={{
-                                            ...WIDGET_STYLES.actionButton,
-                                            textAlign: "center",
-                                            ...(!canConnect || !Boolean(getDashboardViewValue(selectedNode, fields.direct)) ? WIDGET_STYLES.actionButtonDisabled : {}),
-                                        }}
-                                        onClick={() => sendCommand(actionConfig.directPrefix, selectedId)}
-                                    >
-                                        {actionConfig.directLabel ?? "Direct connect"}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled={!canConnect || selectedRoute.length === 0}
-                                        style={{
-                                            ...WIDGET_STYLES.actionButton,
-                                            textAlign: "center",
-                                            ...(!canConnect || selectedRoute.length === 0 ? WIDGET_STYLES.actionButtonDisabled : {}),
-                                        }}
-                                        onClick={() => sendCommand(actionConfig.routePrefix, selectedId)}
-                                    >
-                                        {actionConfig.routeLabel ?? "Auto route"}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled={!canConnect || selectedRoute.length === 0}
-                                        style={{
-                                            ...WIDGET_STYLES.actionButton,
-                                            textAlign: "center",
-                                            ...(stepTargetId === selectedId ? {
-                                                color: "#ffd17a",
-                                                borderColor: "rgba(255, 198, 92, 0.55)",
-                                                background: "rgba(34, 22, 10, 0.95)",
-                                            } : {}),
-                                            ...(!canConnect || selectedRoute.length === 0 ? WIDGET_STYLES.actionButtonDisabled : {}),
-                                        }}
-                                        onClick={() => setStepTargetId((current) => current === selectedId ? "" : selectedId)}
-                                    >
-                                        {stepTargetId === selectedId ? "Cancel step route" : actionConfig.stepLabel ?? "Step route"}
-                                    </button>
-                                </div>
-
-                                {stepTargetId === selectedId ? (
-                                    <div style={{ ...WIDGET_STYLES.networkRouteHop, marginTop: "8px", color: nextStepId ? "#ffd17a" : "#8ef0b5" }}>
-                                        {nextStepId ? `Click ${nextStepId} on the map for the next hop.` : "Route complete."}
-                                    </div>
-                                ) : null}
-                            </>
-                        ) : null}
-
-                        {nodeActionDefinitions.some((action) => !action.visibleKey || Boolean(getDashboardViewValue(selectedNode, action.visibleKey))) ? (
-                            <div style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
-                                {nodeActionDefinitions.filter((action) => {
-                                    return !action.visibleKey || Boolean(getDashboardViewValue(selectedNode, action.visibleKey));
-                                }).map((action) => {
-                                    const actionType = String(action.type ?? "command");
-                                    const label = String(getDashboardViewValue(selectedNode, action.labelKey) ?? action.label ?? "Run action");
-                                    const target = String(getDashboardViewValue(selectedNode, action.targetKey) ?? selectedId);
-                                    const enabledByMetadata = !action.enabledKey || Boolean(getDashboardViewValue(selectedNode, action.enabledKey));
-                                    const enabled = enabledByMetadata && (actionType !== "clipboard" || Boolean(target));
-                                    const displayLabel = !enabled && action.lockedLabelSuffix
-                                        ? `${label} (${action.lockedLabelSuffix})`
-                                        : label;
-                                    const disabledReason = String(getDashboardViewValue(selectedNode, action.disabledReasonKey) ?? "");
-                                    return (
-                                        <button
-                                            type="button"
-                                            key={action.id ?? action.prefix}
-                                            title={!enabled && disabledReason ? disabledReason : actionType === "clipboard" ? target : label}
-                                            disabled={!enabled}
-                                            style={{
-                                                ...WIDGET_STYLES.actionButton,
-                                                textAlign: "center",
-                                                ...(!enabled ? WIDGET_STYLES.actionButtonDisabled : {}),
-                                            }}
-                                            onClick={() => actionType === "clipboard"
-                                                ? copyNodeActionValue(target, label)
-                                                : sendCommand(action.prefix, target)}
-                                        >
-                                            {displayLabel}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        ) : null}
-
-                        {clipboardNotice ? (
-                            <div style={{ ...WIDGET_STYLES.networkRouteHop, marginTop: "8px", color: "#8ef0b5", borderColor: "rgba(110, 231, 168, 0.3)" }}>
-                                {clipboardNotice}
-                            </div>
-                        ) : null}
-                    </>
-                ) : (
-                    <div style={WIDGET_STYLES.muted}>{telemetry ? `Select a ${selectionSubject} to inspect it.` : "Waiting for map telemetry…"}</div>
-                )}
-
-                {showRoutes && !canConnect ? (
-                    <div style={{ ...WIDGET_STYLES.networkRouteHop, marginTop: "10px", color: "#ffd17a", borderColor: "rgba(255, 198, 92, 0.35)" }}>
-                        {actionConfig.unavailableMessage ?? "Automatic connections are unavailable. The map and routes remain available."}
-                    </div>
-                ) : null}
-                {lastResultMessage ? (
-                    <div style={{
-                        ...WIDGET_STYLES.networkRouteHop,
-                        marginTop: "8px",
-                        color: lastResultStatus === "error" ? "#ff9a9a" : "#8ef0b5",
-                        borderColor: lastResultStatus === "error" ? "rgba(255, 122, 122, 0.35)" : "rgba(110, 231, 168, 0.3)",
-                    }}>
-                        {lastResultMessage}{lastResultTime > 0 ? ` · ${new Date(lastResultTime).toLocaleTimeString()}` : ""}
-                    </div>
-                ) : null}
-            </aside>
-        </main>
-    );
-}
-
-function Card({ title, accent, subtitle, children }) {
-    return (
-        <section data-dashboard-theme-role="card-frame" style={WIDGET_STYLES.card}>
-            <div style={WIDGET_STYLES.cardHeader}>
-                <div>
-                    <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.cardTitle}>{title}</div>
-                    {subtitle ? <div style={{ ...WIDGET_STYLES.muted, marginTop: "4px" }}>{subtitle}</div> : null}
-                </div>
-                <div style={{ ...WIDGET_STYLES.cardAccent, background: accent }} />
-            </div>
-            <div style={WIDGET_STYLES.cardBody}>{children}</div>
-        </section>
-    );
-}
-
-function BadgeLine({ label, value, tone = "neutral" }) {
-    return (
-        <div data-dashboard-theme-role="data-row" style={{ ...WIDGET_STYLES.item, borderColor: tone === "success" ? "rgba(110, 231, 168, 0.25)" : tone === "warn" ? "rgba(255, 198, 92, 0.25)" : tone === "danger" ? "rgba(255, 122, 122, 0.25)" : "rgba(125, 160, 212, 0.12)" }}>
-            <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.itemTitle}>{label}</div>
-            <div data-dashboard-theme-role="data-value" style={WIDGET_STYLES.itemDetail}>{value}</div>
-        </div>
-    );
-}
-
 function formatDashboardHudValue(value, format) {
     if (format === "compactMoney") return formatCompactDashboardValue(Number(value) || 0, "money");
     if (format === "compactNumber") return formatCompactDashboardValue(Number(value) || 0);
@@ -4504,26 +2582,6 @@ function formatDashboardHudValue(value, format) {
     if (format === "number") return (Number(value) || 0).toLocaleString();
     if (format === "time") return Number(value) > 0 ? new Date(Number(value)).toLocaleTimeString() : "n/a";
     return String(value ?? "n/a");
-}
-
-const DASHBOARD_HUD_THEME_COLORS = {
-    hp: "#ff7a7a",
-    money: "#ffd17a",
-    hack: "#8ef0b5",
-    combat: "#e4f8e9",
-    cha: "#c084fc",
-    int: "#8fc5ff",
-    rep: "#e4f8e9",
-    primary: "#8ef0b5",
-    secondary: "#9ab0a0",
-    maplocation: "#e4f8e9",
-};
-
-function getDashboardHudThemeColor(theme, themeColor, fallback) {
-    const key = String(themeColor ?? "").trim().toLowerCase();
-    if (!key) return fallback;
-    if (theme?.followGame && typeof theme?.gameTheme?.[key] === "string") return theme.gameTheme[key];
-    return DASHBOARD_HUD_THEME_COLORS[key] ?? fallback;
 }
 
 function buildDashboardHudDefinition(services, telemetryByServiceId) {
@@ -4567,72 +2625,18 @@ function buildDashboardHudDefinition(services, telemetryByServiceId) {
     return definitions;
 }
 
-function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, orientation = "horizontal" }) {
-    const selectedGroupIds = Array.isArray(groupIds) && groupIds.length > 0
-        ? new Set(groupIds.filter((value) => typeof value === "string"))
-        : null;
-    const groups = (Array.isArray(definitions) ? definitions : [])
-        .flatMap((definition) => definition.groups ?? [])
-        .filter((group) => !selectedGroupIds || selectedGroupIds.has(group.sourceId));
-    const vertical = String(orientation).trim().toLowerCase() === "vertical";
-
-    return (
-        <div style={{
-            ...WIDGET_STYLES.homePlayerGroupGrid,
-            ...(vertical ? { gridTemplateColumns: "1fr", gap: "8px" } : {}),
-        }}>
-            {groups.map((group) => (
-                <section key={group.id} style={WIDGET_STYLES.homePlayerGroup}>
-                    <div data-dashboard-theme-role="data-heading" style={{ ...WIDGET_STYLES.heading, marginBottom: "3px" }}>{group.title}</div>
-                    <div style={{
-                        ...WIDGET_STYLES.homePlayerStatGrid,
-                        ...(vertical ? { gridTemplateColumns: "1fr", gap: "1px" } : {}),
-                    }}>
-                        {group.items.map((item) => {
-                            const palette = getHomeTonePalette(item.tone);
-                            const itemColor = getDashboardHudThemeColor(dashboardTheme, item.themeColor, palette.accent);
-                            const itemThemeRole = item.themeColor ? `player-stat-${item.themeColor}` : "";
-                            const hasProgress = Number.isFinite(item.progress);
-                            const progress = hasProgress ? Math.max(0, Math.min(1, Number(item.progress))) : 0;
-                            return (
-                                <div key={item.id} title={`${item.label}: ${item.value}`} style={WIDGET_STYLES.homePlayerStat}>
-                                    <div style={WIDGET_STYLES.homePlayerStatLine}>
-                                        <div data-dashboard-theme-role={itemThemeRole} style={{ ...WIDGET_STYLES.pillLabel, marginBottom: 0, color: itemColor }}>{item.label}</div>
-                                        <div
-                                            data-dashboard-theme-role={itemThemeRole}
-                                            style={{ color: itemColor, minWidth: 0, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
-                                        >
-                                            {item.value}
-                                        </div>
-                                    </div>
-                                    {hasProgress ? (
-                                        <div style={{ height: "3px", marginTop: "3px", overflow: "hidden", background: "rgba(125, 160, 212, 0.16)" }}>
-                                            <div data-dashboard-theme-role={itemThemeRole} style={{ width: `${progress * 100}%`, height: "100%", background: itemColor }} />
-                                        </div>
-                                    ) : null}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </section>
-            ))}
-        </div>
-    );
-}
-
-function DashboardWindowModeButton({ layoutSnapshot }) {
+function DashboardWindowModeButton({ layoutSnapshot, controlStyle = null }) {
     const maximized = Boolean(layoutSnapshot?.maximized);
     const nextMode = maximized ? DASHBOARD_WINDOW_MODE_WINDOWED : DASHBOARD_WINDOW_MODE_MAXIMIZED;
+    const changeWindowMode = () => enqueueDashboardAction({ kind: "window-mode", mode: nextMode });
     return (
         <button
             type="button"
             data-network-control="true"
             title={maximized ? "Restore the dashboard to its saved window size" : "Maximize the dashboard inside the Bitburner window"}
-            style={getDashboardFrameControlStyle("neutral")}
-            onClick={(event) => {
-                event.stopPropagation();
-                enqueueDashboardAction({ kind: "window-mode", mode: nextMode });
-            }}
+            style={getDashboardFrameControlStyle("neutral", controlStyle)}
+            onMouseDown={(event) => runDashboardFrameControlMouseDown(event, changeWindowMode)}
+            onClick={(event) => runDashboardFrameControlClick(event, changeWindowMode)}
         >
             {maximized ? DASHBOARD_FRAME_CONTROL_LABELS.restore : DASHBOARD_FRAME_CONTROL_LABELS.maximize}
         </button>
@@ -4681,11 +2685,40 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         [options.dashboardThemeMode, options.dashboardTextSizeMode, gameThemeSignature, gameStylesSignature, dashboardLayout.maximized]
     );
     activeDashboardTheme = dashboardTheme;
+    configureDashboardRenderers();
     const responsiveLayout = getDashboardResponsiveLayout(dashboardLayout);
     const normalContentBounds = dashboardLayout.layoutTier === "wide"
         ? { width: "100%", maxWidth: "2800px", alignSelf: "center" }
         : {};
     const windowControl = <DashboardWindowModeButton layoutSnapshot={dashboardLayout} />;
+    const systemOverviewCompactControls = !dashboardLayout.maximized;
+    const systemOverviewControlStyle = systemOverviewCompactControls
+        ? { height: "20px", minHeight: "20px", padding: "3px 7px", fontSize: "10px" }
+        : null;
+    const systemOverviewWindowControl = <DashboardWindowModeButton layoutSnapshot={dashboardLayout} controlStyle={systemOverviewControlStyle} />;
+    const systemOverviewCloseControl = <button
+        type="button"
+        title="Close System Overview and return to dashboard controls"
+        style={getDashboardFrameControlStyle("neutral", systemOverviewControlStyle)}
+        onMouseDown={(event) => runDashboardFrameControlMouseDown(event, () => setActiveView(""))}
+        onClick={(event) => runDashboardFrameControlClick(event, () => setActiveView(""))}
+    >
+        {DASHBOARD_FRAME_CONTROL_LABELS.close}
+    </button>;
+    const networkMapControlStyle = systemOverviewControlStyle
+        ? { ...systemOverviewControlStyle, position: "static" }
+        : { position: "static" };
+    const networkMapWindowControl = <DashboardWindowModeButton layoutSnapshot={dashboardLayout} controlStyle={networkMapControlStyle} />;
+    const networkMapCloseControl = <button
+        type="button"
+        data-network-control="true"
+        title="Return to the dashboard"
+        style={getDashboardFrameControlStyle("neutral", networkMapControlStyle)}
+        onMouseDown={(event) => runDashboardFrameControlMouseDown(event, () => setActiveView(""))}
+        onClick={(event) => runDashboardFrameControlClick(event, () => setActiveView(""))}
+    >
+        {DASHBOARD_FRAME_CONTROL_LABELS.close}
+    </button>;
     const [pressedActionButtonId, setPressedActionButtonId] = React.useState("");
     const [killAllPending, setKillAllPending] = React.useState(false);
     const killAllSnapshotRef = React.useRef(null);
@@ -4870,7 +2903,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const pluginDashboardOptionInputs = buildPluginDashboardOptionInputs(dashboardServiceRegistry.services, options);
     const workspaceColumns = responsiveLayout.workspaceColumns;
     const setActiveView = (viewId) => {
-        setUiState((current) => ({ ...current, activeViewId: String(viewId ?? "") }));
+        setUiState((current) => {
+            const next = { ...current, activeViewId: String(viewId ?? "") };
+            saveUiState(next);
+            return next;
+        });
     };
     const selectedService = getServiceById(selectedItem);
     const updateGroup = (groupId) => {
@@ -4888,7 +2925,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             setActiveView(itemId.slice(DASHBOARD_VIEW_ITEM_PREFIX.length));
             return;
         }
-        setUiState((current) => ({ ...current, activeViewId: "", selectedItem: itemId }));
+        setUiState((current) => {
+            const next = { ...current, activeViewId: "", selectedItem: itemId };
+            saveUiState(next);
+            return next;
+        });
+    };
+
+    const selectMenuItem = (event, itemId) => {
+        runDashboardFrameControlMouseDown(event, () => selectItem(itemId));
+    };
+
+    const selectMenuItemFromKeyboard = (event, itemId) => {
+        runDashboardFrameControlClick(event, () => selectItem(itemId));
     };
 
     const centerPanelSource = selectedItem === "global.options"
@@ -5355,7 +3404,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const renderStateCard = (meta, stateLines) => (
-        <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle}>
+        <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle} widgetStyles={WIDGET_STYLES}>
             <div style={WIDGET_STYLES.list}>
                 {stateLines.map((line) => (
                     <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} />
@@ -5381,7 +3430,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     }
 
                     if (section.type === "graph") {
-                        return <DataGraph key={`graph-${section.title ?? index}`} section={section} index={index} />;
+                        return <DashboardDataGraph key={`graph-${section.title ?? index}`} section={section} index={index} />;
                     }
 
                     if (section.type === "resource-cards") {
@@ -5556,6 +3605,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const globalKillAction = buildDashboardActions([DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS], {
         disabledActionIds: hasKillAllTargets && !killAllPending ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS],
     })[0];
+    const requestGlobalKill = () => {
+        if (globalKillAction.disabled) return;
+        killAllSnapshotRef.current = runningProcessSnapshot;
+        setKillAllPending(true);
+        runServiceAction(globalKillAction);
+    };
 
     const renderSubWidgets = () => {
         const serviceSupervisorRunning = homeScripts.some((script) => {
@@ -5614,6 +3669,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         const pinnedExpandKey = `${selectedItem}:pinned-script-controls:${panel.id}`;
                         const isPinnedExpanded = uiState.expandedGroups?.[pinnedExpandKey] ?? false;
                         const isExpanded = selectable ? isSelected : isPinnedExpanded;
+                        const toggleScriptPanel = () => {
+                            if (!selectable) {
+                                setUiState((current) => ({
+                                    ...current,
+                                    expandedGroups: {
+                                        ...current.expandedGroups,
+                                        [pinnedExpandKey]: !(current.expandedGroups?.[pinnedExpandKey] ?? false),
+                                    },
+                                }));
+                                return;
+                            }
+                            selectCenterPanel(isSelected ? "" : panel.id);
+                        };
                         const standardInlineActions = buildScriptActions(
                             { id: panel.id, filename: panel.id, running: panel.running },
                             { includeDisabledStates: true }
@@ -5658,19 +3726,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                         width: "100%",
                                         ...getScriptLifecycleStyle(panel, isExpanded),
                                     }}
-                                    onClick={() => {
-                                        if (!selectable) {
-                                            setUiState((current) => ({
-                                                ...current,
-                                                expandedGroups: {
-                                                    ...current.expandedGroups,
-                                                    [pinnedExpandKey]: !(current.expandedGroups?.[pinnedExpandKey] ?? false),
-                                                },
-                                            }));
-                                            return;
-                                        }
-                                        selectCenterPanel(isSelected ? "" : panel.id);
-                                    }}
+                                    onMouseDown={(event) => runDashboardFrameControlMouseDown(event, toggleScriptPanel)}
+                                    onClick={(event) => runDashboardFrameControlClick(event, toggleScriptPanel)}
                                 >
                                     {panel.label} [{getScriptLifecycleLabel(panel)}]{!selectable ? (isExpanded ? " -" : " +") : ""}
                                 </button>
@@ -5771,11 +3828,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
             return (
                 <>
-                    <Card title="Script Controls" accent="#6cb4ff" subtitle="Unmanaged script actions">
+                    <Card title="Script Controls" accent="#6cb4ff" subtitle="Unmanaged script actions" widgetStyles={WIDGET_STYLES}>
                         {renderServiceActions(scriptListTopActions)}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Scripts" accent="#6cb4ff" subtitle="Script Controls">
+                    <Card title="Scripts" accent="#6cb4ff" subtitle="Script Controls" widgetStyles={WIDGET_STYLES}>
                         <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
                         {runningPanels.length > 0 ? renderGroupedScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running scripts.</div>}
                         <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
@@ -5800,11 +3857,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
             return (
                 <>
-                    <Card title="Plugin Controls" accent="#6cb4ff" subtitle="Managed script actions">
+                    <Card title="Plugin Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
                         {renderServiceActions(pluginListTopActions)}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Plugins" accent="#6cb4ff" subtitle="Integration Controls">
+                    <Card title="Plugins" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
                         <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
                         {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
                         <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
@@ -5812,7 +3869,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Dashboard Core" accent="#6ee7a8" subtitle="Dashboard core scripts">
+                    <Card title="Dashboard Core" accent="#6ee7a8" subtitle="Dashboard core scripts" widgetStyles={WIDGET_STYLES}>
                         <div style={WIDGET_STYLES.heading}>Running ({runningCorePanels.length})</div>
                         {runningCorePanels.length > 0 ? renderScriptButtons(runningCorePanels) : <div style={WIDGET_STYLES.muted}>No running dashboard core scripts.</div>}
                         <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
@@ -5824,7 +3881,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }
 
         return (
-            <Card title="Sub-Widgets" accent="#6cb4ff" subtitle="Choose a sub-category">
+            <Card title="Sub-Widgets" accent="#6cb4ff" subtitle="Choose a sub-category" widgetStyles={WIDGET_STYLES}>
                 <div style={WIDGET_STYLES.actionGrid}>
                     {centerPanels.map((panel) => {
                         const panelLevel = selectedServiceHealth?.panels?.[panel.id] ?? "neutral";
@@ -5955,7 +4012,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const showDescription = typeof description === "string" && description.length > 0;
 
         return (
-            <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle}>
+            <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle} widgetStyles={WIDGET_STYLES}>
                 {showHealthSummary ? (
                     <div data-dashboard-theme-role="data-row" style={{ ...WIDGET_STYLES.item, borderColor: "rgba(125, 160, 212, 0.18)", color: healthTone }}>
                         <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.itemTitle}>Health</div>
@@ -6152,7 +4209,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }
 
         return (
-            <Card title="Dashboard" accent="#6ee7a8" subtitle="Service overview">
+            <Card title="Dashboard" accent="#6ee7a8" subtitle="Service overview" widgetStyles={WIDGET_STYLES}>
                 <div style={WIDGET_STYLES.muted}>
                     Select a service to inspect its status and telemetry.
                 </div>
@@ -6178,7 +4235,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 <HomePanel title={title} subtitle={subtitle}>
                     <PluginRuntimeWarning statuses={runtimeStatuses} />
                     {definitions.length > 0
-                        ? <PlayerStatsOverview definitions={definitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation ?? "vertical"} />
+                        ? <PlayerStatsOverviewRenderer definitions={definitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation ?? "vertical"} />
                         : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
                 </HomePanel>
             </div>
@@ -6186,16 +4243,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     return (
-        <div data-dashboard-theme-role="app-frame" style={{
-            ...WIDGET_STYLES.shell,
-            fontFamily: dashboardTheme.typography.fontFamily,
-            lineHeight: dashboardTheme.typography.lineHeight,
-            height: `${dashboardLayout.contentHeight}px`,
-            minHeight: `${dashboardLayout.contentHeight}px`,
-            maxHeight: `${dashboardLayout.contentHeight}px`,
-        }}>
+        <DashboardShell dashboardTheme={dashboardTheme} dashboardLayout={dashboardLayout} widgetStyles={WIDGET_STYLES}>
             {activeView?.renderer === "system-overview" ? (
-                <SystemOverview
+                <SystemOverviewRenderer
                     view={activeView}
                     metrics={statsTiles}
                     playerHudDefinitions={playerHudDefinitions}
@@ -6210,7 +4260,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     scrollRef={systemOverviewRef}
                     onScroll={(event) => rememberScroll("systemOverview", event.currentTarget.scrollTop)}
                     onExit={() => setActiveView("")}
-                    windowControl={windowControl}
+                    compactControls={systemOverviewCompactControls}
+                    widgetStyles={WIDGET_STYLES}
+                    windowControl={systemOverviewWindowControl}
+                    closeControl={systemOverviewCloseControl}
                     killAllControl={(
                         <button
                             type="button"
@@ -6219,20 +4272,18 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 : "Kill every running script on home and all reachable servers; preserve this dashboard."}
                             disabled={globalKillAction.disabled}
                             style={{
-                                ...getDashboardFrameControlStyle("danger"),
+                                ...getDashboardFrameControlStyle("danger", systemOverviewControlStyle),
                                 ...(pressedActionButtonId === globalKillAction.id && !globalKillAction.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
                                 ...(globalKillAction.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                             }}
-                            onClick={() => {
+                            onMouseDown={(event) => {
                                 if (globalKillAction.disabled) return;
-                                killAllSnapshotRef.current = runningProcessSnapshot;
-                                setKillAllPending(true);
-                                runServiceAction(globalKillAction);
+                                runDashboardFrameControlMouseDown(event, () => {
+                                    setPressedActionButtonId(globalKillAction.id);
+                                    requestGlobalKill();
+                                });
                             }}
-                            onMouseDown={() => {
-                                if (globalKillAction.disabled) return;
-                                setPressedActionButtonId(globalKillAction.id);
-                            }}
+                            onClick={(event) => runDashboardFrameControlClick(event, requestGlobalKill)}
                             onMouseUp={() => setPressedActionButtonId("")}
                             onMouseLeave={() => setPressedActionButtonId("")}
                             onBlur={() => setPressedActionButtonId("")}
@@ -6253,7 +4304,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     })}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
-                    windowControl={windowControl}
+                    windowControl={networkMapWindowControl}
+                    closeControl={networkMapCloseControl}
+                    widgetStyles={WIDGET_STYLES}
                 />
             ) : activeView?.renderer === "file-manager" ? (
                 <FileManagerView
@@ -6307,16 +4360,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             ...(pressedActionButtonId === globalKillAction.id && !globalKillAction.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
                             ...(globalKillAction.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                         }}
-                        onClick={() => {
+                        onMouseDown={(event) => {
                             if (globalKillAction.disabled) return;
-                            killAllSnapshotRef.current = runningProcessSnapshot;
-                            setKillAllPending(true);
-                            runServiceAction(globalKillAction);
+                            runDashboardFrameControlMouseDown(event, () => {
+                                setPressedActionButtonId(globalKillAction.id);
+                                requestGlobalKill();
+                            });
                         }}
-                        onMouseDown={() => {
-                            if (globalKillAction.disabled) return;
-                            setPressedActionButtonId(globalKillAction.id);
-                        }}
+                        onClick={(event) => runDashboardFrameControlClick(event, requestGlobalKill)}
                         onMouseUp={() => setPressedActionButtonId("")}
                         onMouseLeave={() => setPressedActionButtonId("")}
                         onBlur={() => setPressedActionButtonId("")}
@@ -6366,7 +4417,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onScroll={(e) => rememberScroll("left", e.currentTarget.scrollTop)}
                 >
                     <div>
-                        <Card title="Health Filter" accent="#ffc66c" subtitle="Services Filter">
+                        <Card title="Health Filter" accent="#ffc66c" subtitle="Services Filter" widgetStyles={WIDGET_STYLES}>
                             <div style={WIDGET_STYLES.healthCounterRow}>
                                 <button
                                     type="button"
@@ -6465,7 +4516,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                     ...getHealthStyle(itemLevel),
                                                     ...(itemSelected ? getActiveHealthStyle(itemLevel) : {})
                                                 }}
-                                                onClick={() => selectItem(item.id)}
+                                                onMouseDown={(event) => selectMenuItem(event, item.id)}
+                                                onClick={(event) => selectMenuItemFromKeyboard(event, item.id)}
                                             >
                                                 {item.label}
                                                 {renderHealthBadge(itemLevel)}
@@ -6511,7 +4563,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 </div>
             </>
             )}
-        </div>
+        </DashboardShell>
     );
 }
 
@@ -6888,7 +4940,7 @@ export async function main(ns) {
             if (optionsInputFocused || viewDragActive || fileManagerRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
-                let remainingSleepMs = layoutSnapshot.minimized ? 5000 : DASHBOARD_UI_TICK_MS;
+                let remainingSleepMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
                 while (remainingSleepMs > 0) {
                     const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
                     await ns.sleep(stepMs);
@@ -6930,7 +4982,7 @@ export async function main(ns) {
 
         if (!isDaemon) break;
 
-        let remainingSleepMs = layoutSnapshot.minimized ? 5000 : DASHBOARD_UI_TICK_MS;
+        let remainingSleepMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
         while (remainingSleepMs > 0) {
             const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
             await ns.sleep(stepMs);

@@ -469,11 +469,12 @@ export function buildDashboardTheme(mode, rawGameTheme = {}, config = {}) {
 export function adaptDashboardStyle(style, theme, elementType = "", themeRole = "") {
     if (!style || typeof style !== "object" || Array.isArray(style)) return style;
     const removeWindowedAppFrameBorder = !theme?.maximized && themeRole === "app-frame";
+    const dashboardFrameStyle = !theme?.followGame && (themeRole === "card-frame" || themeRole === "hero-frame");
     const hasTypographyAdaptation = Boolean(theme?.typography && (
         Math.abs(theme.typography.fontScale - 1) > 0.001
         || style.fontFamily
     ));
-    if (!theme?.followGame && !hasTypographyAdaptation && !removeWindowedAppFrameBorder) return style;
+    if (!theme?.followGame && !hasTypographyAdaptation && !removeWindowedAppFrameBorder && !dashboardFrameStyle) return style;
     const cacheKey = `${String(elementType ?? "")}:${String(themeRole ?? "")}`;
     const styleCache = theme.styleCache?.get(style);
     const cached = styleCache?.get(cacheKey);
@@ -482,6 +483,19 @@ export function adaptDashboardStyle(style, theme, elementType = "", themeRole = 
         Object.entries(style).map(([propertyName, value]) => [propertyName, adaptStyleValue(value, propertyName, theme, themeRole, elementType)])
     );
     adapted = adaptTypographyStyle(adapted, theme, elementType);
+    if (!theme?.followGame && themeRole === "card-frame") {
+        adapted.border = "1px solid rgba(108, 180, 255, 0.24)";
+        adapted.borderRadius = "8px";
+        adapted.background = "linear-gradient(145deg, rgba(12, 28, 22, 0.98), rgba(10, 17, 29, 0.97))";
+        adapted.boxShadow = "inset 0 1px 0 rgba(210, 240, 255, 0.04)";
+    }
+    if (!theme?.followGame && themeRole === "hero-frame") {
+        adapted.border = "1px solid rgba(108, 180, 255, 0.24)";
+        adapted.borderBottom = "1px solid rgba(108, 180, 255, 0.24)";
+        adapted.borderRadius = "8px";
+        adapted.background = "linear-gradient(105deg, rgba(16, 38, 29, 0.98), rgba(13, 21, 36, 0.97))";
+        adapted.boxShadow = "inset 0 1px 0 rgba(210, 240, 255, 0.05)";
+    }
     if (removeWindowedAppFrameBorder) {
         adapted.border = "none";
         delete adapted.borderColor;

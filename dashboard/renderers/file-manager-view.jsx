@@ -9,6 +9,8 @@ import {
     getDashboardFrameControlGroupStyle,
     getDashboardFrameHeaderStyle,
     getDashboardFrameControlStyle,
+    runDashboardFrameControlClick,
+    runDashboardFrameControlMouseDown,
 } from "dashboard/libs/frame-controls.js";
 import {
     buildArchivePath,
@@ -1252,7 +1254,14 @@ export function FileManagerView({
                 </div>
                 <div style={getDashboardFrameControlGroupStyle()}>
                     {headerActions}
-                    <button type="button" style={STYLES.closeButton} onClick={onExit}>{view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}</button>
+                    <button
+                        type="button"
+                        style={STYLES.closeButton}
+                        onMouseDown={(event) => runDashboardFrameControlMouseDown(event, onExit)}
+                        onClick={(event) => runDashboardFrameControlClick(event, onExit)}
+                    >
+                        {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
+                    </button>
                 </div>
             </header>
 

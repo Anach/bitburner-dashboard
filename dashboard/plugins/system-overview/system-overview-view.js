@@ -4,7 +4,7 @@ export const DASHBOARD_VIEW_METADATA = {
     "menuGroup": "overview",
     "menuLabel": "System Overview",
     "title": "System Overview",
-    "subtitle": "Live automation, progression, capacity, and economic signals.",
+    "subtitle": "Core dashboard status, capacity, and available service health.",
     "layout": {
         "columns": 4,
         "gap": 10
@@ -13,21 +13,13 @@ export const DASHBOARD_VIEW_METADATA = {
         {
             "id": "live-summary",
             "type": "metrics",
-            "title": "Live Summary",
-            "subtitle": "Current quick-view signals",
+            "title": "Dashboard Status",
+            "subtitle": "Core signals and installed integration summaries",
             "columnStart": 1,
             "columnSpan": 4,
             "rowStart": 1,
             "includeSystem": true,
-            "itemIds": [
-                "progression.report:rootedUnrooted",
-                "progression.report:hosts",
-                "progression.report:xpRate",
-                "progression.report:nextLevel",
-                "progression.report:eta",
-                "automation.batcher:modeLabel",
-                "system:runningScripts"
-            ]
+            "maxItems": 12
         },
         {
             "id": "system-health",
@@ -43,15 +35,13 @@ export const DASHBOARD_VIEW_METADATA = {
             "id": "capacity",
             "type": "gauges",
             "title": "Capacity",
-            "subtitle": "Live utilization",
+            "subtitle": "Home RAM and service capacity",
             "columnStart": 2,
             "columnSpan": 1,
             "rowStart": 2,
             "gaugeSize": 100,
-            "itemIds": [
-                "automation.serverBuyer:cloud-ram",
-                "hardware.home:ram"
-            ]
+            "includeSystem": true,
+            "maxItems": 6
         },
         {
             "id": "service-landscape",
@@ -63,22 +53,17 @@ export const DASHBOARD_VIEW_METADATA = {
             "rowStart": 2
         },
         {
-            "id": "priority-history",
+            "id": "available-trends",
             "type": "graphs",
-            "title": "Priority History",
-            "subtitle": "Selected integration trends",
+            "title": "Available Trends",
+            "subtitle": "Recent history from installed integrations",
             "columnStart": 1,
             "columnSpan": 4,
             "rowStart": 3,
-            "graphColumns": 4,
-            "graphHeight": 250,
-            "maxItems": 4,
-            "itemIds": [
-                "automation.stockTrader:stock-pnl",
-                "automation.serverBuyer:server-economics",
-                "automation.hacknetBuyer:hacknet-economics",
-                "automation.ipvgo:ipvgo-results"
-            ]
+            "graphColumns": 3,
+            "graphHeight": 220,
+            "maxItems": 3,
+            "emptyText": "No integration history is available yet."
         }
     ]
 };
