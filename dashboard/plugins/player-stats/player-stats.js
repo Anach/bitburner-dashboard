@@ -93,6 +93,7 @@ export function buildPlayerStatus(ns) {
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[PLAYER] Player status telemetry started.");
+    ns.print("[LIFECYCLE] Player status telemetry started.");
     while (true) {
         await ns.write(PLAYER_STATUS_PATH, JSON.stringify(buildPlayerStatus(ns)), "w");
         await ns.sleep(REFRESH_MS);

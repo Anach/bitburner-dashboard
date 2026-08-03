@@ -224,26 +224,35 @@ export function ScriptLogView({
         initialState && typeof initialState === "object" ? initialState : {}
     );
     const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
-    const [selectedId, setSelectedId] = React.useState(() => String(savedState.selectedId ?? ""));
+    const selectionDefaultVersion = Math.max(1, Math.floor(Number(view?.layout?.selectionDefaultVersion) || 1));
+    const [selectedId, setSelectedId] = React.useState(() => (
+        Number(savedState.selectionDefaultVersion) === selectionDefaultVersion
+            ? String(savedState.selectedId ?? "")
+            : ""
+    ));
     const [query, setQuery] = React.useState(() => String(savedState.query ?? ""));
     const [filter, setFilter] = React.useState(() => ["all", "running", "recent"].includes(savedState.filter) ? savedState.filter : "all");
-    const [autoFollow, setAutoFollow] = React.useState(() => typeof savedState.autoFollow === "boolean"
-        ? savedState.autoFollow
-        : view?.layout?.autoFollowDefault !== false);
+    const autoFollowDefaultVersion = Math.max(1, Math.floor(Number(view?.layout?.autoFollowDefaultVersion) || 1));
+    const [autoFollow, setAutoFollow] = React.useState(() => (
+        Number(savedState.autoFollowDefaultVersion) === autoFollowDefaultVersion
+        && typeof savedState.autoFollow === "boolean"
+            ? savedState.autoFollow
+            : view?.layout?.autoFollowDefault !== false
+    ));
     const [scrollTop, setScrollTop] = React.useState(() => Math.max(0, Number(savedState.scrollTop) || 0));
     const [listScrollTop, setListScrollTop] = React.useState(() => Math.max(0, Number(savedState.listScrollTop) || 0));
     const logRef = React.useRef(null);
     const listRef = React.useRef(null);
     const visibleEntries = entries.filter((entry) => entryMatches(entry, query, filter));
-    const selectedEntry = visibleEntries.find((entry) => entry.id === selectedId) ?? visibleEntries[0] ?? null;
+    const selectedEntry = visibleEntries.find((entry) => entry.id === selectedId) ?? null;
 
     React.useEffect(() => {
-        if (selectedEntry && selectedEntry.id !== selectedId) setSelectedId(selectedEntry.id);
+        if (selectedId && !entries.some((entry) => entry.id === selectedId)) setSelectedId("");
     }, [selectedEntry?.id, selectedId]);
 
     React.useEffect(() => {
-        onStateChange?.({ selectedId: selectedEntry?.id ?? "", query, filter, autoFollow, scrollTop, listScrollTop });
-    }, [selectedEntry?.id, query, filter, autoFollow, scrollTop, listScrollTop]);
+        onStateChange?.({ selectedId: selectedEntry?.id ?? "", selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop });
+    }, [selectedEntry?.id, selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop]);
 
     React.useLayoutEffect(() => {
         const element = logRef.current;
@@ -362,15 +371,21 @@ export function ScriptLogView({
                                 style={{ ...STYLES.filterButton, ...(autoFollow ? STYLES.filterActive : {}), flex: "0 0 auto" }}
                                 onClick={() => setAutoFollow((current) => !current)}
                             >
-                                Follow {autoFollow ? "On" : "Off"}
+                                Auto-scroll {autoFollow ? "On" : "Off"}
                             </button>
                             <button type="button" style={{ ...STYLES.filterButton, flex: "0 0 auto" }} onClick={copyLogs}>Copy</button>
                         </div>
                     </div>
                     <div ref={logRef} style={STYLES.logViewport} onScroll={handleLogScroll}>
-                        {selectedEntry?.logs?.length ? selectedEntry.logs.map((line, index) => (
+                        {!selectedEntry ? (
+                            <div style={STYLES.empty}>Select one script to load its retained output.</div>
+                        ) : selectedEntry.logs.length ? selectedEntry.logs.map((line, index) => (
                             <div key={`${index}:${line}`} style={STYLES.logLine}>{line || " "}</div>
-                        )) : <div style={STYLES.empty}>No text output is currently retained for this script.</div>}
+                        )) : (
+                            <div style={STYLES.empty}>
+                                No retained output. This script may not call ns.print(), may write only to Terminal with ns.tprint(), or may clear its log.
+                            </div>
+                        )}
                     </div>
                 </section>
             </div>

@@ -26,47 +26,56 @@ export function buildScriptLogSnapshot(ns, view, options = {}) {
     const processList = host === "home" && Array.isArray(options.homeProcesses)
         ? options.homeProcesses
         : ns.ps(host);
-    const selectedRunningId = selectedId || (processList[0]?.pid ? `running:${processList[0].pid}` : "");
-    const running = processList.map((process) => {
-        const id = `running:${process.pid}`;
-        let details = null;
-        if (selectedRunningId === id) {
-            try {
-                details = ns.getRunningScript(process.pid);
-            } catch (error) {
-                details = null;
-            }
-        }
-        const args = Array.isArray(details?.args) ? details.args : process.args;
-        const logs = normalizeLogLines(details?.logs, maxLines);
-        return {
-            id,
-            status: "running",
-            filename: String(process.filename ?? details?.filename ?? "unknown"),
-            host,
-            pid: Number(process.pid) || 0,
-            threads: Number(process.threads) || Number(details?.threads) || 0,
-            args: Array.isArray(args) ? args : [],
-            argsText: formatScriptArgs(args),
-            logs,
-            lastLine: logs.at(-1) ?? "",
-            timestamp: generatedAt,
-        };
-    }).sort((left, right) => left.filename.localeCompare(right.filename) || left.pid - right.pid);
-
+    const sortedProcessList = [...processList].sort((left, right) => {
+        return String(left?.filename ?? "").localeCompare(String(right?.filename ?? ""))
+            || (Number(left?.pid) || 0) - (Number(right?.pid) || 0);
+    });
     let recentScripts = [];
     try {
         recentScripts = ns.getRecentScripts();
     } catch (error) {
         recentScripts = [];
     }
-    const recent = recentScripts
+    const recentCandidates = recentScripts
         .filter((entry) => entry?.server === host)
         .slice(0, recentLimit)
         .map((entry) => {
             const deathTime = Date.parse(String(entry.timeOfDeath ?? "")) || 0;
-            const id = `recent:${entry.pid}:${deathTime}`;
-            const logs = selectedId === id || (!selectedId && running.length === 0)
+            return { entry, deathTime, id: `recent:${entry.pid}:${deathTime}` };
+        });
+    const runningIds = new Set(sortedProcessList.map((process) => `running:${process.pid}`));
+    const recentIds = new Set(recentCandidates.map((candidate) => candidate.id));
+    const selectedSnapshotId = runningIds.has(selectedId) || recentIds.has(selectedId) ? selectedId : "";
+    const running = sortedProcessList.map((process) => {
+        const id = `running:${process.pid}`;
+        let selectedLogs = [];
+        if (selectedSnapshotId === id) {
+            try {
+                selectedLogs = ns.getScriptLogs(process.pid);
+            } catch (error) {
+                selectedLogs = [];
+            }
+        }
+        const args = process.args;
+        const logs = normalizeLogLines(selectedLogs, maxLines);
+        return {
+            id,
+            status: "running",
+            filename: String(process.filename ?? "unknown"),
+            host,
+            pid: Number(process.pid) || 0,
+            threads: Number(process.threads) || 0,
+            args: Array.isArray(args) ? args : [],
+            argsText: formatScriptArgs(args),
+            logs,
+            lastLine: logs.at(-1) ?? "",
+            timestamp: generatedAt,
+        };
+    });
+
+    const recent = recentCandidates
+        .map(({ entry, deathTime, id }) => {
+            const logs = selectedSnapshotId === id
                 ? normalizeLogLines(entry.logs, maxLines)
                 : [];
             return {

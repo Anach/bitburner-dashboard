@@ -10,6 +10,8 @@ export const DASHBOARD_VIEW_METADATA = {
         "host": "home",
         "maxLines": 500,
         "recentLimit": 30,
-        "autoFollowDefault": true
+        "autoFollowDefault": false,
+        "autoFollowDefaultVersion": 2,
+        "selectionDefaultVersion": 2
     }
 };

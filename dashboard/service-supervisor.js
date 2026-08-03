@@ -38,6 +38,7 @@ function discoverManagedServices(ns) {
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[DASHBOARD] Integration Service Supervisor started.");
+    ns.print("[LIFECYCLE] Integration Service Supervisor started.");
 
     const previousIssues = new Map();
 

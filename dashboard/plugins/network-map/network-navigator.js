@@ -591,6 +591,7 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand) {
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[NETWORK] Network Navigator telemetry started.");
+    ns.print("[LIFECYCLE] Network Navigator telemetry started.");
 
     let lastCommand = null;
     while (true) {
