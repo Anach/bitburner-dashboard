@@ -861,6 +861,12 @@ const WIDGET_STYLES = {
         gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
         gap: "10px 16px"
     },
+    playerStatusColumn: {
+        minWidth: 0,
+        borderLeft: "1px solid rgba(108, 180, 255, 0.28)",
+        paddingLeft: "10px",
+        boxSizing: "border-box"
+    },
     homePlayerGroup: {
         minWidth: 0
     },
@@ -3415,7 +3421,7 @@ function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnable
                 .filter((definition) => (!serviceIds || serviceIds.has(definition.serviceId)) && (definition.groups?.length ?? 0) > 0);
             const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
             return (
-                <div key={widget.id} style={wrapperStyle}>
+                <div key={widget.id} style={{ ...wrapperStyle, ...WIDGET_STYLES.playerStatusColumn }}>
                     <HomePanel title={title} subtitle={subtitle}>
                         <PluginRuntimeWarning statuses={runtimeStatuses} />
                         {selectedDefinitions.length > 0
@@ -4681,6 +4687,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         : {};
     const windowControl = <DashboardWindowModeButton layoutSnapshot={dashboardLayout} />;
     const [pressedActionButtonId, setPressedActionButtonId] = React.useState("");
+    const [killAllPending, setKillAllPending] = React.useState(false);
+    const killAllSnapshotRef = React.useRef(null);
+    React.useEffect(() => {
+        if (killAllPending && runningProcessSnapshot !== killAllSnapshotRef.current) {
+            setKillAllPending(false);
+        }
+    }, [runningProcessSnapshot]);
     const optionsDirtyRef = React.useRef(false);
     const optionsInputFocusedRef = React.useRef(false);
     const optionsFocusReleaseTimerRef = React.useRef(null);
@@ -5536,7 +5549,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             sourceKind: "plugin",
             title: `${service.menuLabel} · ${graph.title ?? "History"}`,
         })));
-    const globalKillAction = buildDashboardActions([DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS])[0];
+    const hasKillAllTargets = runningProcessSnapshot.remoteFilenames.length > 0
+        || runningProcessSnapshot.homeFilenames.some((filename) => {
+            return filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT;
+        });
+    const globalKillAction = buildDashboardActions([DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS], {
+        disabledActionIds: hasKillAllTargets && !killAllPending ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS],
+    })[0];
 
     const renderSubWidgets = () => {
         const serviceSupervisorRunning = homeScripts.some((script) => {
@@ -6155,7 +6174,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const emptyText = typeof widget.emptyText === "string" ? widget.emptyText : "Waiting for player telemetry.";
 
         return (
-            <div key={`${widget.contributionServiceId}:${widget.id}`} style={{ minWidth: 0 }}>
+            <div key={`${widget.contributionServiceId}:${widget.id}`} style={WIDGET_STYLES.playerStatusColumn}>
                 <HomePanel title={title} subtitle={subtitle}>
                     <PluginRuntimeWarning statuses={runtimeStatuses} />
                     {definitions.length > 0
@@ -6195,13 +6214,25 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     killAllControl={(
                         <button
                             type="button"
-                            title="Kill every running script on home and all reachable servers, including this dashboard."
+                            title={globalKillAction.disabled
+                                ? "No scripts other than the dashboard are currently running."
+                                : "Kill every running script on home and all reachable servers; preserve this dashboard."}
+                            disabled={globalKillAction.disabled}
                             style={{
                                 ...getDashboardFrameControlStyle("danger"),
-                                ...(pressedActionButtonId === globalKillAction.id ? WIDGET_STYLES.actionButtonPressed : {}),
+                                ...(pressedActionButtonId === globalKillAction.id && !globalKillAction.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
+                                ...(globalKillAction.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                             }}
-                            onClick={() => runServiceAction(globalKillAction)}
-                            onMouseDown={() => setPressedActionButtonId(globalKillAction.id)}
+                            onClick={() => {
+                                if (globalKillAction.disabled) return;
+                                killAllSnapshotRef.current = runningProcessSnapshot;
+                                setKillAllPending(true);
+                                runServiceAction(globalKillAction);
+                            }}
+                            onMouseDown={() => {
+                                if (globalKillAction.disabled) return;
+                                setPressedActionButtonId(globalKillAction.id);
+                            }}
                             onMouseUp={() => setPressedActionButtonId("")}
                             onMouseLeave={() => setPressedActionButtonId("")}
                             onBlur={() => setPressedActionButtonId("")}
@@ -6267,13 +6298,25 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     <div style={getDashboardFrameControlGroupStyle()}>
                     <button
                         type="button"
-                        title="Kill every running script on home and all reachable servers, including this dashboard."
+                        title={globalKillAction.disabled
+                            ? "No scripts other than the dashboard are currently running."
+                            : "Kill every running script on home and all reachable servers; preserve this dashboard."}
+                        disabled={globalKillAction.disabled}
                         style={{
                             ...getDashboardFrameControlStyle("danger"),
-                            ...(pressedActionButtonId === globalKillAction.id ? WIDGET_STYLES.actionButtonPressed : {}),
+                            ...(pressedActionButtonId === globalKillAction.id && !globalKillAction.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
+                            ...(globalKillAction.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                         }}
-                        onClick={() => runServiceAction(globalKillAction)}
-                        onMouseDown={() => setPressedActionButtonId(globalKillAction.id)}
+                        onClick={() => {
+                            if (globalKillAction.disabled) return;
+                            killAllSnapshotRef.current = runningProcessSnapshot;
+                            setKillAllPending(true);
+                            runServiceAction(globalKillAction);
+                        }}
+                        onMouseDown={() => {
+                            if (globalKillAction.disabled) return;
+                            setPressedActionButtonId(globalKillAction.id);
+                        }}
                         onMouseUp={() => setPressedActionButtonId("")}
                         onMouseLeave={() => setPressedActionButtonId("")}
                         onBlur={() => setPressedActionButtonId("")}

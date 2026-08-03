@@ -154,10 +154,9 @@ function performDashboardKillAction(ns, command) {
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS) {
         const remoteResult = killMatchingProcesses(ns, remoteHosts, () => true);
         const homeResult = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeWorker);
-        const killedCount = remoteResult.killedCount + homeResult.killedCount + 1;
-        return success(`Killed ${killedCount} scripts across home and all reachable servers.`, "warning", {
+        const killedCount = remoteResult.killedCount + homeResult.killedCount;
+        return success(`Killed ${killedCount} script${killedCount === 1 ? "" : "s"} across home and all reachable servers (dashboard preserved).`, "warning", {
             killedCount,
-            terminateDashboard: true,
         });
     }
     throw new Error(`Unknown dashboard kill action: ${actionId}`);
