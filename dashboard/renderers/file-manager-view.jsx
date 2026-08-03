@@ -1106,7 +1106,9 @@ export function FileManagerView({
     const canCopy = hasMultiSelection ? canBatchCopy : Boolean(selectedEntry?.entryType === "file" && selectedEntry.exists && isEditableFile(selectedEntry.path));
     const canMove = hasMultiSelection ? canBatchMove : Boolean(selectedEntry?.entryType === "file" && selectedEntry.exists && !selectedEntry.protected && isMovableFile(selectedEntry.path));
     const canArchive = !hasMultiSelection && canMove && !isPathInFolders(selectedEntry?.path, [archiveRoot]);
-    const canDelete = hasMultiSelection ? canBatchDelete : Boolean(selectedEntry?.entryType === "file" && selectedEntry.exists && !selectedEntry.protected && isDeletableFile(selectedEntry.path));
+    const canDelete = hasMultiSelection || selectedEntry?.entryType === "directory"
+        ? canBatchDelete
+        : Boolean(selectedEntry?.entryType === "file" && selectedEntry.exists && !selectedEntry.protected && isDeletableFile(selectedEntry.path));
     const canCleanup = normalizedManifest.available && cleanableStaleEntries.length > 0;
     const deleteActionCount = hasMultiSelection || selectedEntry?.entryType === "directory"
         ? deletableEntries.length

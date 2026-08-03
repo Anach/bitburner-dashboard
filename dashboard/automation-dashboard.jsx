@@ -1605,6 +1605,14 @@ function saveDashboardOptions(ns, options) {
     ns.toast("Dashboard options saved", "success", 3500);
 }
 
+function isDashboardRestartCommand(command) {
+    if (command?.kind === "dashboard") {
+        return command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD;
+    }
+    if (command?.kind !== "script" || command.filename !== DASHBOARD_SCRIPT) return false;
+    return resolveScriptActionExecution(command.actionId, command.filename)?.executeType === "restart";
+}
+
 function applyQueuedDashboardActions(ns) {
     if (!ns) return;
 
@@ -1613,6 +1621,10 @@ function applyQueuedDashboardActions(ns) {
 
     for (const command of queue) {
         if (!command || typeof command !== "object") continue;
+        if (isDashboardRestartCommand(command)) {
+            performDashboardAction(ns, DASHBOARD_ACTION_IDS.RESTART_DASHBOARD);
+            continue;
+        }
 
         try {
             if (command.kind === "window-mode") {
@@ -2061,7 +2073,7 @@ function performDashboardAction(ns, actionId) {
     switch (actionId) {
         case DASHBOARD_ACTION_IDS.RESTART_DASHBOARD:
             logMajorAction(ns, "Restarting dashboard...", "info");
-            ns.spawn(DASHBOARD_SCRIPT, 1, ...getDashboardRestartArgs(ns.args));
+            ns.spawn(DASHBOARD_SCRIPT, { threads: 1, spawnDelay: 0 }, ...getDashboardRestartArgs(ns.args));
             return;
         case DASHBOARD_ACTION_IDS.START_SERVICES:
             return startScript(ns, USER_INIT_SCRIPT);
