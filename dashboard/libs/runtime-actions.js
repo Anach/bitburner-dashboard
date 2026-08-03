@@ -3,9 +3,14 @@ export function restartHomeScript(ns, script, ...args) {
         return { status: "missing" };
     }
 
-    ns.scriptKill(script, "home");
-    const ok = ns.exec(script, "home", 1, ...args);
-    return ok > 0 ? { status: "restarted" } : { status: "failed" };
+    if (ns.scriptRunning(script, "home") && !ns.scriptKill(script, "home")) {
+        return { status: "failed-to-stop" };
+    }
+
+    const pid = ns.exec(script, "home", 1, ...args);
+    if (pid > 0) return { status: "restarted", pid };
+    if (ns.scriptRunning(script, "home")) return { status: "already-running" };
+    return { status: "failed" };
 }
 
 export function startHomeScript(ns, script, ...args) {

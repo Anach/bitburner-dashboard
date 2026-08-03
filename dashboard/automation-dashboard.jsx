@@ -35,6 +35,7 @@ import {
 } from "dashboard/libs/tail-layout.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
+import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
@@ -134,12 +135,8 @@ const DEFAULT_DASHBOARD_WINDOW_STARTUP_MODE = DASHBOARD_STARTUP_MODE_REMEMBER;
 const DASHBOARD_PLAYER_HUD_MODE_AUTO = "Auto";
 const DASHBOARD_PLAYER_HUD_MODE_SHOWN = "Shown";
 const DASHBOARD_PLAYER_HUD_MODE_HIDDEN = "Hidden";
-const DASHBOARD_PLAYER_HUD_MODES = [
-    DASHBOARD_PLAYER_HUD_MODE_AUTO,
-    DASHBOARD_PLAYER_HUD_MODE_SHOWN,
-    DASHBOARD_PLAYER_HUD_MODE_HIDDEN,
-];
 const DEFAULT_DASHBOARD_PLAYER_HUD_MODE = DASHBOARD_PLAYER_HUD_MODE_AUTO;
+const PLAYER_STATS_WIDGET_WIDTH = 360;
 const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_IGNORED_SCRIPT_FOLDERS;
 const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
@@ -1779,8 +1776,15 @@ function getHomeRamStatus(ns) {
 
 function logMajorAction(ns, message, toastType = "info") {
     if (!ns) return;
+    const normalizedToastType = toastType === "danger"
+        ? "error"
+        : toastType === "warn"
+            ? "warning"
+            : ["success", "warning", "error", "info"].includes(toastType)
+                ? toastType
+                : "info";
     ns.tprint(`[DASHBOARD] ${message}`);
-    ns.toast(message, toastType, 4500);
+    ns.toast(message, normalizedToastType, 4500);
 }
 
 function restartScript(ns, script, ...args) {
@@ -1791,6 +1795,14 @@ function restartScript(ns, script, ...args) {
     }
     if (result.status === "restarted") {
         logMajorAction(ns, `Restarted ${script}.`, "success");
+        return result.status;
+    }
+    if (result.status === "already-running") {
+        logMajorAction(ns, `${script} is running, but another process restarted it first.`, "warning");
+        return result.status;
+    }
+    if (result.status === "failed-to-stop") {
+        logMajorAction(ns, `Could not stop ${script}; restart was cancelled.`, "warning");
         return result.status;
     }
     logMajorAction(ns, `Failed to restart ${script}.`, "warning");
@@ -2085,7 +2097,10 @@ function performScriptFileAction(ns, action, filename) {
     }
     if (execution.executeType === "stop") return stopScript(ns, filename);
     if (execution.executeType === "restart") {
-        if (restartScript(ns, filename, ...args) === "restarted") applyPersistedPluginOptions(ns, filename);
+        const restartStatus = restartScript(ns, filename, ...args);
+        if (restartStatus === "restarted" || restartStatus === "already-running") {
+            applyPersistedPluginOptions(ns, filename);
+        }
         return;
     }
     logMajorAction(ns, `Unsupported execution type for action ${action}: ${execution.executeType}`, "warning");
@@ -2140,7 +2155,7 @@ const DASHBOARD_SERVICES = [
                 },
             };
         },
-        getInputs: ({ selectedCenterPanel, options }) => {
+        getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
             if (selectedCenterPanel !== "options") return [];
             return [
                 { id: "reserved-home-ram", label: "Reserved Home RAM (GB)", optionKey: "reservedHomeRam", value: options.reservedHomeRam, min: 0 },
@@ -2200,14 +2215,7 @@ const DASHBOARD_SERVICES = [
                     options: DASHBOARD_TEXT_SIZE_MODES,
                     value: options.dashboardTextSizeMode,
                 },
-                {
-                    id: "dashboard-player-stats-mode",
-                    label: "System Overview player stats",
-                    optionKey: "dashboardPlayerHudMode",
-                    type: "select",
-                    options: DASHBOARD_PLAYER_HUD_MODES,
-                    value: options.dashboardPlayerHudMode,
-                },
+                ...(Array.isArray(pluginDashboardOptionInputs) ? pluginDashboardOptionInputs : []),
                 {
                     id: "ignored-script-folders",
                     label: "Ignored folders (comma-separated)",
@@ -3596,6 +3604,8 @@ function selectDashboardViewServiceGroups(groups, widget) {
 }
 
 function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
+    const widgets = Array.isArray(view?.widgets) ? view.widgets : [];
+    const hasPlayerStatsWidget = playerStatsEnabled !== false && widgets.some((widget) => widget?.type === "player-stats");
     const configuredColumns = Math.floor(Number(
         playerStatsEnabled === false
             ? view?.layout?.columnsWithoutPlayerStats ?? view?.layout?.columns
@@ -3604,7 +3614,9 @@ function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnable
     const columns = Number.isFinite(configuredColumns) ? Math.max(1, Math.min(6, configuredColumns)) : 3;
     const configuredGap = Math.floor(Number(view?.layout?.gap));
     const gap = Number.isFinite(configuredGap) ? Math.max(0, Math.min(24, configuredGap)) : 10;
-    const widgets = Array.isArray(view?.widgets) ? view.widgets : [];
+    const gridTemplateColumns = hasPlayerStatsWidget && columns > 1
+        ? `repeat(${columns - 1}, minmax(0, 1fr)) ${PLAYER_STATS_WIDGET_WIDTH}px`
+        : `repeat(${columns}, minmax(0, 1fr))`;
     const renderWidget = (widget) => {
         const configuredSpan = Math.floor(Number(widget?.columnSpan));
         const columnSpan = Number.isFinite(configuredSpan)
@@ -3797,7 +3809,7 @@ function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnable
             <div
                 style={{
                     ...WIDGET_STYLES.homeWidgetGrid,
-                    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                    gridTemplateColumns,
                     gap: `${gap}px`,
                 }}
             >
@@ -4894,7 +4906,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
         };
     }
     return {
-        workspaceColumns: "minmax(220px, 0.85fr) minmax(280px, 1fr) minmax(400px, 2.2fr)",
+        workspaceColumns: "minmax(220px, 0.85fr) minmax(280px, 1fr) minmax(480px, 2.2fr)",
         statMinimumWidth: 138,
         gaugeWidth: 64,
     };
@@ -5095,8 +5107,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const selectedItem = uiState.selectedItem;
     const activeView = getDashboardViewRegistry().byId.get(uiState.activeViewId) ?? null;
     const playerHudMode = normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode);
-    const playerHudDefinitions = buildDashboardHudDefinition(getDashboardServiceRegistry().services, telemetryByServiceId);
+    const dashboardServiceRegistry = getDashboardServiceRegistry();
+    const playerHudDefinitions = buildDashboardHudDefinition(dashboardServiceRegistry.services, telemetryByServiceId);
     const playerStatsEnabled = playerHudMode !== DASHBOARD_PLAYER_HUD_MODE_HIDDEN;
+    const pluginDashboardOptionInputs = buildPluginDashboardOptionInputs(dashboardServiceRegistry.services, options);
     const workspaceColumns = responsiveLayout.workspaceColumns;
     const setActiveView = (viewId) => {
         setUiState((current) => ({ ...current, activeViewId: String(viewId ?? "") }));
@@ -5151,6 +5165,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         homeScripts,
         homeRamStatus,
         options,
+        pluginDashboardOptionInputs,
     };
 
     const getPanelMeta = (panelId, fallbackMeta) => getServicePanelMeta(selectedService, panelId, fallbackMeta);
@@ -5167,7 +5182,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const panelActions = isPluginService
         ? serviceActions.filter((action) => action.kind !== "script")
         : serviceActions;
-    const dashboardServiceRegistry = getDashboardServiceRegistry();
     const serviceHealthById = Object.fromEntries(
         dashboardServiceRegistry.services.map((service) => [service.id, getServiceHealth(service, serviceContext)])
     );
@@ -5179,6 +5193,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             running: !service.pluginFile || homeScripts.some((script) => script?.filename === service.pluginFile && script?.running),
         }])
     );
+    const workspaceWidgets = selectDashboardWorkspaceWidgets(
+        dashboardServiceRegistry.services,
+        selectedService,
+        selectedItem
+    );
+    const visibleWorkspaceWidgets = workspaceWidgets.filter((widget) => widget.type !== "player-stats" || playerStatsEnabled);
     const selectedServiceHealth = serviceHealthById[selectedItem] ?? { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
     const healthFilter = HEALTH_FILTER_MODES.has(uiState.healthFilter) ? uiState.healthFilter : "all";
     const healthCounts = dashboardServiceRegistry.services.reduce((counts, service) => {
@@ -6374,6 +6394,31 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         );
     };
 
+    const renderWorkspaceWidget = (widget) => {
+        if (widget.type !== "player-stats") return null;
+        const serviceIds = Array.isArray(widget.serviceIds) && widget.serviceIds.length > 0
+            ? widget.serviceIds.filter((serviceId) => typeof serviceId === "string")
+            : [widget.contributionServiceId].filter(Boolean);
+        const serviceIdSet = new Set(serviceIds);
+        const definitions = playerHudDefinitions
+            .filter((definition) => serviceIdSet.has(definition.serviceId) && (definition.groups?.length ?? 0) > 0);
+        const runtimeStatuses = serviceIds.map((serviceId) => serviceRuntimeById[serviceId]).filter(Boolean);
+        const title = typeof widget.title === "string" ? widget.title : "Player Status";
+        const subtitle = typeof widget.subtitle === "string" ? widget.subtitle : "Live player telemetry";
+        const emptyText = typeof widget.emptyText === "string" ? widget.emptyText : "Waiting for player telemetry.";
+
+        return (
+            <div key={`${widget.contributionServiceId}:${widget.id}`} style={{ minWidth: 0 }}>
+                <HomePanel title={title} subtitle={subtitle}>
+                    <PluginRuntimeWarning statuses={runtimeStatuses} />
+                    {definitions.length > 0
+                        ? <PlayerStatsOverview definitions={definitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation ?? "vertical"} />
+                        : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
+                </HomePanel>
+            </div>
+        );
+    };
+
     return (
         <div data-dashboard-theme-role="app-frame" style={{
             ...WIDGET_STYLES.shell,
@@ -6659,10 +6704,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 <div
                     ref={rightColumnRef}
                     data-dashboard-theme-role="workspace-column"
-                    style={WIDGET_STYLES.column}
+                    style={{
+                        ...WIDGET_STYLES.column,
+                        ...(visibleWorkspaceWidgets.length > 0 ? {
+                            display: "grid",
+                            gridTemplateColumns: `minmax(0, 1fr) ${PLAYER_STATS_WIDGET_WIDTH}px`,
+                            gap: "10px",
+                            alignItems: "start",
+                        } : {}),
+                    }}
                     onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
                 >
-                    {renderDataPanel()}
+                    <div style={{ minWidth: 0 }}>{renderDataPanel()}</div>
+                    {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
                 </div>
                 </div>
             </>

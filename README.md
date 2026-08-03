@@ -275,7 +275,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 
-Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata. Player Stats uses this contract to add itself to System Overview; neither plugin requires the other to be installed.
+Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata, or to the normal workspace right pane through `workspaceWidgets`. Player Stats uses both contracts to add itself to System Overview and beside the service status panel in non-global system groups. Its dashboard option is also plugin-contributed, so removing Player Stats removes the widgets and option without leaving an empty surface or inactive control.
 
 ## Beta notes
 

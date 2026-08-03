@@ -38,6 +38,28 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "emptyText": "Waiting for Player Status telemetry."
         }
     ],
+    "workspaceWidgets": [
+        {
+            "id": "player-dashboard",
+            "type": "player-stats",
+            "title": "Player Status",
+            "subtitle": "Live player telemetry",
+            "menuGroups": ["overview", "affiliations", "hacking", "finances", "hardware", "automation"],
+            "serviceIds": ["system.playerStatus"],
+            "groupIds": ["core", "location", "work", "history"],
+            "orientation": "vertical",
+            "emptyText": "Waiting for Player Status telemetry."
+        }
+    ],
+    "dashboardOptions": [
+        {
+            "id": "dashboard-player-stats-mode",
+            "label": "Player stats",
+            "optionKey": "dashboardPlayerHudMode",
+            "type": "select",
+            "options": ["Auto", "Shown", "Hidden"]
+        }
+    ],
     "hud": {
         "title": "Player",
         "updatedAtKey": "generatedAt",
