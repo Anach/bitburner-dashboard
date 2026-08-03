@@ -32,11 +32,13 @@ export const DASHBOARD_VIEW_METADATA = {
         "protectRunning": true,
         "paths": [
             "dashboard/automation-dashboard.jsx",
+            "dashboard/action-worker.js",
             "dashboard/service-supervisor.js",
             "dashboard/plugins/file-manager/file-manager-view.js",
             "dashboard/renderers/file-manager-view.jsx",
             "dashboard/renderers/file-manager-snapshot.js",
             "data/dashboard_options.json",
+            "data/dashboard_action_result.json",
             "data/deploy_manifest.json"
         ],
         "prefixes": [

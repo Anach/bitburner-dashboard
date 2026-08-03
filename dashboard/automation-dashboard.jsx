@@ -35,6 +35,12 @@ import {
 } from "dashboard/libs/tail-layout.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
+import {
+    DASHBOARD_ACTION_WORKER_RESULT_FILE,
+    DASHBOARD_ACTION_WORKER_SCRIPT,
+    normalizeActionWorkerEnvelope,
+    parseActionWorkerResult,
+} from "dashboard/libs/action-worker-contract.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
 import {
@@ -50,17 +56,6 @@ import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/re
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import {
-    buildArchivePath,
-    getFileExtension,
-    getFileKind,
-    getFileName,
-    isDeletableFile,
-    isEditableFile,
-    isMovableFile,
-    isProtectedFile,
-    isScriptFile,
-    isValidManagedFilePath,
-    joinFilePath,
     normalizeFileManifest,
     normalizeFilePath,
 } from "dashboard/libs/file-utils.js";
@@ -97,14 +92,6 @@ import {
     parseScriptFolders,
 } from "dashboard/libs/script-folders.js";
 import { compareScriptPathsByName, getScriptDisplayName } from "dashboard/libs/script-utils.js";
-import {
-    killAllHomeScripts as killAllHomeScriptsCore,
-    killAllRemoteScripts as killAllRemoteScriptsCore,
-    restartHomeScript,
-    startHomeScript,
-    stopHomeScript,
-} from "dashboard/libs/runtime-actions.js";
-
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
 };
@@ -117,13 +104,15 @@ let DASH_NS = null;
 const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
-const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v2";
+const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v3";
+const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v2";
 const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v1";
 const DASHBOARD_VIEW_INTERACTION_STATE_KEY = "__dashboard_view_interaction_state_v1";
 const DASHBOARD_VIEW_DRAG_ACTIVE_KEY = "__dashboard_view_drag_active_v1";
 const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
 const DASHBOARD_FILE_ACTION_RESULT_KEY = "__dashboard_file_action_result_v1";
 const DASHBOARD_FILE_VIEW_RENDER_STATE_KEY = "__dashboard_file_view_render_state_v1";
+const DASHBOARD_ACTION_WORKER_TIMEOUT_MS = 60000;
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
@@ -148,6 +137,9 @@ const DASHBOARD_ACTION_POLL_MS = 50;
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
+const dashboardActionWorkerQueue = [];
+let pendingDashboardActionWorker = null;
+let dashboardActionWorkerSequence = 0;
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -1279,221 +1271,6 @@ function getDashboardFileActionView(viewId) {
     return view?.renderer === "file-manager" ? view : null;
 }
 
-function isDashboardFileActionProtected(ns, path, view) {
-    const normalizedPath = normalizeFilePath(path);
-    if (!normalizedPath || normalizedPath === DASHBOARD_SCRIPT) return true;
-    let running = false;
-    try {
-        running = ns.scriptRunning(normalizedPath, "home");
-    } catch (error) {
-        running = false;
-    }
-    return isProtectedFile({ path: normalizedPath, running }, view?.protection ?? {});
-}
-
-function validateDashboardFileSource(ns, path) {
-    const normalizedPath = normalizeFilePath(path);
-    if (!isValidManagedFilePath(normalizedPath)) throw new Error("Invalid source path.");
-    if (!ns.fileExists(normalizedPath, "home")) throw new Error(`File does not exist: ${normalizedPath}`);
-    return normalizedPath;
-}
-
-function validateDashboardFileTarget(ns, path) {
-    const normalizedPath = normalizeFilePath(path);
-    if (!isValidManagedFilePath(normalizedPath)) throw new Error("Invalid destination path.");
-    if (ns.fileExists(normalizedPath, "home")) throw new Error(`Destination already exists: ${normalizedPath}`);
-    return normalizedPath;
-}
-
-function moveDashboardFile(ns, source, target, view) {
-    const normalizedSource = validateDashboardFileSource(ns, source);
-    const normalizedTarget = validateDashboardFileTarget(ns, target);
-    if (isDashboardFileActionProtected(ns, normalizedSource, view)) throw new Error(`File is running or protected: ${normalizedSource}`);
-    if (!isMovableFile(normalizedSource) || !isEditableFile(normalizedTarget)) {
-        throw new Error("Move and rename support is limited to scripts and editable text files.");
-    }
-    ns.mv("home", normalizedSource, normalizedTarget);
-    if (!ns.fileExists(normalizedTarget, "home")) throw new Error(`Move failed: ${normalizedSource}`);
-    return { source: normalizedSource, target: normalizedTarget };
-}
-
-function getDashboardRequestedPaths(command) {
-    return [...new Set((Array.isArray(command?.paths) ? command.paths : [])
-        .map(normalizeFilePath)
-        .filter(Boolean))];
-}
-
-function getDashboardBatchTargetDirectory(path) {
-    const normalizedPath = normalizeFilePath(path);
-    if (!isValidManagedFilePath(normalizedPath) && normalizedPath !== "") throw new Error("Invalid destination folder.");
-    return normalizedPath;
-}
-
-function performDashboardFileAction(ns, command) {
-    const viewId = String(command?.viewId ?? "");
-    const view = getDashboardFileActionView(viewId);
-    if (!view) {
-        setDashboardFileActionResult(viewId, "error", "File Manager view is unavailable.");
-        return;
-    }
-
-    const actionId = String(command?.actionId ?? "");
-    try {
-        if (actionId === "refresh") {
-            setDashboardFileActionResult(viewId, "success", "Home filesystem rescanned.");
-            return;
-        }
-
-        if (actionId === "copy") {
-            const source = validateDashboardFileSource(ns, command.path);
-            const target = validateDashboardFileTarget(ns, command.target);
-            if (!isEditableFile(source) || !isEditableFile(target)) {
-                throw new Error("Copy support is limited to scripts and editable text files.");
-            }
-            ns.write(target, ns.read(source), "w");
-            if (!ns.fileExists(target, "home")) throw new Error(`Copy failed: ${source}`);
-            setDashboardFileActionResult(viewId, "success", `Copied ${source} to ${target}.`, { actionId, path: source, target });
-            ns.toast(`Copied ${getFileName(source)}`, "success", 3000);
-            return;
-        }
-
-        if (actionId === "move") {
-            const moved = moveDashboardFile(ns, command.path, command.target, view);
-            setDashboardFileActionResult(viewId, "success", `Moved ${moved.source} to ${moved.target}.`, { actionId, path: moved.source, target: moved.target });
-            ns.toast(`Moved ${getFileName(moved.source)}`, "success", 3000);
-            return;
-        }
-
-        if (actionId === "archive") {
-            const source = validateDashboardFileSource(ns, command.path);
-            const archiveRoot = normalizeFilePath(view?.archive?.root ?? "trashbin") || "trashbin";
-            const target = buildArchivePath(source, archiveRoot);
-            const moved = moveDashboardFile(ns, source, target, view);
-            setDashboardFileActionResult(viewId, "success", `Archived ${moved.source} to ${moved.target}.`, { actionId, path: moved.source, target: moved.target });
-            ns.toast(`Archived ${getFileName(moved.source)}`, "success", 3000);
-            return;
-        }
-
-        if (actionId === "delete") {
-            const source = validateDashboardFileSource(ns, command.path);
-            if (isDashboardFileActionProtected(ns, source, view)) throw new Error(`File is running or protected: ${source}`);
-            if (!isDeletableFile(source)) throw new Error(`This file type cannot be deleted through Netscript: ${source}`);
-            if (!ns.rm(source, "home")) throw new Error(`Delete failed: ${source}`);
-            setDashboardFileActionResult(viewId, "success", `Deleted ${source}.`, { actionId, path: source });
-            ns.toast(`Deleted ${getFileName(source)}`, "warning", 3500);
-            return;
-        }
-
-        if (actionId === "copy-many") {
-            const requestedPaths = getDashboardRequestedPaths(command);
-            const targetDirectory = getDashboardBatchTargetDirectory(command.target);
-            if (requestedPaths.length === 0) throw new Error("No files selected to copy.");
-            let copiedCount = 0;
-            const skipped = [];
-            const reservedTargets = new Set();
-            for (const path of requestedPaths) {
-                try {
-                    const source = validateDashboardFileSource(ns, path);
-                    if (!isEditableFile(source)) throw new Error(`Copy support is limited to scripts and editable text files: ${source}`);
-                    const target = joinFilePath(targetDirectory, getFileName(source));
-                    if (!target || target === source) throw new Error(`Invalid copy destination: ${source}`);
-                    if (reservedTargets.has(target)) throw new Error(`Duplicate destination: ${target}`);
-                    validateDashboardFileTarget(ns, target);
-                    ns.write(target, ns.read(source), "w");
-                    if (!ns.fileExists(target, "home")) throw new Error(`Copy failed: ${source}`);
-                    reservedTargets.add(target);
-                    copiedCount += 1;
-                } catch (error) {
-                    skipped.push(path);
-                }
-            }
-            const message = `Copied ${copiedCount} selected file${copiedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
-            setDashboardFileActionResult(viewId, skipped.length > 0 && copiedCount === 0 ? "error" : "success", message, { actionId, copiedCount, skipped, targetDirectory });
-            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
-            return;
-        }
-
-        if (actionId === "move-many") {
-            const requestedPaths = getDashboardRequestedPaths(command);
-            const targetDirectory = getDashboardBatchTargetDirectory(command.target);
-            if (requestedPaths.length === 0) throw new Error("No files selected to move.");
-            let movedCount = 0;
-            const skipped = [];
-            const reservedTargets = new Set();
-            for (const path of requestedPaths) {
-                try {
-                    const target = joinFilePath(targetDirectory, getFileName(path));
-                    if (!target || reservedTargets.has(target)) throw new Error(`Invalid move destination: ${path}`);
-                    moveDashboardFile(ns, path, target, view);
-                    reservedTargets.add(target);
-                    movedCount += 1;
-                } catch (error) {
-                    skipped.push(path);
-                }
-            }
-            const message = `Moved ${movedCount} selected file${movedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
-            setDashboardFileActionResult(viewId, skipped.length > 0 && movedCount === 0 ? "error" : "success", message, { actionId, movedCount, skipped, targetDirectory });
-            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
-            return;
-        }
-
-        if (actionId === "delete-many") {
-            const requestedPaths = getDashboardRequestedPaths(command);
-            if (requestedPaths.length === 0) throw new Error("No files selected to delete.");
-            let deletedCount = 0;
-            const skipped = [];
-            for (const path of requestedPaths) {
-                try {
-                    const source = validateDashboardFileSource(ns, path);
-                    if (isDashboardFileActionProtected(ns, source, view)) throw new Error(`File is running or protected: ${source}`);
-                    if (!isDeletableFile(source)) throw new Error(`This file type cannot be deleted through Netscript: ${source}`);
-                    if (!ns.rm(source, "home")) throw new Error(`Delete failed: ${source}`);
-                    deletedCount += 1;
-                } catch (error) {
-                    skipped.push(path);
-                }
-            }
-            const message = `Deleted ${deletedCount} selected file${deletedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
-            setDashboardFileActionResult(viewId, skipped.length > 0 && deletedCount === 0 ? "error" : "success", message, { actionId, deletedCount, skipped });
-            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
-            return;
-        }
-
-        if (actionId === "archive-many") {
-            const manifest = normalizeFileManifest(loadFileManagerManifest(ns, view), view.manifest ?? {});
-            if (!manifest.available) throw new Error("Cleanup requires a deployment manifest.");
-            const staleSet = new Set(manifest.staleFiles);
-            const requestedPaths = [...new Set((Array.isArray(command.paths) ? command.paths : []).map(normalizeFilePath).filter(Boolean))];
-            const archiveRoot = normalizeFilePath(view?.archive?.root ?? "trashbin") || "trashbin";
-            let archivedCount = 0;
-            const skipped = [];
-            for (const path of requestedPaths) {
-                if (!staleSet.has(path)) {
-                    skipped.push(path);
-                    continue;
-                }
-                try {
-                    moveDashboardFile(ns, path, buildArchivePath(path, archiveRoot), view);
-                    archivedCount += 1;
-                } catch (error) {
-                    skipped.push(path);
-                }
-            }
-            const message = `Archived ${archivedCount} stale file${archivedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
-            setDashboardFileActionResult(viewId, skipped.length > 0 && archivedCount === 0 ? "error" : "success", message, { actionId, archivedCount, skipped });
-            ns.toast(message, skipped.length > 0 ? "warning" : "success", 4000);
-            return;
-        }
-
-        throw new Error(`Unknown file action: ${actionId || "(missing)"}`);
-    } catch (error) {
-        const message = String(error?.message ?? error);
-        setDashboardFileActionResult(viewId, "error", message, { actionId });
-        ns.toast(message, "error", 4500);
-        ns.print(`[FILE MANAGER] ${message}`);
-    }
-}
-
 function getDefaultOptions() {
     const defaults = {
         reservedHomeRam: 1024,
@@ -1605,26 +1382,152 @@ function saveDashboardOptions(ns, options) {
     ns.toast("Dashboard options saved", "success", 3500);
 }
 
-function isDashboardRestartCommand(command) {
+function getDashboardPluginFiles() {
+    return getDashboardServiceRegistry().services
+        .map((service) => normalizeFilePath(service?.pluginFile))
+        .filter(Boolean);
+}
+
+function buildDashboardWorkerCommand(ns, command) {
     if (command?.kind === "dashboard") {
-        return command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD;
+        const workerCommand = { kind: "dashboard", actionId: command.actionId };
+        if (command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
+            workerCommand.dashboardPid = ns.pid;
+            workerCommand.args = getDashboardRestartArgs(ns.args);
+        }
+        if (String(command.actionId).includes("script-list")) {
+            const options = loadDashboardOptions(ns);
+            workerCommand.ignoredFolders = parseScriptFolders(options.ignoredScriptFolders);
+            workerCommand.ignoredFiles = parseScriptFiles(options.ignoredScriptFiles);
+        }
+        if (String(command.actionId).includes("script-list") || String(command.actionId).includes("plugin-list")) {
+            workerCommand.pluginFiles = getDashboardPluginFiles();
+        }
+        return workerCommand;
     }
-    if (command?.kind !== "script" || command.filename !== DASHBOARD_SCRIPT) return false;
-    return resolveScriptActionExecution(command.actionId, command.filename)?.executeType === "restart";
+    if (command?.kind === "script") {
+        const execution = resolveScriptActionExecution(command.actionId, command.filename);
+        if (!execution || !["start", "stop", "restart"].includes(execution.executeType)) return null;
+        if (command.filename === DASHBOARD_SCRIPT && execution.executeType === "restart") {
+            return buildDashboardWorkerCommand(ns, {
+                kind: "dashboard",
+                actionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
+            });
+        }
+        return {
+            kind: "script",
+            actionId: execution.executeType,
+            filename: command.filename,
+            args: getScriptLaunchArgs(command.filename),
+        };
+    }
+    if (command?.kind === "file") {
+        const view = getDashboardFileActionView(command.viewId);
+        if (!view) throw new Error("File Manager view is unavailable.");
+        const workerCommand = {
+            ...command,
+            protection: view.protection ?? {},
+            archiveRoot: normalizeFilePath(view?.archive?.root ?? "trashbin") || "trashbin",
+        };
+        if (command.actionId === "archive-many") {
+            const manifest = normalizeFileManifest(loadFileManagerManifest(ns, view), view.manifest ?? {});
+            if (!manifest.available) throw new Error("Cleanup requires a deployment manifest.");
+            workerCommand.stalePaths = manifest.staleFiles;
+        }
+        return workerCommand;
+    }
+    return null;
+}
+
+function completeDashboardWorkerAction(ns, pending, result) {
+    const command = pending.command;
+    const message = String(result?.message ?? "Dashboard action worker returned an invalid result.");
+    const tone = result?.tone ?? (result?.ok ? "success" : "error");
+    if (command.kind === "file") {
+        setDashboardFileActionResult(command.viewId, result?.ok ? "success" : "error", message, result);
+        ns.toast(message, tone === "danger" ? "error" : tone, 4500);
+        ns.print(`[FILE MANAGER] ${message}`);
+    } else {
+        logMajorAction(ns, message, tone);
+    }
+    if (result?.applyOptions && typeof result.filename === "string") {
+        applyPersistedPluginOptions(ns, result.filename);
+    }
+}
+
+function startNextDashboardWorkerAction(ns) {
+    if (pendingDashboardActionWorker || dashboardActionWorkerQueue.length === 0) return;
+    const rawCommand = dashboardActionWorkerQueue.shift();
+    const requestId = `${ns.pid}-${Date.now()}-${++dashboardActionWorkerSequence}`;
+    let envelope = null;
+    try {
+        envelope = normalizeActionWorkerEnvelope({ requestId, command: rawCommand });
+    } catch (error) {
+        const message = String(error?.message ?? error);
+        completeDashboardWorkerAction(ns, { command: rawCommand }, { ok: false, message, tone: "error" });
+        startNextDashboardWorkerAction(ns);
+        return;
+    }
+
+    ns.write(DASHBOARD_ACTION_WORKER_RESULT_FILE, "", "w");
+    const workerPid = ns.run(DASHBOARD_ACTION_WORKER_SCRIPT, 1, JSON.stringify(envelope));
+    if (!(workerPid > 0)) {
+        completeDashboardWorkerAction(ns, { command: envelope.command }, {
+            ok: false,
+            message: "Could not start the dashboard action worker. Check available home RAM.",
+            tone: "error",
+        });
+        startNextDashboardWorkerAction(ns);
+        return;
+    }
+    pendingDashboardActionWorker = {
+        requestId,
+        command: envelope.command,
+        workerPid,
+        startedAt: Date.now(),
+    };
+}
+
+function pollDashboardWorkerAction(ns) {
+    if (pendingDashboardActionWorker) {
+        const result = parseActionWorkerResult(
+            ns.read(DASHBOARD_ACTION_WORKER_RESULT_FILE),
+            pendingDashboardActionWorker.requestId
+        );
+        if (result) {
+            const completed = pendingDashboardActionWorker;
+            pendingDashboardActionWorker = null;
+            completeDashboardWorkerAction(ns, completed, result);
+        } else if (Date.now() - pendingDashboardActionWorker.startedAt >= DASHBOARD_ACTION_WORKER_TIMEOUT_MS) {
+            const timedOut = pendingDashboardActionWorker;
+            pendingDashboardActionWorker = null;
+            completeDashboardWorkerAction(ns, timedOut, {
+                ok: false,
+                message: "Dashboard action worker timed out.",
+                tone: "error",
+            });
+        }
+    }
+    startNextDashboardWorkerAction(ns);
+}
+
+function queueDashboardWorkerAction(ns, command) {
+    const workerCommand = buildDashboardWorkerCommand(ns, command);
+    if (!workerCommand) return false;
+    dashboardActionWorkerQueue.push(workerCommand);
+    startNextDashboardWorkerAction(ns);
+    return true;
 }
 
 function applyQueuedDashboardActions(ns) {
     if (!ns) return;
+    pollDashboardWorkerAction(ns);
 
     const queue = flushDashboardActionQueue();
     if (!Array.isArray(queue) || queue.length === 0) return;
 
     for (const command of queue) {
         if (!command || typeof command !== "object") continue;
-        if (isDashboardRestartCommand(command)) {
-            performDashboardAction(ns, DASHBOARD_ACTION_IDS.RESTART_DASHBOARD);
-            continue;
-        }
 
         try {
             if (command.kind === "window-mode") {
@@ -1660,13 +1563,17 @@ function applyQueuedDashboardActions(ns) {
 
             if (command.kind === "dashboard") {
                 if (typeof command.actionId === "string") {
-                    performDashboardAction(ns, command.actionId);
+                    queueDashboardWorkerAction(ns, command);
                 }
                 continue;
             }
 
             if (command.kind === "file") {
-                performDashboardFileAction(ns, command);
+                if (command.actionId === "refresh") {
+                    setDashboardFileActionResult(command.viewId, "success", "Home filesystem rescanned.");
+                } else {
+                    queueDashboardWorkerAction(ns, command);
+                }
                 continue;
             }
 
@@ -1683,6 +1590,7 @@ function applyQueuedDashboardActions(ns) {
             logMajorAction(ns, `Dashboard action failed (${actionName}): ${message}`, "danger");
         }
     }
+    pollDashboardWorkerAction(ns);
 }
 
 function getScriptLaunchArgs(filename) {
@@ -1694,11 +1602,39 @@ function getScriptLaunchArgs(filename) {
 function isDashboardPluginScript(filename) {
     if (typeof filename !== "string" || filename.length === 0) return false;
     const normalized = filename.replace(/\\/g, "/");
+    if (isDashboardCoreScript(normalized)) return false;
     return getDashboardServiceRegistry().services.some((service) => service.pluginFile === normalized);
 }
 
 function isDashboardCoreScript(filename) {
-    return filename === DASHBOARD_SCRIPT;
+    return filename === DASHBOARD_SCRIPT || filename === SERVICE_SUPERVISOR_SCRIPT;
+}
+
+function buildSupervisorServiceStateLines(services, homeScripts, pluginRequirements, supervisorRunning) {
+    const managedServices = (Array.isArray(services) ? services : []).filter((service) => {
+        return typeof service?.pluginFile === "string" && service.pluginMetadata?.daemon !== false;
+    });
+    const runningFiles = new Set((Array.isArray(homeScripts) ? homeScripts : [])
+        .filter((script) => script?.running && typeof script.filename === "string")
+        .map((script) => script.filename));
+    const blockedServices = managedServices.filter((service) => {
+        const requirements = pluginRequirements?.[service.id] ?? [];
+        return requirements.some((requirement) => !requirement?.unlocked && !requirement?.optional);
+    });
+    const blockedIds = new Set(blockedServices.map((service) => service.id));
+    const eligibleServices = managedServices.filter((service) => !blockedIds.has(service.id));
+    const runningServices = eligibleServices.filter((service) => runningFiles.has(service.pluginFile));
+    const stoppedServices = eligibleServices.length - runningServices.length;
+
+    return [
+        { label: "Auto restart", value: supervisorRunning ? "active" : "paused", tone: supervisorRunning ? "success" : "warn" },
+        { label: "Managed services", value: `${managedServices.length}`, tone: "info" },
+        { label: "Eligible", value: `${eligibleServices.length}`, tone: "neutral" },
+        { label: "Running", value: `${runningServices.length}`, tone: runningServices.length === eligibleServices.length ? "success" : "info" },
+        { label: supervisorRunning ? "Awaiting restart" : "Stopped", value: `${stoppedServices}`, tone: stoppedServices > 0 ? "warn" : "success" },
+        { label: "Blocked", value: `${blockedServices.length}`, tone: blockedServices.length > 0 ? "warn" : "neutral" },
+        { label: "Scan interval", value: "30 seconds", tone: "neutral" },
+    ];
 }
 
 function isDashboardSupportScript(filename, ignoredFolders = DEFAULT_IGNORED_SCRIPT_FOLDERS, ignoredFiles = []) {
@@ -1833,269 +1769,12 @@ function logMajorAction(ns, message, toastType = "info") {
     ns.toast(message, normalizedToastType, 4500);
 }
 
-function restartScript(ns, script, ...args) {
-    const result = restartHomeScript(ns, script, ...args);
-    if (result.status === "missing") {
-        logMajorAction(ns, `Cannot restart ${script} (missing file).`, "warning");
-        return result.status;
-    }
-    if (result.status === "restarted") {
-        logMajorAction(ns, `Restarted ${script}.`, "success");
-        return result.status;
-    }
-    if (result.status === "already-running") {
-        logMajorAction(ns, `${script} is running, but another process restarted it first.`, "warning");
-        return result.status;
-    }
-    if (result.status === "failed-to-stop") {
-        logMajorAction(ns, `Could not stop ${script}; restart was cancelled.`, "warning");
-        return result.status;
-    }
-    logMajorAction(ns, `Failed to restart ${script}.`, "warning");
-    return result.status;
-}
-
-function startScript(ns, script, ...args) {
-    const result = startHomeScript(ns, script, ...args);
-    if (result.status === "missing") {
-        logMajorAction(ns, `Cannot start ${script} (missing file).`, "warning");
-        return result.status;
-    }
-    if (result.status === "already-running") {
-        logMajorAction(ns, `${script} is already running.`, "info");
-        return result.status;
-    }
-    if (result.status === "started") {
-        logMajorAction(ns, `Started ${script}.`, "success");
-        return result.status;
-    }
-    logMajorAction(ns, `Failed to start ${script}.`, "warning");
-    return result.status;
-}
-
 function applyPersistedPluginOptions(ns, filename) {
     const integration = getDashboardServiceRegistry().services.find((service) => service.pluginFile === filename)?.pluginMetadata;
     if (!integration || Object.keys(integration.options ?? {}).length === 0) return;
     applyPluginIntegrationOptions(ns, integration, loadDashboardOptions(ns), (tone, message) => {
         logMajorAction(ns, message, tone);
     });
-}
-
-function stopScript(ns, script) {
-    const result = stopHomeScript(ns, script);
-    if (result.status === "missing") {
-        logMajorAction(ns, `Cannot stop ${script} (missing file).`, "warning");
-        return;
-    }
-    if (result.status === "not-running") {
-        logMajorAction(ns, `${script} is not running.`, "info");
-        return;
-    }
-    if (result.status === "stopped") {
-        logMajorAction(ns, `Stopped ${script}.`, "success");
-        return;
-    }
-    logMajorAction(ns, `Failed to stop ${script}.`, "warning");
-}
-
-function killAllHomeScriptsExceptDashboard(ns) {
-    const dashboardScript = DASHBOARD_SCRIPT;
-    const result = killAllHomeScriptsCore(ns, { exclude: [dashboardScript] });
-    const killedCount = result.killedCount ?? 0;
-
-    logMajorAction(ns, `Killed ${killedCount} home script${killedCount === 1 ? "" : "s"} (dashboard preserved).`, "warning");
-}
-
-function killAllRemoteScripts(ns) {
-    const result = killAllRemoteScriptsCore(ns);
-    const killedCount = result.killedCount ?? 0;
-    const serverCount = result.serverCount ?? 0;
-
-    logMajorAction(ns, `Killed ${killedCount} script${killedCount === 1 ? "" : "s"} across ${serverCount} remote server${serverCount === 1 ? "" : "s"}.`, "warning");
-}
-
-function killAllScripts(ns) {
-    const dashboardScript = DASHBOARD_SCRIPT;
-    const remoteResult = killAllRemoteScriptsCore(ns);
-    const homeResult = killAllHomeScriptsCore(ns, { exclude: [dashboardScript] });
-    const killedCount = (remoteResult.killedCount ?? 0) + (homeResult.killedCount ?? 0) + 1;
-
-    logMajorAction(ns, `Killed ${killedCount} scripts across home and all reachable servers.`, "warning");
-    ns.scriptKill(dashboardScript, "home");
-}
-
-function getReachableServers(ns) {
-    if (!ns) return ["home"];
-    const visited = new Set(["home"]);
-    const queue = ["home"];
-
-    while (queue.length > 0) {
-        const host = queue.shift();
-        let neighbors = [];
-        try {
-            neighbors = ns.scan(host);
-        } catch (e) {
-            neighbors = [];
-        }
-
-        for (const neighbor of neighbors) {
-            if (visited.has(neighbor)) continue;
-            visited.add(neighbor);
-            queue.push(neighbor);
-        }
-    }
-
-    return Array.from(visited);
-}
-
-function getRunningProcessSnapshot(ns) {
-    const snapshot = {
-        totalCount: 0,
-        homeFilenames: [],
-        remoteFilenames: [],
-    };
-
-    for (const server of getReachableServers(ns)) {
-        try {
-            for (const process of ns.ps(server)) {
-                if (typeof process?.filename !== "string") continue;
-                snapshot.totalCount += 1;
-                if (server === "home") snapshot.homeFilenames.push(process.filename);
-                else snapshot.remoteFilenames.push(process.filename);
-            }
-        } catch (e) {
-            // Ignore hosts that become unavailable during the scan.
-        }
-    }
-
-    return snapshot;
-}
-
-function killHomeScriptsByFilter(ns, matcher, options = {}) {
-    if (!ns || typeof matcher !== "function") return { killedCount: 0 };
-    const exclude = new Set(Array.isArray(options.exclude) ? options.exclude : []);
-    let killedCount = 0;
-
-    for (const process of ns.ps("home")) {
-        const filename = process?.filename;
-        if (typeof filename !== "string") continue;
-        if (exclude.has(filename)) continue;
-        if (!matcher(filename)) continue;
-        try {
-            if (ns.kill(process.pid)) killedCount += 1;
-        } catch (e) {
-            // Ignore process race failures.
-        }
-    }
-
-    return { killedCount };
-}
-
-function killRemoteScriptsByFilter(ns, matcher) {
-    if (!ns || typeof matcher !== "function") return { killedCount: 0, serverCount: 0 };
-    let killedCount = 0;
-    let serverCount = 0;
-
-    for (const server of getReachableServers(ns)) {
-        if (server === "home") continue;
-        let serverKilledCount = 0;
-
-        let processes = [];
-        try {
-            processes = ns.ps(server);
-        } catch (e) {
-            processes = [];
-        }
-
-        for (const process of processes) {
-            const filename = process?.filename;
-            if (typeof filename !== "string") continue;
-            if (!matcher(filename)) continue;
-            try {
-                if (ns.kill(process.pid)) {
-                    killedCount += 1;
-                    serverKilledCount += 1;
-                }
-            } catch (e) {
-                // Ignore process race failures.
-            }
-        }
-
-        if (serverKilledCount > 0) serverCount += 1;
-    }
-
-    return { killedCount, serverCount };
-}
-
-function killScriptListHomeScripts(ns) {
-    const dashboardScript = DASHBOARD_SCRIPT;
-    const dashboardOptions = loadDashboardOptions(ns);
-    const ignoredFolders = parseScriptFolders(dashboardOptions.ignoredScriptFolders);
-    const ignoredFiles = parseScriptFiles(dashboardOptions.ignoredScriptFiles);
-    const result = killHomeScriptsByFilter(
-        ns,
-        (filename) => !isDashboardPluginScript(filename) && !isDashboardSupportScript(filename, ignoredFolders, ignoredFiles),
-        { exclude: [dashboardScript] }
-    );
-    const killedCount = result.killedCount ?? 0;
-    logMajorAction(ns, `Killed ${killedCount} script${killedCount === 1 ? "" : "s"} from Script List (plugins/dashboard excluded).`, "warning");
-}
-
-function killScriptListRemoteScripts(ns) {
-    const dashboardOptions = loadDashboardOptions(ns);
-    const ignoredFolders = parseScriptFolders(dashboardOptions.ignoredScriptFolders);
-    const ignoredFiles = parseScriptFiles(dashboardOptions.ignoredScriptFiles);
-    const result = killRemoteScriptsByFilter(
-        ns,
-        (filename) => !isDashboardPluginScript(filename) && !isDashboardSupportScript(filename, ignoredFolders, ignoredFiles)
-    );
-    const killedCount = result.killedCount ?? 0;
-    const serverCount = result.serverCount ?? 0;
-    logMajorAction(ns, `Killed ${killedCount} script${killedCount === 1 ? "" : "s"} from Script List across ${serverCount} remote server${serverCount === 1 ? "" : "s"}.`, "warning");
-}
-
-function killPluginListHomeScripts(ns) {
-    const supervisorResult = stopHomeScript(ns, SERVICE_SUPERVISOR_SCRIPT);
-    const result = killHomeScriptsByFilter(ns, (filename) => isDashboardPluginScript(filename));
-    const killedCount = result.killedCount ?? 0;
-    const supervisorSummary = supervisorResult.status === "stopped" ? " Integration supervisor stopped." : "";
-    logMajorAction(ns, `Killed ${killedCount} plugin script${killedCount === 1 ? "" : "s"} on home.${supervisorSummary}`, "warning");
-}
-
-function killPluginListRemoteScripts(ns) {
-    const result = killRemoteScriptsByFilter(ns, (filename) => isDashboardPluginScript(filename));
-    const killedCount = result.killedCount ?? 0;
-    const serverCount = result.serverCount ?? 0;
-    logMajorAction(ns, `Killed ${killedCount} plugin script${killedCount === 1 ? "" : "s"} across ${serverCount} remote server${serverCount === 1 ? "" : "s"}.`, "warning");
-}
-
-function performDashboardAction(ns, actionId) {
-    switch (actionId) {
-        case DASHBOARD_ACTION_IDS.RESTART_DASHBOARD:
-            logMajorAction(ns, "Restarting dashboard...", "info");
-            ns.spawn(DASHBOARD_SCRIPT, { threads: 1, spawnDelay: 0 }, ...getDashboardRestartArgs(ns.args));
-            return;
-        case DASHBOARD_ACTION_IDS.START_SERVICES:
-            return startScript(ns, USER_INIT_SCRIPT);
-        case DASHBOARD_ACTION_IDS.START_INTEGRATIONS:
-            return startScript(ns, SERVICE_SUPERVISOR_SCRIPT);
-        case DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS:
-            return killAllHomeScriptsExceptDashboard(ns);
-        case DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS:
-            return killAllRemoteScripts(ns);
-        case DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS:
-            return killAllScripts(ns);
-        case DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_HOME_SCRIPTS:
-            return killScriptListHomeScripts(ns);
-        case DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_REMOTE_SCRIPTS:
-            return killScriptListRemoteScripts(ns);
-        case DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_HOME_SCRIPTS:
-            return killPluginListHomeScripts(ns);
-        case DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_REMOTE_SCRIPTS:
-            return killPluginListRemoteScripts(ns);
-        default:
-            return logMajorAction(ns, `Unknown action: ${actionId}`, "warning");
-    }
 }
 
 function performScriptFileAction(ns, action, filename) {
@@ -2131,22 +1810,8 @@ function performScriptFileAction(ns, action, filename) {
         return;
     }
 
-        if (filename === DASHBOARD_SCRIPT && execution.executeType === "restart") {
-            performDashboardAction(ns, DASHBOARD_ACTION_IDS.RESTART_DASHBOARD);
-            return;
-    }
-
-    const args = getScriptLaunchArgs(filename);
-    if (execution.executeType === "start") {
-        if (startScript(ns, filename, ...args) === "started") applyPersistedPluginOptions(ns, filename);
-        return;
-    }
-    if (execution.executeType === "stop") return stopScript(ns, filename);
-    if (execution.executeType === "restart") {
-        const restartStatus = restartScript(ns, filename, ...args);
-        if (restartStatus === "restarted" || restartStatus === "already-running") {
-            applyPersistedPluginOptions(ns, filename);
-        }
+    if (["start", "stop", "restart"].includes(execution.executeType)) {
+        queueDashboardWorkerAction(ns, { kind: "script", actionId: action, filename });
         return;
     }
     logMajorAction(ns, `Unsupported execution type for action ${action}: ${execution.executeType}`, "warning");
@@ -2364,10 +2029,10 @@ const DASHBOARD_SERVICES = [
         getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
             return isDashboardPluginScript(script?.filename) || isDashboardCoreScript(script?.filename);
         })),
-        getState: ({ selectedScript }) => {
+        getState: ({ selectedScript, homeScripts, pluginRequirements }) => {
             if (!selectedScript) return [];
             const scriptTypeLabel = isDashboardCoreScript(selectedScript.filename) ? "Dashboard Core" : "Plugin";
-            return [
+            const scriptLines = [
                 { label: scriptTypeLabel, value: selectedScript.label, tone: "info" },
                 { label: "Path", value: selectedScript.filename, tone: "neutral" },
                 { label: "Status", value: selectedScript.running ? "running" : "stopped", tone: selectedScript.running ? "success" : "neutral" },
@@ -2375,6 +2040,16 @@ const DASHBOARD_SERVICES = [
                 { label: "RAM (1t)", value: formatRam(selectedScript.ramPerThread ?? 0), tone: "neutral" },
                 { label: "RAM (running)", value: formatRam(selectedScript.runningRam ?? 0), tone: selectedScript.running ? "info" : "neutral" },
                 { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
+            ];
+            if (selectedScript.filename !== SERVICE_SUPERVISOR_SCRIPT) return scriptLines;
+            return [
+                ...scriptLines,
+                ...buildSupervisorServiceStateLines(
+                    getDashboardServiceRegistry().services,
+                    homeScripts,
+                    pluginRequirements,
+                    selectedScript.running
+                ),
             ];
         },
         getActions: ({ selectedScript }) => {
@@ -2648,7 +2323,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     }
 
     const definitionSignature = JSON.stringify(pluginDefinitions);
-    const previous = globalThis.__dashboard_service_registry_source_v1;
+    const previous = globalThis[DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY];
     if (previous?.signature === definitionSignature && previous.registry) {
         setDashboardServiceRegistry(previous.registry);
         return previous.registry;
@@ -2661,7 +2336,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const mergedServices = [...coreServices, ...pluginServices];
     const registry = validateDashboardServices(mergedServices);
     setDashboardServiceRegistry(registry);
-    globalThis.__dashboard_service_registry_source_v1 = { signature: definitionSignature, registry };
+    globalThis[DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY] = { signature: definitionSignature, registry };
     logServiceRegistryIssues(registry);
     return registry;
 }
@@ -6387,6 +6062,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const sourceScripts = isPluginList ? [...pluginScripts, ...dashboardCoreScripts] : nonPluginScripts;
         const selectedScript = resolveSelectedScriptPanel(selectedCenterPanel, sourceScripts);
         const selectedDashboardCore = isPluginList && isDashboardCoreScript(selectedScript?.filename);
+        const selectedSupervisor = selectedScript?.filename === SERVICE_SUPERVISOR_SCRIPT;
         const selectedScriptContext = { ...serviceContext, selectedScript };
         const selectedScriptLines = getStateLines({ selectedScript });
         const listMeta = getPanelMeta("default", {
@@ -6426,7 +6102,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             meta: {
                 title: selectedScript.label || scriptMeta.title,
                 accent: selectedDashboardCore ? "#6ee7a8" : scriptMeta.accent,
-                subtitle: selectedDashboardCore ? "Dashboard core status and controls" : scriptMeta.subtitle,
+                subtitle: selectedSupervisor
+                    ? "Managed service status and controls"
+                    : selectedDashboardCore ? "Dashboard core status and controls" : scriptMeta.subtitle,
             },
             stateLines: selectedScriptLines,
             sections: [],
@@ -7030,11 +6708,10 @@ export async function main(ns) {
         : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
 
     if (autoStart) {
-        const supervisorResult = startHomeScript(ns, SERVICE_SUPERVISOR_SCRIPT);
-        if (supervisorResult.status === "missing" || supervisorResult.status === "failed") {
-            const detail = supervisorResult.status === "missing" ? "script is missing" : "not enough RAM or exec failed";
-            ns.tprint(`[DASHBOARD] Could not start ${SERVICE_SUPERVISOR_SCRIPT}: ${detail}.`);
-        }
+        queueDashboardWorkerAction(ns, {
+            kind: "dashboard",
+            actionId: DASHBOARD_ACTION_IDS.START_INTEGRATIONS,
+        });
     }
 
     while (true) {

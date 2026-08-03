@@ -86,6 +86,8 @@ data/dashboard_options.json
 
 Stopping the dashboard does not stop the supervisor or integrated automation scripts. The prominent kill controls are explicit exceptions and should be used deliberately.
 
+Script lifecycle commands, kill operations, dashboard restart, and File Manager mutations run through `dashboard/action-worker.js`. The dashboard starts one worker only when an action is requested, validates commands and file paths at both sides of the boundary, processes one action at a time, and correlates the worker result before showing status. Keep enough temporary `home` RAM available for the worker when using these controls.
+
 ## Add an integration
 
 An integration has two independent parts:
@@ -289,6 +291,7 @@ Plugins may contribute widgets to a discovered view through JSON-compatible `vie
 - Keep telemetry files valid JSON. Invalid or missing snapshots fail closed and show telemetry as unavailable.
 - Port numbers are shared game-wide; integrations must not reuse ports unintentionally.
 - File-manager actions can move, archive, or delete files on `home`. Running and descriptor-protected files are blocked, but a save backup remains strongly recommended.
+- `dashboard/action-worker.js` and `data/dashboard_action_result.json` are framework-protected File Manager paths.
 - Metadata and view schemas are still beta contracts. Review release notes before updating an existing integration.
 
 Bug reports should include the Bitburner version, the descriptor, a small telemetry sample, the dashboard log output, and reproduction steps.
