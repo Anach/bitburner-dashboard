@@ -1112,7 +1112,7 @@ const WIDGET_STYLES = {
 };
 
 function getReactLib() {
-    const nextRawReact = globalThis.React ?? globalThis.window?.React ?? null;
+    const nextRawReact = globalThis.React ?? null;
     if (!nextRawReact) return null;
     if (nextRawReact !== rawReact) {
         rawReact = nextRawReact;
@@ -1200,8 +1200,8 @@ function saveUiState(state) {
     globalThis[DASHBOARD_UI_STATE_KEY] = state;
 }
 
-function setDashboardOptionsInputFocusState(isFocused) {
-    globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY] = Boolean(isFocused);
+function setDashboardOptionsInputFocusState(focused) {
+    globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY] = Boolean(focused);
 }
 
 function setDashboardViewDragActiveState(isActive) {
@@ -4998,8 +4998,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         };
     }, []);
 
-    const setOptionsInputFocus = (isFocused) => {
-        if (isFocused) {
+    const setOptionsInputFocus = (focused) => {
+        if (focused) {
             if (optionsFocusReleaseTimerRef.current) {
                 clearTimeout(optionsFocusReleaseTimerRef.current);
                 optionsFocusReleaseTimerRef.current = null;

@@ -737,7 +737,7 @@ export function FileManagerView({
     onExit,
     headerActions,
 }) {
-    const nextRawReact = globalThis.React ?? globalThis.window?.React ?? rawReact;
+    const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
         rawReact = nextRawReact;
         React = createDashboardThemedReact(rawReact, () => activeFileManagerTheme);

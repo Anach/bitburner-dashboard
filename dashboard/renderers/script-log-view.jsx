@@ -214,7 +214,7 @@ export function ScriptLogView({
     onInputFocusChange,
     onExit,
 }) {
-    const nextRawReact = globalThis.React ?? globalThis.window?.React ?? rawReact;
+    const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
         rawReact = nextRawReact;
         React = createDashboardThemedReact(rawReact, () => activeLogTheme);
