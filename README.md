@@ -66,11 +66,17 @@ You can substitute a shorter name such as `dash` if preferred:
 alias dash="run dashboard/automation-dashboard.jsx"
 ```
 
-The dashboard opens its own tail, prevents duplicate dashboard instances, and starts `dashboard/service-supervisor.js`. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, HUD visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
+The dashboard opens its own tail and prevents duplicate dashboard instances. By default it starts only the dashboard process. To start the integration supervisor automatically, launch it with:
+
+```text
+run dashboard/automation-dashboard.jsx --auto-start
+```
+
+Dashboard Restart preserves whether `--auto-start` was active. Starting without the flag leaves an already-running supervisor alone. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, Player Stats visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
 
 The integration supervisor rescans metadata periodically, starts eligible integrations declared with `"daemon": true`, and restarts them if they stop. Integrations declared with `"daemon": false` remain on demand. Selecting **Start integrations** in the Plugin List restarts the supervisor after it has been stopped.
 
-The separate **Start services** control in the Script List launches `init/init-services.js` when that user-owned script exists. This is an optional convenience for personal startup workflows; it is not imported or required by the dashboard framework.
+The separate **Start services** control in the Script List launches `init/init-services.js` when that user-owned script exists. This is an optional convenience for personal startup workflows; it is not imported or required by the dashboard framework, and `--auto-start` never launches it.
 
 Runtime settings are written to:
 

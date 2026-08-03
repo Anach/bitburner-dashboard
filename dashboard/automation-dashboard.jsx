@@ -34,6 +34,7 @@ import {
     tailGeometryDiffers,
 } from "dashboard/libs/tail-layout.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
+import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
@@ -2014,7 +2015,7 @@ function performDashboardAction(ns, actionId) {
     switch (actionId) {
         case DASHBOARD_ACTION_IDS.RESTART_DASHBOARD:
             logMajorAction(ns, "Restarting dashboard...", "info");
-            ns.spawn(DASHBOARD_SCRIPT, 1, "loop");
+            ns.spawn(DASHBOARD_SCRIPT, 1, ...getDashboardRestartArgs(ns.args));
             return;
         case DASHBOARD_ACTION_IDS.START_SERVICES:
             return startScript(ns, USER_INIT_SCRIPT);
@@ -3390,6 +3391,33 @@ function HomePanel({ title, subtitle = "", children }) {
     );
 }
 
+function PluginRuntimeWarning({ statuses = [] }) {
+    const stoppedStatuses = (Array.isArray(statuses) ? statuses : [])
+        .filter((status) => status?.requiresRuntime && !status?.running);
+    if (stoppedStatuses.length === 0) return null;
+
+    const serviceNames = stoppedStatuses
+        .map((status) => String(status.label ?? status.serviceId ?? "Plugin"))
+        .join(", ");
+    return (
+        <div
+            role="status"
+            style={{
+                marginBottom: "8px",
+                padding: "6px 8px",
+                color: "#ffd17a",
+                fontSize: "9px",
+                lineHeight: 1.35,
+                border: "1px solid rgba(255, 198, 92, 0.35)",
+                borderRadius: "6px",
+                background: "rgba(34, 24, 10, 0.92)",
+            }}
+        >
+            <strong>{serviceNames}</strong> {stoppedStatuses.length === 1 ? "service is" : "services are"} stopped. Showing cached data.
+        </div>
+    );
+}
+
 function HomeMetricCard({ metric }) {
     const palette = getHomeTonePalette(metric?.tone);
     return (
@@ -3567,7 +3595,7 @@ function selectDashboardViewServiceGroups(groups, widget) {
         .filter((group) => group.services.length > 0);
 }
 
-function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
+function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl }) {
     const configuredColumns = Math.floor(Number(
         playerStatsEnabled === false
             ? view?.layout?.columnsWithoutPlayerStats ?? view?.layout?.columns
@@ -3621,14 +3649,19 @@ function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnable
 
         if (widget.type === "player-stats") {
             if (playerStatsEnabled === false) return null;
-            const serviceIds = Array.isArray(widget.serviceIds) && widget.serviceIds.length > 0
-                ? new Set(widget.serviceIds.filter((value) => typeof value === "string"))
+            const widgetServiceIds = Array.isArray(widget.serviceIds)
+                ? widget.serviceIds.filter((value) => typeof value === "string")
+                : [];
+            const serviceIds = widgetServiceIds.length > 0
+                ? new Set(widgetServiceIds)
                 : null;
             const selectedDefinitions = (Array.isArray(playerHudDefinitions) ? playerHudDefinitions : [])
                 .filter((definition) => (!serviceIds || serviceIds.has(definition.serviceId)) && (definition.groups?.length ?? 0) > 0);
+            const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
             return (
                 <div key={widget.id} style={wrapperStyle}>
                     <HomePanel title={title} subtitle={subtitle}>
+                        <PluginRuntimeWarning statuses={runtimeStatuses} />
                         {selectedDefinitions.length > 0
                             ? <PlayerStatsOverview definitions={selectedDefinitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation} />
                             : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
@@ -3812,7 +3845,7 @@ function formatNetworkMapMetric(primary, secondary, format) {
     return secondary === undefined ? String(primary ?? "n/a") : `${primary ?? 0} / ${secondary ?? 0}`;
 }
 
-function NetworkMapView({ view, telemetry, onCommand, onInputFocusChange, onExit, windowControl }) {
+function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl }) {
     const dataConfig = view?.data ?? {};
     const fields = view?.fields ?? {};
     const layoutConfig = view?.layout ?? {};
@@ -4195,6 +4228,9 @@ function NetworkMapView({ view, telemetry, onCommand, onInputFocusChange, onExit
                     <div style={{ ...WIDGET_STYLES.muted, marginTop: "2px", fontSize: "9px" }}>
                         {activeSubtitle}
                         {updatedAt > 0 ? ` · updated ${new Date(updatedAt).toLocaleTimeString()}` : ""}
+                    </div>
+                    <div style={{ marginTop: "7px" }}>
+                        <PluginRuntimeWarning statuses={serviceStatus ? [serviceStatus] : []} />
                     </div>
                 </div>
             </div>
@@ -5134,6 +5170,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const dashboardServiceRegistry = getDashboardServiceRegistry();
     const serviceHealthById = Object.fromEntries(
         dashboardServiceRegistry.services.map((service) => [service.id, getServiceHealth(service, serviceContext)])
+    );
+    const serviceRuntimeById = Object.fromEntries(
+        dashboardServiceRegistry.services.map((service) => [service.id, {
+            serviceId: service.id,
+            label: service.menuLabel,
+            requiresRuntime: Boolean(service.pluginFile),
+            running: !service.pluginFile || homeScripts.some((script) => script?.filename === service.pluginFile && script?.running),
+        }])
     );
     const selectedServiceHealth = serviceHealthById[selectedItem] ?? { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
     const healthFilter = HEALTH_FILTER_MODES.has(uiState.healthFilter) ? uiState.healthFilter : "all";
@@ -6350,6 +6394,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     healthServices={homeHealthServices}
                     serviceGroups={homeServiceGroups}
                     serviceHealthById={serviceHealthById}
+                    serviceRuntimeById={serviceRuntimeById}
                     graphs={homeGraphs}
                     scrollRef={systemOverviewRef}
                     onScroll={(event) => rememberScroll("systemOverview", event.currentTarget.scrollTop)}
@@ -6377,6 +6422,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 <NetworkMapView
                     view={activeView}
                     telemetry={telemetryByServiceId?.[activeView?.data?.serviceId] ?? null}
+                    serviceStatus={serviceRuntimeById[activeView?.data?.serviceId] ?? null}
                     onCommand={(serviceId, command) => runServiceAction({
                         kind: "plugin-command",
                         serviceId,
@@ -6844,8 +6890,8 @@ function ensureSingleDashboardInstance(ns) {
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
-    const runModeArg = String(ns.args[0] ?? "").toLowerCase();
-    const isDaemon = runModeArg !== "once";
+    const launchOptions = parseDashboardLaunchOptions(ns.args);
+    const { isDaemon, autoStart } = launchOptions;
     DASH_NS = ns;
 
     if (!ensureSingleDashboardInstance(ns)) {
@@ -6863,10 +6909,10 @@ export async function main(ns) {
     }
 
     ns.print(isDaemon
-        ? "Starting Automation Dashboard in daemon mode..."
-        : "Starting Automation Dashboard in one-shot mode (arg: once)...");
+        ? `Starting Automation Dashboard in daemon mode${autoStart ? " with integration auto-start" : ""}...`
+        : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
 
-    if (isDaemon) {
+    if (autoStart) {
         const supervisorResult = startHomeScript(ns, SERVICE_SUPERVISOR_SCRIPT);
         if (supervisorResult.status === "missing" || supervisorResult.status === "failed") {
             const detail = supervisorResult.status === "missing" ? "script is missing" : "not enough RAM or exec failed";
