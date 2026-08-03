@@ -4,11 +4,12 @@ const DASHBOARD_SCRIPT_METADATA_DECLARATION = "export const DASHBOARD_SCRIPT_MET
 const SCRIPT_METADATA_CACHE_MS = 5000;
 const scriptMetadataCache = new Map();
 
-export function loadDashboardScriptMetadata(ns, filename) {
+export function loadDashboardScriptMetadata(ns, filename, sourceSignature = "") {
     if (!ns || typeof filename !== "string" || filename.length === 0) return null;
     const now = Date.now();
     const cached = scriptMetadataCache.get(filename);
-    if (cached && now - cached.scannedAt < SCRIPT_METADATA_CACHE_MS) return cached.metadata;
+    if (cached && ((sourceSignature && cached.sourceSignature === sourceSignature)
+        || now - cached.scannedAt < SCRIPT_METADATA_CACHE_MS)) return cached.metadata;
 
     let metadata = null;
     try {
@@ -19,7 +20,7 @@ export function loadDashboardScriptMetadata(ns, filename) {
         metadata = null;
     }
 
-    scriptMetadataCache.set(filename, { metadata, scannedAt: now });
+    scriptMetadataCache.set(filename, { metadata, scannedAt: now, sourceSignature });
     return metadata;
 }
 

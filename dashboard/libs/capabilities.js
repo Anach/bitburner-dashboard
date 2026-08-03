@@ -14,7 +14,7 @@ function getMapValue(mapLike, key) {
     return 0;
 }
 
-export function buildCapabilitySnapshot(ns) {
+export function buildCapabilitySnapshot(ns, knownHomeFiles) {
     let resetInfo = {};
     try {
         resetInfo = ns.getResetInfo() ?? {};
@@ -49,11 +49,13 @@ export function buildCapabilitySnapshot(ns) {
         stockAccess["4s-tix"] = false;
     }
 
-    const homeFiles = new Set();
-    try {
-        for (const filename of ns.ls("home") ?? []) homeFiles.add(filename);
-    } catch (error) {
-        // Keep an empty file snapshot.
+    const homeFiles = new Set(Array.isArray(knownHomeFiles) ? knownHomeFiles : []);
+    if (!Array.isArray(knownHomeFiles)) {
+        try {
+            for (const filename of ns.ls("home") ?? []) homeFiles.add(filename);
+        } catch (error) {
+            // Keep an empty file snapshot.
+        }
     }
 
     return {

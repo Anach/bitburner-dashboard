@@ -7,23 +7,31 @@ import {
     normalizeFilePath,
 } from "dashboard/libs/file-utils.js";
 
+const manifestCache = new Map();
+const scriptRamCache = new Map();
+
 export function loadFileManagerManifest(ns, view) {
     const path = normalizeFilePath(view?.manifest?.path);
     if (!ns || !path || !ns.fileExists(path, "home")) return null;
     try {
         const raw = ns.read(path);
         if (!raw) return null;
+        const cached = manifestCache.get(path);
+        if (cached?.raw === raw) return cached.value;
         const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : null;
+        const value = parsed && typeof parsed === "object" ? parsed : null;
+        manifestCache.set(path, { raw, value });
+        return value;
     } catch (error) {
         return null;
     }
 }
 
-function getHomeFileSnapshot(ns) {
+function getHomeFileSnapshot(ns, knownFiles, knownProcesses) {
     if (!ns) return [];
     const runningByFile = new Map();
-    for (const process of ns.ps("home")) {
+    const processes = Array.isArray(knownProcesses) ? knownProcesses : ns.ps("home");
+    for (const process of processes) {
         const path = normalizeFilePath(process?.filename);
         if (!path) continue;
         const current = runningByFile.get(path) ?? { threads: 0, pids: [] };
@@ -32,7 +40,8 @@ function getHomeFileSnapshot(ns) {
         runningByFile.set(path, current);
     }
 
-    return ns.ls("home").map((rawPath) => {
+    const files = Array.isArray(knownFiles) ? knownFiles : ns.ls("home");
+    return files.map((rawPath) => {
         const path = normalizeFilePath(rawPath);
         const running = runningByFile.get(path) ?? { threads: 0, pids: [] };
         let metadata = null;
@@ -45,10 +54,19 @@ function getHomeFileSnapshot(ns) {
         }
         let ramPerThread = 0;
         if (isScriptFile(path)) {
-            try {
-                ramPerThread = ns.getScriptRam(path, "home") || 0;
-            } catch (error) {
-                ramPerThread = 0;
+            const metadataSignature = metadata
+                ? `${Number(metadata.mtime) || 0}:${Number(metadata.size) || 0}`
+                : "";
+            const cached = scriptRamCache.get(path);
+            if (metadataSignature && cached?.signature === metadataSignature) {
+                ramPerThread = cached.value;
+            } else {
+                try {
+                    ramPerThread = ns.getScriptRam(path, "home") || 0;
+                } catch (error) {
+                    ramPerThread = 0;
+                }
+                if (metadataSignature) scriptRamCache.set(path, { signature: metadataSignature, value: ramPerThread });
             }
         }
         return {
@@ -69,10 +87,10 @@ function getHomeFileSnapshot(ns) {
     });
 }
 
-export function buildFileManagerSnapshots(ns, views = []) {
+export function buildFileManagerSnapshots(ns, views = [], options = {}) {
     const fileManagerViews = (Array.isArray(views) ? views : []).filter((view) => view?.renderer === "file-manager");
     if (fileManagerViews.length === 0) return {};
-    const files = getHomeFileSnapshot(ns);
+    const files = getHomeFileSnapshot(ns, options.homeFiles, options.homeProcesses);
     return Object.fromEntries(fileManagerViews.map((view) => [view.id, {
         generatedAt: Date.now(),
         host: "home",

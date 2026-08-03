@@ -36,6 +36,7 @@ import {
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
+import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
@@ -77,6 +78,7 @@ import {
     shouldStartPluginIntegrationAfterOptionChange,
 } from "dashboard/libs/plugin-integration.js";
 import { buildPluginRequirementSection, buildPluginRequirementsSnapshot } from "dashboard/libs/plugin-requirements.js";
+import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import {
     getScriptListDetailEmptyMessage,
     getScriptLifecycleLabel,
@@ -143,6 +145,9 @@ const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
 const DASHBOARD_ACTION_POLL_MS = 50;
+const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
+const dashboardOptionsCache = { raw: null, services: null, value: null };
+const scriptCatalogEntryCache = new Map();
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -1222,6 +1227,7 @@ function flushDashboardActionQueue() {
 }
 
 function setDashboardFileActionResult(viewId, status, message, details = {}) {
+    dashboardSnapshotCoordinator.invalidate(`file-manager:${String(viewId ?? "")}`);
     globalThis[DASHBOARD_FILE_ACTION_RESULT_KEY] = {
         viewId: String(viewId ?? ""),
         status: status === "error" ? "error" : "success",
@@ -1562,21 +1568,39 @@ function areDashboardOptionsEqual(leftOptions, rightOptions) {
 }
 
 function loadDashboardOptions(ns) {
-    const defaults = getDefaultOptions();
-    if (!ns || !ns.fileExists(DASHBOARD_OPTIONS_FILE)) return defaults;
+    if (!ns || !ns.fileExists(DASHBOARD_OPTIONS_FILE)) return getDefaultOptions();
+    let raw = "";
     try {
-        const raw = ns.read(DASHBOARD_OPTIONS_FILE);
-        if (!raw) return defaults;
+        raw = ns.read(DASHBOARD_OPTIONS_FILE);
+        if (!raw) return getDefaultOptions();
+        const services = getDashboardServiceRegistry().services;
+        if (dashboardOptionsCache.raw === raw && dashboardOptionsCache.services === services) {
+            return dashboardOptionsCache.value;
+        }
         const parsed = JSON.parse(raw);
-        return normalizeDashboardOptionsForCompare(parsed);
+        const value = normalizeDashboardOptionsForCompare(parsed);
+        dashboardOptionsCache.raw = raw;
+        dashboardOptionsCache.services = services;
+        dashboardOptionsCache.value = value;
+        return value;
     } catch (e) {
+        const defaults = getDefaultOptions();
+        if (raw) {
+            dashboardOptionsCache.raw = raw;
+            dashboardOptionsCache.services = getDashboardServiceRegistry().services;
+            dashboardOptionsCache.value = defaults;
+        }
         return defaults;
     }
 }
 
 function saveDashboardOptions(ns, options) {
     if (!ns) return;
-    ns.write(DASHBOARD_OPTIONS_FILE, JSON.stringify(options), "w");
+    const raw = JSON.stringify(options);
+    ns.write(DASHBOARD_OPTIONS_FILE, raw, "w");
+    dashboardOptionsCache.raw = raw;
+    dashboardOptionsCache.services = getDashboardServiceRegistry().services;
+    dashboardOptionsCache.value = options;
     ns.tprint(`[DASHBOARD] Saved options to ${DASHBOARD_OPTIONS_FILE}`);
     ns.toast("Dashboard options saved", "success", 3500);
 }
@@ -1711,39 +1735,66 @@ function applyPluginScriptMetadata(homeScripts, registry) {
     });
 }
 
-function getHomeScripts(ns) {
+function buildHomeScriptCatalog(ns, homeFiles) {
     if (!ns) return [];
 
-    const files = ns.ls("home");
-    const processList = ns.ps("home");
-    const runningThreadsByFile = new Map();
+    const files = Array.isArray(homeFiles) ? homeFiles : ns.ls("home");
+    const scriptFiles = files
+        .filter((filename) => filename.endsWith(".js") || filename.endsWith(".jsx"))
+        .sort(compareScriptPathsByName);
+    const activeFiles = new Set(scriptFiles);
+    for (const cachedFilename of scriptCatalogEntryCache.keys()) {
+        if (!activeFiles.has(cachedFilename)) scriptCatalogEntryCache.delete(cachedFilename);
+    }
 
-    for (const process of processList) {
+    return scriptFiles.map((filename) => {
+            let fileMetadata = null;
+            try {
+                fileMetadata = ns.getFileMetadata(filename, "home");
+            } catch (error) {
+                fileMetadata = null;
+            }
+            const sourceSignature = fileMetadata
+                ? `${Number(fileMetadata.mtime) || 0}:${Number(fileMetadata.size) || 0}`
+                : "";
+            const cached = scriptCatalogEntryCache.get(filename);
+            if (sourceSignature && cached?.sourceSignature === sourceSignature) return cached.entry;
+
+            const scriptMetadata = loadDashboardScriptMetadata(ns, filename, sourceSignature);
+            const ramPerThread = ns.getScriptRam(filename, "home") || 0;
+
+            const entry = {
+                id: filename,
+                label: getScriptDisplayName(filename),
+                filename,
+                running: false,
+                daemon: scriptMetadata?.daemon,
+                lifecycleSource: scriptMetadata ? "script" : "unspecified",
+                ramPerThread,
+                runningThreads: 0,
+                runningRam: 0,
+            };
+            if (sourceSignature) scriptCatalogEntryCache.set(filename, { sourceSignature, entry });
+            return entry;
+        });
+}
+
+function applyHomeProcessState(scriptCatalog, homeProcesses) {
+    const runningThreadsByFile = new Map();
+    for (const process of Array.isArray(homeProcesses) ? homeProcesses : []) {
         const current = runningThreadsByFile.get(process.filename) ?? 0;
         runningThreadsByFile.set(process.filename, current + (process.threads ?? 0));
     }
 
-    return files
-        .filter((filename) => filename.endsWith(".js") || filename.endsWith(".jsx"))
-        .sort(compareScriptPathsByName)
-        .map((filename) => {
-            const scriptMetadata = loadDashboardScriptMetadata(ns, filename);
-            const ramPerThread = ns.getScriptRam(filename, "home") || 0;
-            const runningThreads = runningThreadsByFile.get(filename) ?? 0;
-            const runningRam = ramPerThread * runningThreads;
-
-            return {
-                id: filename,
-                label: getScriptDisplayName(filename),
-                filename,
-                running: runningThreads > 0,
-                daemon: scriptMetadata?.daemon,
-                lifecycleSource: scriptMetadata ? "script" : "unspecified",
-                ramPerThread,
-                runningThreads,
-                runningRam,
-            };
-        });
+    return (Array.isArray(scriptCatalog) ? scriptCatalog : []).map((script) => {
+        const runningThreads = runningThreadsByFile.get(script.filename) ?? 0;
+        return {
+            ...script,
+            running: runningThreads > 0,
+            runningThreads,
+            runningRam: script.ramPerThread * runningThreads,
+        };
+    });
 }
 
 function getHomeRamStatus(ns) {
@@ -2538,8 +2589,12 @@ function rebuildDashboardViewRegistry(ns, homeScripts = []) {
         definitions,
         getDashboardServiceRegistry().services
     );
+    const definitionSignature = JSON.stringify(contributedDefinitions);
+    const previous = globalThis.__dashboard_view_registry_source_v1;
+    if (previous?.signature === definitionSignature && previous.registry) return previous.registry;
     const registry = validateDashboardViews(contributedDefinitions);
     globalThis[DASHBOARD_VIEW_REGISTRY_KEY] = registry;
+    globalThis.__dashboard_view_registry_source_v1 = { signature: definitionSignature, registry };
     return registry;
 }
 
@@ -2580,6 +2635,13 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
         };
     }
 
+    const definitionSignature = JSON.stringify(pluginDefinitions);
+    const previous = globalThis.__dashboard_service_registry_source_v1;
+    if (previous?.signature === definitionSignature && previous.registry) {
+        setDashboardServiceRegistry(previous.registry);
+        return previous.registry;
+    }
+
     const pluginServices = buildDashboardPluginServices(pluginDefinitions, getDashboardPluginAdapterFactories());
 
     const pluginIds = new Set(pluginServices.map((service) => service.id));
@@ -2587,6 +2649,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const mergedServices = [...coreServices, ...pluginServices];
     const registry = validateDashboardServices(mergedServices);
     setDashboardServiceRegistry(registry);
+    globalThis.__dashboard_service_registry_source_v1 = { signature: definitionSignature, registry };
     logServiceRegistryIssues(registry);
     return registry;
 }
@@ -6901,6 +6964,7 @@ function syncDashboardTailLayout(ns, options = getDefaultOptions()) {
         : currentGeometry;
     return buildDashboardLayoutSnapshot({
         mode: minimized ? dashboardTailLayoutState.modeBeforeMinimize : dashboardTailLayoutState.mode,
+        minimized,
         geometry: visibleGeometry,
         viewport,
         titleHeight: DEFAULT_TAIL_TITLE_HEIGHT,
@@ -6964,11 +7028,31 @@ export async function main(ns) {
     while (true) {
         applyQueuedDashboardActions(ns);
 
-        let homeScripts = getHomeScripts(ns);
-        const runningProcessSnapshot = getRunningProcessSnapshot(ns);
+        const cycleSnapshot = dashboardSnapshotCoordinator.collectCycle(ns);
+        const scriptCatalog = dashboardSnapshotCoordinator.getOrCreate(
+            "script-catalog",
+            cycleSnapshot.now,
+            10000,
+            cycleSnapshot.fileSignature,
+            () => buildHomeScriptCatalog(ns, cycleSnapshot.homeFiles)
+        );
+        let homeScripts = applyHomeProcessState(scriptCatalog, cycleSnapshot.homeProcesses);
+        const runningProcessSnapshot = cycleSnapshot.runningProcessSnapshot;
         const runningScriptCount = runningProcessSnapshot.totalCount;
-        const dashboardServiceRegistry = rebuildDashboardServiceRegistry(ns, homeScripts);
-        const dashboardViewRegistry = rebuildDashboardViewRegistry(ns, homeScripts);
+        const dashboardServiceRegistry = dashboardSnapshotCoordinator.getOrCreate(
+            "service-registry",
+            cycleSnapshot.now,
+            5000,
+            cycleSnapshot.fileSignature,
+            () => rebuildDashboardServiceRegistry(ns, homeScripts)
+        );
+        const dashboardViewRegistry = dashboardSnapshotCoordinator.getOrCreate(
+            "view-registry",
+            cycleSnapshot.now,
+            5000,
+            cycleSnapshot.fileSignature,
+            () => rebuildDashboardViewRegistry(ns, homeScripts)
+        );
         homeScripts = applyPluginScriptMetadata(homeScripts, dashboardServiceRegistry);
         const persistedOptions = loadDashboardOptions(ns);
         const layoutSnapshot = React
@@ -6986,19 +7070,60 @@ export async function main(ns) {
             maximized: layoutSnapshot.maximized,
         });
         const homeRamStatus = getHomeRamStatus(ns);
-        const telemetryByServiceId = Object.fromEntries(
+        const telemetryByServiceId = dashboardSnapshotCoordinator.reuseRecord("telemetry", Object.fromEntries(
             getDashboardServiceRegistry().services
                 .filter((service) => service.pluginMetadata?.telemetry?.path)
                 .map((service) => [service.id, loadPluginIntegrationStats(ns, service.pluginMetadata)])
+        ));
+        const capabilitySnapshot = dashboardSnapshotCoordinator.getOrCreate(
+            "capabilities",
+            cycleSnapshot.now,
+            30000,
+            cycleSnapshot.fileSignature,
+            () => buildCapabilitySnapshot(ns, cycleSnapshot.homeFiles)
         );
-        const pluginRequirements = buildPluginRequirementsSnapshot(ns, getDashboardServiceRegistry().services);
+        const requirementsSignature = JSON.stringify(getDashboardServiceRegistry().services.map((service) => ({
+            id: service.id,
+            requirements: service.requirements,
+        })));
+        const pluginRequirements = dashboardSnapshotCoordinator.getOrCreate(
+            "plugin-requirements",
+            cycleSnapshot.now,
+            30000,
+            `${cycleSnapshot.fileSignature}:${requirementsSignature}`,
+            () => buildPluginRequirementsSnapshot(
+                ns,
+                getDashboardServiceRegistry().services,
+                capabilitySnapshot
+            )
+        );
         const activeDashboardViewId = String(globalThis[DASHBOARD_UI_STATE_KEY]?.activeViewId ?? "");
         const activeDashboardView = dashboardViewRegistry.byId.get(activeDashboardViewId);
         const fileManagerSnapshots = activeDashboardView?.renderer === "file-manager"
-            ? buildFileManagerSnapshots(ns, [activeDashboardView])
+            ? dashboardSnapshotCoordinator.getOrCreate(
+                `file-manager:${activeDashboardView.id}`,
+                cycleSnapshot.now,
+                5000,
+                `${cycleSnapshot.fileSignature}:${activeDashboardView.descriptorFile ?? activeDashboardView.id}`,
+                () => buildFileManagerSnapshots(ns, [activeDashboardView], {
+                    homeFiles: cycleSnapshot.homeFiles,
+                    homeProcesses: cycleSnapshot.homeProcesses,
+                })
+            )
             : {};
         const scriptLogSnapshots = activeDashboardView?.renderer === "script-log"
-            ? { [activeDashboardView.id]: buildScriptLogSnapshot(ns, activeDashboardView) }
+            ? dashboardSnapshotCoordinator.getOrCreate(
+                `script-log:${activeDashboardView.id}`,
+                cycleSnapshot.now,
+                1000,
+                getDashboardViewInteractionState(activeDashboardView.id).selectedId,
+                () => ({
+                    [activeDashboardView.id]: buildScriptLogSnapshot(ns, activeDashboardView, {
+                        selectedId: getDashboardViewInteractionState(activeDashboardView.id).selectedId,
+                        homeProcesses: cycleSnapshot.homeProcesses,
+                    }),
+                })
+            )
             : {};
         const activeFileManagerSnapshot = activeDashboardView?.renderer === "file-manager"
             ? fileManagerSnapshots[activeDashboardView.id] ?? null
@@ -7023,7 +7148,7 @@ export async function main(ns) {
             if (optionsInputFocused || viewDragActive || fileManagerRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
-                let remainingSleepMs = DASHBOARD_UI_TICK_MS;
+                let remainingSleepMs = layoutSnapshot.minimized ? 5000 : DASHBOARD_UI_TICK_MS;
                 while (remainingSleepMs > 0) {
                     const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
                     await ns.sleep(stepMs);
@@ -7065,7 +7190,7 @@ export async function main(ns) {
 
         if (!isDaemon) break;
 
-        let remainingSleepMs = DASHBOARD_UI_TICK_MS;
+        let remainingSleepMs = layoutSnapshot.minimized ? 5000 : DASHBOARD_UI_TICK_MS;
         while (remainingSleepMs > 0) {
             const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
             await ns.sleep(stepMs);

@@ -1,5 +1,8 @@
 import { formatMoney, formatRam, formatSignedMoney } from "dashboard/libs/format-utils.js";
 
+const telemetryJsonCache = new Map();
+const integrationStatsCache = new WeakMap();
+
 function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
 }
@@ -28,12 +31,18 @@ function setTelemetryFieldValue(target, key, value) {
 
 function loadTelemetryJsonFile(ns, path) {
     if (!ns || typeof path !== "string" || !ns.fileExists(path, "home")) return null;
+    let raw = "";
     try {
-        const raw = ns.read(path);
+        raw = ns.read(path);
         if (!raw) return null;
+        const cached = telemetryJsonCache.get(path);
+        if (cached?.raw === raw) return cached.value;
         const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : null;
+        const value = parsed && typeof parsed === "object" ? parsed : null;
+        telemetryJsonCache.set(path, { raw, value });
+        return value;
     } catch (error) {
+        if (raw) telemetryJsonCache.set(path, { raw, value: null });
         return null;
     }
 }
@@ -134,9 +143,11 @@ export function loadPluginIntegrationStats(ns, integration) {
     if (!ns) return null;
     const telemetry = getObject(integration?.telemetry);
     const stats = {};
+    const sourceValues = [];
     let loaded = false;
 
     const primary = loadTelemetryJsonFile(ns, telemetry.path);
+    sourceValues.push(primary);
     if (primary) {
         Object.assign(stats, primary);
         loaded = true;
@@ -146,6 +157,7 @@ export function loadPluginIntegrationStats(ns, integration) {
     for (const rawSource of additionalSources) {
         const source = getObject(rawSource);
         const sourceStats = loadTelemetryJsonFile(ns, source.path);
+        sourceValues.push(sourceStats);
         if (!sourceStats) continue;
         const sourceValue = typeof source.sourceKey === "string"
             ? getTelemetryFieldValue(sourceStats, source.sourceKey)
@@ -160,7 +172,16 @@ export function loadPluginIntegrationStats(ns, integration) {
         loaded = true;
     }
 
-    return loaded ? stats : null;
+    const value = loaded ? stats : null;
+    if (!integration || typeof integration !== "object") return value;
+    const cached = integrationStatsCache.get(integration);
+    if (cached
+        && cached.sources.length === sourceValues.length
+        && cached.sources.every((sourceValue, index) => sourceValue === sourceValues[index])) {
+        return cached.value;
+    }
+    integrationStatsCache.set(integration, { sources: sourceValues, value });
+    return value;
 }
 
 export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAction) {

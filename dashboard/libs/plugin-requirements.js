@@ -28,8 +28,8 @@ function getRequirementLabel(requirement) {
     return String(requirement.id ?? "Unknown requirement");
 }
 
-export function buildPluginRequirementsSnapshot(ns, services = []) {
-    const snapshot = buildCapabilitySnapshot(ns);
+export function buildPluginRequirementsSnapshot(ns, services = [], capabilitySnapshot) {
+    const snapshot = capabilitySnapshot ?? buildCapabilitySnapshot(ns);
 
     return Object.fromEntries((services ?? []).map((service) => {
         const requirements = Array.isArray(service?.requirements) ? service.requirements : [];

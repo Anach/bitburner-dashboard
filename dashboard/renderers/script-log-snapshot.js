@@ -16,23 +16,31 @@ function normalizeLogLines(lines, maxLines) {
         .slice(-maxLines);
 }
 
-export function buildScriptLogSnapshot(ns, view) {
+export function buildScriptLogSnapshot(ns, view, options = {}) {
     const layout = view?.layout ?? {};
     const host = String(layout.host ?? "home");
     const maxLines = Math.max(20, Math.min(2000, Math.floor(Number(layout.maxLines) || 500)));
     const recentLimit = Math.max(0, Math.min(100, Math.floor(Number(layout.recentLimit) || 30)));
     const generatedAt = Date.now();
-    const running = ns.ps(host).map((process) => {
+    const selectedId = String(options.selectedId ?? "");
+    const processList = host === "home" && Array.isArray(options.homeProcesses)
+        ? options.homeProcesses
+        : ns.ps(host);
+    const selectedRunningId = selectedId || (processList[0]?.pid ? `running:${processList[0].pid}` : "");
+    const running = processList.map((process) => {
+        const id = `running:${process.pid}`;
         let details = null;
-        try {
-            details = ns.getRunningScript(process.pid);
-        } catch (error) {
-            details = null;
+        if (selectedRunningId === id) {
+            try {
+                details = ns.getRunningScript(process.pid);
+            } catch (error) {
+                details = null;
+            }
         }
         const args = Array.isArray(details?.args) ? details.args : process.args;
         const logs = normalizeLogLines(details?.logs, maxLines);
         return {
-            id: `running:${process.pid}`,
+            id,
             status: "running",
             filename: String(process.filename ?? details?.filename ?? "unknown"),
             host,
@@ -57,9 +65,12 @@ export function buildScriptLogSnapshot(ns, view) {
         .slice(0, recentLimit)
         .map((entry) => {
             const deathTime = Date.parse(String(entry.timeOfDeath ?? "")) || 0;
-            const logs = normalizeLogLines(entry.logs, maxLines);
+            const id = `recent:${entry.pid}:${deathTime}`;
+            const logs = selectedId === id || (!selectedId && running.length === 0)
+                ? normalizeLogLines(entry.logs, maxLines)
+                : [];
             return {
-                id: `recent:${entry.pid}:${deathTime}`,
+                id,
                 status: "recent",
                 filename: String(entry.filename ?? "unknown"),
                 host,

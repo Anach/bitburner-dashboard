@@ -131,10 +131,10 @@ export function getDashboardLayoutTier(width) {
 }
 
 /**
- * @param {{mode?: string, geometry?: object, viewport?: object | number[], titleHeight?: number}} [raw]
+ * @param {{mode?: string, minimized?: boolean, geometry?: object, viewport?: object | number[], titleHeight?: number}} [raw]
  */
 export function buildDashboardLayoutSnapshot(raw = {}) {
-    const { mode, geometry, viewport, titleHeight = DEFAULT_TAIL_TITLE_HEIGHT } = raw;
+    const { mode, minimized = false, geometry, viewport, titleHeight = DEFAULT_TAIL_TITLE_HEIGHT } = raw;
     const normalizedViewport = normalizeViewport(viewport);
     const normalizedGeometry = normalizeTailGeometry(geometry, getDefaultWindowedGeometry(normalizedViewport));
     const normalizedTitleHeight = clamp(finiteNumber(titleHeight, DEFAULT_TAIL_TITLE_HEIGHT), 0, normalizedGeometry.height);
@@ -142,6 +142,7 @@ export function buildDashboardLayoutSnapshot(raw = {}) {
     return {
         mode: normalizeDashboardWindowMode(mode),
         maximized: normalizeDashboardWindowMode(mode) === DASHBOARD_WINDOW_MODE_MAXIMIZED,
+        minimized: Boolean(minimized),
         tailWidth: normalizedGeometry.width,
         tailHeight: normalizedGeometry.height,
         contentWidth: normalizedGeometry.width,
