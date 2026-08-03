@@ -257,12 +257,15 @@ The project keeps three responsibilities separate:
 - `dashboard/automation-dashboard.jsx` owns discovery, normalized state, generic action dispatch, and framework rendering.
 - `dashboard/service-supervisor.js` discovers and supervises eligible daemon integrations.
 - `dashboard/libs/` contains behavior shared by the framework and multiple plugins.
+- `dashboard/renderers/` contains framework-owned implementations for optional metadata-discovered view types.
 - `dashboard/integrations/` contains data-only descriptors for runtime scripts that do not require the dashboard.
-- `dashboard/plugins/<plugin>/` contains dashboard-dependent features and their descriptors, renderers, and plugin-specific helpers.
+- `dashboard/plugins/<plugin>/` contains removable dashboard-dependent descriptors, runtimes, and plugin-specific helpers.
 
 Runtime scripts must not import dashboard code. Dashboard core and libraries must not import a runtime or an integration descriptor. The loader reads descriptor source as JSON and never evaluates it.
 
-A direct plugin must keep all plugin-specific files in its own folder. Removing that folder removes the plugin; shared code belongs in `dashboard/libs/` only when more than one dashboard feature uses it.
+A direct plugin must keep all plugin-specific files in its own folder. Removing that folder removes the plugin from discovery and removes any runtime shipped by that plugin. Netscript resolves static imports before dashboard discovery, so core imports only framework-owned modules under `dashboard/libs/` and `dashboard/renderers/`, never files inside a removable plugin folder.
+
+Framework renderers remain installed when a plugin is removed. A renderer defines a supported metadata view type, such as `file-manager` or `script-log`; the plugin descriptor activates that type and supplies its configuration. Without the descriptor, the renderer is dormant and no menu item or view is created. Do not delete a file under `dashboard/renderers/` when uninstalling a plugin because the dashboard's static import graph still requires it for RAM calculation and startup.
 
 ## Full-window views
 
@@ -273,7 +276,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `file-manager`
 - `script-log`
 
-The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
+The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 
 Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata, or to the normal workspace right pane through `workspaceWidgets`. Player Stats uses both contracts to add itself to System Overview and beside the service status panel in non-global system groups. Its dashboard option is also plugin-contributed, so removing Player Stats removes the widgets and option without leaving an empty surface or inactive control.
 

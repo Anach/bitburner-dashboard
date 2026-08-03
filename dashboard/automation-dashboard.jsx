@@ -44,10 +44,10 @@ import {
     getDashboardFrameControlStyle,
 } from "dashboard/libs/frame-controls.js";
 import { buildGroupedNetworkLayout, buildLayeredNetworkLayout, fitNetworkLayout } from "dashboard/libs/network-layout.js";
-import { FileManagerView } from "dashboard/plugins/file-manager/file-manager-view.jsx";
-import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/plugins/file-manager/file-manager-snapshot.js";
-import { ScriptLogView } from "dashboard/plugins/script-log/script-log-view.jsx";
-import { buildScriptLogSnapshot } from "dashboard/plugins/script-log/script-log-snapshot.js";
+import { FileManagerView } from "dashboard/renderers/file-manager-view.jsx";
+import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/renderers/file-manager-snapshot.js";
+import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
+import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import {
     buildArchivePath,
     getFileExtension,
@@ -2138,7 +2138,7 @@ const DASHBOARD_SERVICES = [
                 },
             };
         },
-        getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
+        getInputs: ({ selectedCenterPanel, options }) => {
             if (selectedCenterPanel !== "options") return [];
             return [
                 { id: "reserved-home-ram", label: "Reserved Home RAM (GB)", optionKey: "reservedHomeRam", value: options.reservedHomeRam, min: 0 },
@@ -2171,7 +2171,7 @@ const DASHBOARD_SERVICES = [
         panelMeta: {
             options: { title: "Dashboard Options", accent: "#6cb4ff", subtitle: "Configure dashboard-wide behavior" },
         },
-        getInputs: ({ selectedCenterPanel, options }) => {
+        getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
             if (selectedCenterPanel !== "options") return [];
             return [
                 {
@@ -2215,14 +2215,18 @@ const DASHBOARD_SERVICES = [
                 },
             ];
         },
-        getState: ({ selectedCenterPanel, options }) => {
+        getState: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
             if (selectedCenterPanel !== "options") return [];
             const configuredFolders = parseScriptFolders(options.ignoredScriptFolders);
             const configuredFiles = parseScriptFiles(options.ignoredScriptFiles);
+            const hasPlayerStatsOption = Array.isArray(pluginDashboardOptionInputs)
+                && pluginDashboardOptionInputs.some((input) => input.optionKey === "dashboardPlayerHudMode");
             return [
                 { label: "Theme", value: normalizeDashboardThemeMode(options.dashboardThemeMode), tone: "info" },
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
-                { label: "Player Stats", value: normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode), tone: "info" },
+                ...(hasPlayerStatsOption
+                    ? [{ label: "Player Stats", value: normalizeDashboardPlayerHudMode(options.dashboardPlayerHudMode), tone: "info" }]
+                    : []),
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
                 { label: "Last window mode", value: normalizeDashboardWindowMode(options.dashboardLastWindowMode), tone: "neutral" },
                 { label: "Ignored folders", value: configuredFolders.join(", ") || "None", tone: "info" },

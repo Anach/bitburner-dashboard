@@ -34,6 +34,8 @@ export const DASHBOARD_VIEW_METADATA = {
             "dashboard/automation-dashboard.jsx",
             "dashboard/service-supervisor.js",
             "dashboard/plugins/file-manager/file-manager-view.js",
+            "dashboard/renderers/file-manager-view.jsx",
+            "dashboard/renderers/file-manager-snapshot.js",
             "data/dashboard_options.json",
             "data/deploy_manifest.json"
         ],
