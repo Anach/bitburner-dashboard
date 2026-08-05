@@ -296,6 +296,12 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         const text = String(value ?? "");
         if (!text) return;
         try {
+            // The dashboard tail window may not hold document focus yet on the
+            // first click, and clipboard.writeText() rejects when unfocused.
+            if (typeof document !== "undefined" && !document.hasFocus?.()) {
+                window.focus?.();
+                document.body?.focus?.();
+            }
             const clipboard = globalThis?.navigator?.clipboard;
             if (clipboard && typeof clipboard.writeText === "function") {
                 void Promise.resolve(clipboard.writeText(text))

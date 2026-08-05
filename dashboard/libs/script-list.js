@@ -78,7 +78,8 @@ export function resolveSelectedCenterPanel({ selectedItem, centerPanels = [], sa
         return savedCenterPanel;
     }
 
-    if ((selectedItem === "global.options" || selectedItem === "global.plugins") && savedCenterPanel === "") {
+    if ((selectedItem === "global.options" || selectedItem === "global.coreModules"
+        || selectedItem === "global.integrations" || selectedItem === "global.plugins") && savedCenterPanel === "") {
         return "";
     }
 

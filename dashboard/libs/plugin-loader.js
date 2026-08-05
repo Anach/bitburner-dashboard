@@ -50,6 +50,16 @@ export function discoverDashboardViews(ns, scriptFilenames = []) {
     return discovered;
 }
 
+export function isDashboardPluginDescriptorFilename(filename) {
+    if (typeof filename !== "string") return false;
+    const integrationDescriptor = filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)
+        && !filename.slice(DASHBOARD_INTEGRATION_FOLDER_PREFIX.length).includes("/");
+    const pluginDescriptor = filename.startsWith(DASHBOARD_PLUGIN_FOLDER_PREFIX)
+        && filename.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/").length === 2;
+    if (!integrationDescriptor && !pluginDescriptor) return false;
+    return filename.endsWith(DASHBOARD_PLUGIN_INTEGRATION_SUFFIX);
+}
+
 export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {}) {
     if (!ns || !Array.isArray(scriptFilenames)) return [];
 
@@ -64,12 +74,8 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         : [];
     const discovered = [];
     for (const normalized of normalizedFilenames) {
-        const integrationDescriptor = normalized.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)
-            && !normalized.slice(DASHBOARD_INTEGRATION_FOLDER_PREFIX.length).includes("/");
-        const pluginDescriptor = normalized.startsWith(DASHBOARD_PLUGIN_FOLDER_PREFIX)
-            && normalized.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/").length === 2;
-        if (!integrationDescriptor && !pluginDescriptor) continue;
-        if (!normalized.endsWith(DASHBOARD_PLUGIN_INTEGRATION_SUFFIX)) continue;
+        if (!isDashboardPluginDescriptorFilename(normalized)) continue;
+        const pluginDescriptor = normalized.startsWith(DASHBOARD_PLUGIN_FOLDER_PREFIX);
         if (!ns.fileExists(normalized, "home")) continue;
 
         let sourceText = "";

@@ -30,6 +30,22 @@ export const DEFAULT_IGNORED_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
 export const DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_IGNORED_SCRIPT_FOLDERS);
 export const DEFAULT_IGNORED_SCRIPT_FILES_OPTION = "";
 
+export function getServiceAutostartOptionKey(serviceId) {
+    return `serviceAutostart:${serviceId}`;
+}
+
+export function isServiceAutostartEnabled(serviceId, options) {
+    return getObject(options)[getServiceAutostartOptionKey(serviceId)] !== false;
+}
+
+function isDaemonEligible(pluginMetadata) {
+    return pluginMetadata?.daemon !== false;
+}
+
+function getObject(value) {
+    return value && typeof value === "object" ? value : {};
+}
+
 export function normalizeDashboardPlayerHudMode(value) {
     const normalized = String(value ?? "").trim().toLowerCase();
     if (normalized === DASHBOARD_PLAYER_HUD_MODE_SHOWN.toLowerCase()) return DASHBOARD_PLAYER_HUD_MODE_SHOWN;
@@ -54,6 +70,9 @@ export function getDefaultDashboardOptions(services = []) {
     };
     for (const service of services) {
         Object.assign(defaults, getPluginIntegrationDefaultOptions(service.pluginMetadata));
+        if (typeof service.id === "string" && service.id && isDaemonEligible(service.pluginMetadata)) {
+            defaults[getServiceAutostartOptionKey(service.id)] = true;
+        }
     }
     return defaults;
 }
@@ -99,6 +118,10 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
     };
     for (const service of services) {
         Object.assign(normalized, normalizePluginIntegrationOptions(service.pluginMetadata, rawOptions));
+        if (typeof service.id === "string" && service.id && isDaemonEligible(service.pluginMetadata)) {
+            const autostartKey = getServiceAutostartOptionKey(service.id);
+            normalized[autostartKey] = rawOptions[autostartKey] !== false;
+        }
     }
     return normalized;
 }

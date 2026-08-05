@@ -6,6 +6,7 @@ import {
     DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
     dashboardOptionsEqual,
     getDefaultDashboardOptions,
+    getServiceAutostartOptionKey,
     normalizeDashboardOptions,
     normalizeDashboardPlayerHudMode,
 } from "dashboard/libs/dashboard-options.js";
@@ -17,7 +18,7 @@ import {
     validateDashboardViews as validateDashboardViewsDefinition,
 } from "dashboard/libs/dashboard-registry.js";
 import { getDashboardPluginAdapterFactories } from "dashboard/libs/plugin-adapters.js";
-import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews } from "dashboard/libs/plugin-loader.js";
+import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
 import {
     DASHBOARD_THEME_MODE_DASHBOARD,
@@ -1215,6 +1216,7 @@ function getDefaultUiState() {
             hacking: false,
             finances: false,
             hardware: false,
+            software: false,
             automation: false,
             globalOptions: false
         },
@@ -1225,6 +1227,8 @@ function getDefaultUiState() {
             "hardware.home": "infrastructure",
             "global.dashboardOptions": "options",
             "global.options": "",
+            "global.coreModules": "",
+            "global.integrations": "",
             "global.plugins": "",
         }
     };
@@ -1251,10 +1255,6 @@ function loadUiState() {
 
     if (upgradedCenterPanels["global.options"] === "scripts-list" || upgradedCenterPanels["global.options"] === "batcher") {
         upgradedCenterPanels["global.options"] = base.centerPanels["global.options"];
-    }
-
-    if (upgradedCenterPanels["global.plugins"] === "plugins-list") {
-        upgradedCenterPanels["global.plugins"] = base.centerPanels["global.plugins"];
     }
 
     const savedExpandedGroups = saved.expandedGroups ?? {};
@@ -1546,6 +1546,29 @@ function isDashboardCoreScript(filename) {
     return filename === DASHBOARD_SCRIPT || filename === SERVICE_SUPERVISOR_SCRIPT;
 }
 
+function isGlobalListMenuItem(itemId) {
+    return itemId === "global.options" || itemId === "global.coreModules"
+        || itemId === "global.integrations" || itemId === "global.plugins";
+}
+
+function isDashboardIntegrationScript(filename) {
+    if (typeof filename !== "string" || filename.length === 0) return false;
+    const normalized = filename.replace(/\\/g, "/");
+    return getDashboardServiceRegistry().services.some((service) => {
+        return service.pluginFile === normalized
+            && typeof service.pluginIntegrationFile === "string"
+            && service.pluginIntegrationFile.startsWith("dashboard/integrations/");
+    });
+}
+
+function buildScriptListActions(selectedScript, dashboardOptions, scriptActionOptions) {
+    const baseActions = buildScriptActions(selectedScript, scriptActionOptions);
+    if (!selectedScript?.filename) return baseActions;
+    const matchedService = getDashboardServiceRegistry().services.find((service) => service.pluginFile === selectedScript.filename);
+    const autostartAction = buildServiceAutostartAction(matchedService, dashboardOptions);
+    return autostartAction ? [...baseActions, autostartAction] : baseActions;
+}
+
 function buildSupervisorServiceStateLines(services, homeScripts, pluginRequirements, supervisorRunning) {
     const managedServices = (Array.isArray(services) ? services : []).filter((service) => {
         return typeof service?.pluginFile === "string" && service.pluginMetadata?.daemon !== false;
@@ -1594,11 +1617,13 @@ function buildScriptBuckets(
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
     const ignoredFolders = parseScriptFolders(rawIgnoredFolders);
     const ignoredFiles = parseScriptFiles(rawIgnoredFiles);
-    const pluginScripts = scripts.filter((script) => isDashboardPluginScript(script?.filename));
+    const integrationScripts = scripts.filter((script) => isDashboardIntegrationScript(script?.filename));
+    const pluginScripts = scripts.filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename));
     const dashboardCoreScripts = scripts.filter((script) => isDashboardCoreScript(script?.filename));
     const nonPluginScripts = getNonPluginScripts(scripts, ignoredFolders, ignoredFiles);
 
     return {
+        integrationScripts,
         pluginScripts,
         nonPluginScripts,
         dashboardCoreScripts,
@@ -1759,6 +1784,7 @@ const DASHBOARD_MENU_GROUPS = [
     { id: "hacking", title: "Hacking" },
     { id: "finances", title: "Finances" },
     { id: "hardware", title: "Hardware" },
+    { id: "software", title: "Software" },
     { id: "automation", title: "Automation" },
     { id: "globalOptions", title: "Global Options" },
 ];
@@ -1904,9 +1930,136 @@ const DASHBOARD_SERVICES = [
         },
     },
     {
+        id: "global.coreModules",
+        menuGroup: "globalOptions",
+        menuLabel: "Core Modules",
+        alwaysVisible: true,
+        rendererKey: "global.coreModules",
+        defaultPanelId: "",
+        subviews: [],
+        getPanels: (homeScripts = []) => homeScripts
+            .filter((script) => isDashboardCoreScript(script?.filename))
+            .map((script) => ({
+                id: script.id,
+                label: script.label,
+                running: script.running,
+                daemon: script.daemon,
+            })),
+        panelMeta: {
+            default: { title: "Core Modules", accent: "#6ee7a8", subtitle: "Dashboard core scripts" },
+            script: { title: "Core Module", accent: "#6ee7a8", subtitle: "Dashboard core status and controls" },
+        },
+        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
+            return isDashboardCoreScript(script?.filename);
+        })),
+        getState: ({ selectedScript, homeScripts, pluginRequirements }) => {
+            if (!selectedScript) return [];
+            const scriptLines = [
+                { label: "Dashboard Core", value: selectedScript.label, tone: "info" },
+                { label: "Path", value: selectedScript.filename, tone: "neutral" },
+                { label: "Status", value: selectedScript.running ? "running" : "stopped", tone: selectedScript.running ? "success" : "neutral" },
+                { label: "Lifecycle", value: getScriptLifecycleLabel(selectedScript), tone: selectedScript.daemon === true ? "info" : "neutral" },
+                { label: "RAM (1t)", value: formatRam(selectedScript.ramPerThread ?? 0), tone: "neutral" },
+                { label: "RAM (running)", value: formatRam(selectedScript.runningRam ?? 0), tone: selectedScript.running ? "info" : "neutral" },
+                { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
+            ];
+            if (selectedScript.filename !== SERVICE_SUPERVISOR_SCRIPT) return scriptLines;
+            return [
+                ...scriptLines,
+                ...buildSupervisorServiceStateLines(
+                    getDashboardServiceRegistry().services,
+                    homeScripts,
+                    pluginRequirements,
+                    selectedScript.running
+                ),
+            ];
+        },
+        getActions: ({ selectedScript, options }) => {
+            return buildScriptListActions(selectedScript, options);
+        },
+    },
+    {
+        id: "global.integrations",
+        menuGroup: "globalOptions",
+        menuLabel: "Integrations",
+        alwaysVisible: true,
+        rendererKey: "global.integrations",
+        defaultPanelId: "",
+        subviews: [],
+        getPanels: (homeScripts = []) => homeScripts
+            .filter((script) => isDashboardIntegrationScript(script?.filename))
+            .map((script) => ({
+                id: script.id,
+                label: script.label,
+                running: script.running,
+                daemon: script.daemon,
+            })),
+        panelMeta: {
+            default: { title: "Integrations", accent: "#6cb4ff", subtitle: "Independently-runnable scripts with a dashboard descriptor" },
+            script: { title: "Integration", accent: "#6cb4ff", subtitle: "Integration status and controls" },
+        },
+        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
+            return isDashboardIntegrationScript(script?.filename);
+        })),
+        getState: ({ selectedScript }) => {
+            if (!selectedScript) return [];
+            return [
+                { label: "Integration", value: selectedScript.label, tone: "info" },
+                { label: "Path", value: selectedScript.filename, tone: "neutral" },
+                { label: "Status", value: selectedScript.running ? "running" : "stopped", tone: selectedScript.running ? "success" : "neutral" },
+                { label: "Lifecycle", value: getScriptLifecycleLabel(selectedScript), tone: selectedScript.daemon === true ? "info" : "neutral" },
+                { label: "RAM (1t)", value: formatRam(selectedScript.ramPerThread ?? 0), tone: "neutral" },
+                { label: "RAM (running)", value: formatRam(selectedScript.runningRam ?? 0), tone: selectedScript.running ? "info" : "neutral" },
+                { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
+            ];
+        },
+        getActions: ({ selectedScript, options }) => {
+            return buildScriptListActions(selectedScript, options);
+        },
+    },
+    {
+        id: "global.plugins",
+        menuGroup: "globalOptions",
+        menuLabel: "Plugins",
+        alwaysVisible: true,
+        rendererKey: "global.plugins",
+        defaultPanelId: "",
+        subviews: [],
+        getPanels: (homeScripts = []) => homeScripts
+            .filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename))
+            .map((script) => ({
+                id: script.id,
+                label: script.label,
+                running: script.running,
+                daemon: script.daemon,
+            })),
+        panelMeta: {
+            default: { title: "Plugins", accent: "#6cb4ff", subtitle: "Packaged dashboard plugin scripts" },
+            script: { title: "Plugin", accent: "#6cb4ff", subtitle: "Plugin status and controls" },
+        },
+        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
+            return isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename);
+        })),
+        getState: ({ selectedScript }) => {
+            if (!selectedScript) return [];
+            return [
+                { label: "Plugin", value: selectedScript.label, tone: "info" },
+                { label: "Path", value: selectedScript.filename, tone: "neutral" },
+                { label: "Status", value: selectedScript.running ? "running" : "stopped", tone: selectedScript.running ? "success" : "neutral" },
+                { label: "Lifecycle", value: getScriptLifecycleLabel(selectedScript), tone: selectedScript.daemon === true ? "info" : "neutral" },
+                { label: "RAM (1t)", value: formatRam(selectedScript.ramPerThread ?? 0), tone: "neutral" },
+                { label: "RAM (running)", value: formatRam(selectedScript.runningRam ?? 0), tone: selectedScript.running ? "info" : "neutral" },
+                { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
+            ];
+        },
+        getActions: ({ selectedScript, options }) => {
+            return buildScriptListActions(selectedScript, options);
+        },
+    },
+    {
         id: "global.options",
         menuGroup: "globalOptions",
-        menuLabel: "Script List",
+        menuLabel: "Scripts",
         alwaysVisible: true,
         rendererKey: "global.options",
         defaultPanelId: "",
@@ -1918,7 +2071,7 @@ const DASHBOARD_SERVICES = [
             daemon: script.daemon,
             })),
         panelMeta: {
-            default: { title: "Script List", accent: "#ff7bd0", subtitle: "Home directory scripts" },
+            default: { title: "Scripts", accent: "#ff7bd0", subtitle: "Home directory scripts" },
             script: { title: "Script", accent: "#ff7bd0", subtitle: "Script status and controls" },
         },
         getHealth: ({ homeScripts, options }) => summarizeScriptListHealth(getNonPluginScripts(
@@ -1938,58 +2091,8 @@ const DASHBOARD_SERVICES = [
                 { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
             ];
         },
-        getActions: ({ selectedScript }) => {
-            return buildScriptActions(selectedScript);
-        },
-    },
-    {
-        id: "global.plugins",
-        menuGroup: "globalOptions",
-        menuLabel: "Plugins List",
-        alwaysVisible: true,
-        rendererKey: "global.plugins",
-        defaultPanelId: "",
-        subviews: [],
-        getPanels: (homeScripts = []) => homeScripts
-            .filter((script) => isDashboardPluginScript(script?.filename) || isDashboardCoreScript(script?.filename))
-            .map((script) => ({
-                id: script.id,
-                label: script.label,
-                running: script.running,
-                daemon: script.daemon,
-            })),
-        panelMeta: {
-            default: { title: "Plugin List", accent: "#6cb4ff", subtitle: "Dashboard plugin scripts" },
-            script: { title: "Plugin", accent: "#6cb4ff", subtitle: "Plugin status and controls" },
-        },
-        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
-            return isDashboardPluginScript(script?.filename) || isDashboardCoreScript(script?.filename);
-        })),
-        getState: ({ selectedScript, homeScripts, pluginRequirements }) => {
-            if (!selectedScript) return [];
-            const scriptTypeLabel = isDashboardCoreScript(selectedScript.filename) ? "Dashboard Core" : "Plugin";
-            const scriptLines = [
-                { label: scriptTypeLabel, value: selectedScript.label, tone: "info" },
-                { label: "Path", value: selectedScript.filename, tone: "neutral" },
-                { label: "Status", value: selectedScript.running ? "running" : "stopped", tone: selectedScript.running ? "success" : "neutral" },
-                { label: "Lifecycle", value: getScriptLifecycleLabel(selectedScript), tone: selectedScript.daemon === true ? "info" : "neutral" },
-                { label: "RAM (1t)", value: formatRam(selectedScript.ramPerThread ?? 0), tone: "neutral" },
-                { label: "RAM (running)", value: formatRam(selectedScript.runningRam ?? 0), tone: selectedScript.running ? "info" : "neutral" },
-                { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
-            ];
-            if (selectedScript.filename !== SERVICE_SUPERVISOR_SCRIPT) return scriptLines;
-            return [
-                ...scriptLines,
-                ...buildSupervisorServiceStateLines(
-                    getDashboardServiceRegistry().services,
-                    homeScripts,
-                    pluginRequirements,
-                    selectedScript.running
-                ),
-            ];
-        },
-        getActions: ({ selectedScript }) => {
-            return buildScriptActions(selectedScript);
+        getActions: ({ selectedScript, options }) => {
+            return buildScriptListActions(selectedScript, options);
         },
     },
 ];
@@ -2120,9 +2223,25 @@ function logServiceRegistryIssues(registry) {
     }
 }
 
+function buildDescriptorContentSignature(ns, filenames) {
+    return filenames
+        .filter(isDashboardPluginDescriptorFilename)
+        .map((filename) => {
+            let fileMetadata = null;
+            try {
+                fileMetadata = ns.getFileMetadata(filename, "home");
+            } catch (error) {
+                fileMetadata = null;
+            }
+            const stamp = fileMetadata ? `${Number(fileMetadata.mtime) || 0}:${Number(fileMetadata.size) || 0}` : "";
+            return `${filename}@${stamp}`;
+        })
+        .join("|");
+}
+
 function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const filenames = homeScripts.map((script) => script.filename).sort(compareScriptPathsByName);
-    const pluginCacheKey = `${filenames.join("|")}::${PLUGIN_RUNTIME_EXCLUDED_FOLDERS.join("|")}`;
+    const pluginCacheKey = `${filenames.join("|")}::${PLUGIN_RUNTIME_EXCLUDED_FOLDERS.join("|")}::${buildDescriptorContentSignature(ns, filenames)}`;
     const now = Date.now();
     const cache = globalThis.__dashboard_plugin_scan_cache_v2;
     const canUseCache = cache
@@ -2196,7 +2315,7 @@ function getCenterPanelsForItem(selectedItem, homeScripts = []) {
 
     // Script and plugin lists should render as empty when there are no eligible scripts,
     // rather than falling back to a synthetic placeholder panel.
-    if (service.id === "global.options" || service.id === "global.plugins") {
+    if (isGlobalListMenuItem(service.id)) {
         return [];
     }
 
@@ -2250,6 +2369,25 @@ function getServiceInputs(service, context) {
     }
 
     return inputs.filter((input) => input && typeof input.id === "string" && typeof input.label === "string" && typeof input.optionKey === "string");
+}
+
+function buildServiceAutostartAction(service, options) {
+    if (typeof service?.id !== "string" || !service.id) return null;
+    if (!service?.pluginFile) return null;
+    if (service?.pluginMetadata?.daemon === false) return null;
+
+    const optionKey = getServiceAutostartOptionKey(service.id);
+    const enabled = options?.[optionKey] !== false;
+    return {
+        id: `${service.id}-autostart`,
+        label: "Autostart",
+        kind: "save-options",
+        tone: enabled ? "success" : "neutral",
+        tooltip: enabled
+            ? `${service.menuLabel} is auto-started and auto-restarted by the Integration Service Supervisor. Click to disable.`
+            : `${service.menuLabel} will not be started or restarted automatically. Click to enable.`,
+        optionOverrides: { [optionKey]: !enabled },
+    };
 }
 
 function getServiceHealth(service, context) {
@@ -2735,6 +2873,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const leftColumnRef = React.useRef(null);
     const centerColumnRef = React.useRef(null);
     const rightColumnRef = React.useRef(null);
+    const playerStatsColumnRef = React.useRef(null);
     const systemOverviewRef = React.useRef(null);
     const dashboardViews = getDashboardViewRegistry().views;
     const serviceMenuGroups = getMenuGroups();
@@ -2757,6 +2896,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         [homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles]
     );
     const nonPluginScripts = scriptBuckets.nonPluginScripts;
+    const integrationScripts = scriptBuckets.integrationScripts;
     const pluginScripts = scriptBuckets.pluginScripts;
     const dashboardCoreScripts = scriptBuckets.dashboardCoreScripts;
 
@@ -2783,6 +2923,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         apply(leftColumnRef, "left");
         apply(centerColumnRef, "center");
         apply(rightColumnRef, "right");
+        apply(playerStatsColumnRef, "playerStats");
         apply(systemOverviewRef, "systemOverview");
     });
 
@@ -2942,9 +3083,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     const centerPanelSource = selectedItem === "global.options"
         ? nonPluginScripts
-        : selectedItem === "global.plugins"
-            ? [...pluginScripts, ...dashboardCoreScripts]
-            : homeScripts;
+        : homeScripts;
 
     const serviceCenterPanels = getCenterPanelsForItem(selectedItem, centerPanelSource);
     const isPluginService = Boolean(selectedService?.pluginFile);
@@ -2982,9 +3121,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const pluginScript = selectedService?.pluginFile
         ? homeScripts.find((script) => script?.filename === selectedService.pluginFile)
         : null;
-    const standardScriptActions = pluginScript
-        ? buildScriptActions(pluginScript, { includeDisabledStates: true })
-        : [];
+    const autostartAction = buildServiceAutostartAction(selectedService, options);
+    const standardScriptActions = [
+        ...(pluginScript ? buildScriptActions(pluginScript, { includeDisabledStates: true }) : []),
+        ...(autostartAction ? [autostartAction] : []),
+    ];
     const panelActions = isPluginService
         ? serviceActions.filter((action) => action.kind !== "script")
         : serviceActions;
@@ -3135,7 +3276,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const getPanelTooltip = (panel) => {
-        if (selectedItem === "global.options" || selectedItem === "global.plugins") {
+        if (isGlobalListMenuItem(selectedItem)) {
             const status = panel.running ? "running" : "stopped";
             return `${panel.label}\nLifecycle: ${getScriptLifecycleLabel(panel)}\nStatus: ${status}`;
         }
@@ -3612,22 +3753,147 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         runServiceAction(globalKillAction);
     };
 
+    const serviceSupervisorRunning = homeScripts.some((script) => {
+        return script?.filename === SERVICE_SUPERVISOR_SCRIPT && script?.running;
+    });
+    const runningHomeFilenames = Array.isArray(runningProcessSnapshot?.homeFilenames)
+        ? runningProcessSnapshot.homeFilenames
+        : [];
+    const runningRemoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames)
+        ? runningProcessSnapshot.remoteFilenames
+        : [];
+    const hasLocalPluginTargets = serviceSupervisorRunning
+        || runningHomeFilenames.some((filename) => isDashboardPluginScript(filename));
+    const hasRemotePluginTargets = runningRemoteFilenames.some((filename) => isDashboardPluginScript(filename));
+    const pluginListDisabledActionIds = [
+        ...(!hasLocalPluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_HOME_SCRIPTS] : []),
+        ...(!hasRemotePluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_REMOTE_SCRIPTS] : []),
+        ...(serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : []),
+    ];
+    const pluginListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.PLUGIN_LIST_CONTROLS, {
+        disabledActionIds: pluginListDisabledActionIds,
+    });
+
+    const renderScriptButtons = (panels, renderOptions = {}) => {
+        const selectable = renderOptions.selectable !== false;
+        return (
+            <div style={WIDGET_STYLES.actionGrid}>
+                {panels.map((panel) => {
+                    const isSelected = selectedCenterPanel === panel.id;
+                    const pinnedExpandKey = `${selectedItem}:pinned-script-controls:${panel.id}`;
+                    const isPinnedExpanded = uiState.expandedGroups?.[pinnedExpandKey] ?? false;
+                    const isExpanded = selectable ? isSelected : isPinnedExpanded;
+                    const toggleScriptPanel = () => {
+                        if (!selectable) {
+                            setUiState((current) => ({
+                                ...current,
+                                expandedGroups: {
+                                    ...current.expandedGroups,
+                                    [pinnedExpandKey]: !(current.expandedGroups?.[pinnedExpandKey] ?? false),
+                                },
+                            }));
+                            return;
+                        }
+                        selectCenterPanel(isSelected ? "" : panel.id);
+                    };
+                    const standardInlineActions = buildScriptListActions(
+                        { id: panel.id, filename: panel.id, running: panel.running },
+                        options,
+                        { includeDisabledStates: true }
+                    );
+                    const inlineActions = selectedItem === "global.options"
+                        ? [
+                            ...standardInlineActions,
+                            {
+                                id: `ignore-script:${panel.id}`,
+                                label: "Add to ignore list",
+                                kind: "save-options",
+                                tone: "warn",
+                                disabled: false,
+                                tooltip: `Hide ${panel.id} from the Script List and exclude it from Script List kill actions.`,
+                                optionOverrides: {
+                                    ignoredScriptFiles: normalizeScriptFiles([
+                                        ...parseScriptFiles(options.ignoredScriptFiles),
+                                        panel.id,
+                                    ]),
+                                },
+                            },
+                        ]
+                        : standardInlineActions;
+
+                    return (
+                        <div
+                            data-dashboard-theme-role="selector-frame"
+                            key={panel.id}
+                            style={{
+                                border: "1px solid rgba(53, 84, 53, 0.55)",
+                                borderRadius: "7px",
+                                padding: "6px",
+                                background: isExpanded ? "rgba(18, 28, 18, 0.95)" : "rgba(6, 10, 6, 0.92)",
+                            }}
+                        >
+                            <button
+                                type="button"
+                                data-dashboard-theme-role="menu-item"
+                                title={getPanelTooltip(panel)}
+                                style={{
+                                    ...WIDGET_STYLES.actionButton,
+                                    width: "100%",
+                                    ...getScriptLifecycleStyle(panel, isExpanded),
+                                }}
+                                onMouseDown={(event) => runDashboardFrameControlMouseDown(event, toggleScriptPanel)}
+                                onClick={(event) => runDashboardFrameControlClick(event, toggleScriptPanel)}
+                            >
+                                {panel.label} [{getScriptLifecycleLabel(panel)}]{!selectable ? (isExpanded ? " -" : " +") : ""}
+                            </button>
+
+                            {isExpanded ? (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
+                                    {inlineActions.map((action) => (
+                                        <button
+                                            type="button"
+                                            key={action.id}
+                                            title={getActionTooltip(action)}
+                                            disabled={Boolean(action.disabled)}
+                                            style={{
+                                                ...WIDGET_STYLES.actionButton,
+                                                ...getActionToneStyle(action),
+                                                flex: "1 0 100px",
+                                                textAlign: "center",
+                                                ...(pressedActionButtonId === action.id && !action.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
+                                                ...(action.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
+                                            }}
+                                            onClick={() => {
+                                                if (action.disabled) return;
+                                                runServiceAction(action);
+                                            }}
+                                            onMouseDown={() => {
+                                                if (action.disabled) return;
+                                                setPressedActionButtonId(action.id);
+                                            }}
+                                            onMouseUp={() => setPressedActionButtonId("")}
+                                            onMouseLeave={() => setPressedActionButtonId("")}
+                                            onBlur={() => setPressedActionButtonId("")}
+                                        >
+                                            {renderActionLabel(action)}
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : null}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     const renderSubWidgets = () => {
-        const serviceSupervisorRunning = homeScripts.some((script) => {
-            return script?.filename === SERVICE_SUPERVISOR_SCRIPT && script?.running;
-        });
         const userInitAvailable = homeScripts.some((script) => {
             return script?.filename === USER_INIT_SCRIPT;
         });
         const userInitRunning = homeScripts.some((script) => {
             return script?.filename === USER_INIT_SCRIPT && script?.running;
         });
-        const runningHomeFilenames = Array.isArray(runningProcessSnapshot?.homeFilenames)
-            ? runningProcessSnapshot.homeFilenames
-            : [];
-        const runningRemoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames)
-            ? runningProcessSnapshot.remoteFilenames
-            : [];
         const ignoredFolders = parseScriptFolders(persistedOptions.ignoredScriptFolders);
         const ignoredFiles = parseScriptFiles(persistedOptions.ignoredScriptFiles);
         const isScriptListTarget = (filename) => {
@@ -3636,141 +3902,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         };
         const hasLocalScriptTargets = runningHomeFilenames.some(isScriptListTarget);
         const hasRemoteScriptTargets = runningRemoteFilenames.some(isScriptListTarget);
-        const hasLocalPluginTargets = serviceSupervisorRunning
-            || runningHomeFilenames.some((filename) => isDashboardPluginScript(filename));
-        const hasRemotePluginTargets = runningRemoteFilenames.some((filename) => isDashboardPluginScript(filename));
         const scriptListDisabledActionIds = [
             ...(!hasLocalScriptTargets ? [DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_HOME_SCRIPTS] : []),
             ...(!hasRemoteScriptTargets ? [DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_REMOTE_SCRIPTS] : []),
             ...(!userInitAvailable || userInitRunning ? [DASHBOARD_ACTION_IDS.START_SERVICES] : []),
-        ];
-        const pluginListDisabledActionIds = [
-            ...(!hasLocalPluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_HOME_SCRIPTS] : []),
-            ...(!hasRemotePluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_REMOTE_SCRIPTS] : []),
-            ...(serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : []),
         ];
         const scriptListTopActions = selectedItem === "global.options"
             ? buildDashboardActions(DASHBOARD_ACTION_GROUPS.SCRIPT_LIST_CONTROLS, {
                 disabledActionIds: scriptListDisabledActionIds,
             })
             : [];
-        const pluginListTopActions = selectedItem === "global.plugins"
-            ? buildDashboardActions(DASHBOARD_ACTION_GROUPS.PLUGIN_LIST_CONTROLS, {
-                disabledActionIds: pluginListDisabledActionIds,
-            })
-            : [];
-
-        const renderScriptButtons = (panels, renderOptions = {}) => {
-            const selectable = renderOptions.selectable !== false;
-            return (
-                <div style={WIDGET_STYLES.actionGrid}>
-                    {panels.map((panel) => {
-                        const isSelected = selectedCenterPanel === panel.id;
-                        const pinnedExpandKey = `${selectedItem}:pinned-script-controls:${panel.id}`;
-                        const isPinnedExpanded = uiState.expandedGroups?.[pinnedExpandKey] ?? false;
-                        const isExpanded = selectable ? isSelected : isPinnedExpanded;
-                        const toggleScriptPanel = () => {
-                            if (!selectable) {
-                                setUiState((current) => ({
-                                    ...current,
-                                    expandedGroups: {
-                                        ...current.expandedGroups,
-                                        [pinnedExpandKey]: !(current.expandedGroups?.[pinnedExpandKey] ?? false),
-                                    },
-                                }));
-                                return;
-                            }
-                            selectCenterPanel(isSelected ? "" : panel.id);
-                        };
-                        const standardInlineActions = buildScriptActions(
-                            { id: panel.id, filename: panel.id, running: panel.running },
-                            { includeDisabledStates: true }
-                        );
-                        const inlineActions = selectedItem === "global.options"
-                            ? [
-                                ...standardInlineActions,
-                                {
-                                    id: `ignore-script:${panel.id}`,
-                                    label: "Add to ignore list",
-                                    kind: "save-options",
-                                    tone: "warn",
-                                    disabled: false,
-                                    tooltip: `Hide ${panel.id} from the Script List and exclude it from Script List kill actions.`,
-                                    optionOverrides: {
-                                        ignoredScriptFiles: normalizeScriptFiles([
-                                            ...parseScriptFiles(options.ignoredScriptFiles),
-                                            panel.id,
-                                        ]),
-                                    },
-                                },
-                            ]
-                            : standardInlineActions;
-
-                        return (
-                            <div
-                                data-dashboard-theme-role="selector-frame"
-                                key={panel.id}
-                                style={{
-                                    border: "1px solid rgba(53, 84, 53, 0.55)",
-                                    borderRadius: "7px",
-                                    padding: "6px",
-                                    background: isExpanded ? "rgba(18, 28, 18, 0.95)" : "rgba(6, 10, 6, 0.92)",
-                                }}
-                            >
-                                <button
-                                    type="button"
-                                    data-dashboard-theme-role="menu-item"
-                                    title={getPanelTooltip(panel)}
-                                    style={{
-                                        ...WIDGET_STYLES.actionButton,
-                                        width: "100%",
-                                        ...getScriptLifecycleStyle(panel, isExpanded),
-                                    }}
-                                    onMouseDown={(event) => runDashboardFrameControlMouseDown(event, toggleScriptPanel)}
-                                    onClick={(event) => runDashboardFrameControlClick(event, toggleScriptPanel)}
-                                >
-                                    {panel.label} [{getScriptLifecycleLabel(panel)}]{!selectable ? (isExpanded ? " -" : " +") : ""}
-                                </button>
-
-                                {isExpanded ? (
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
-                                        {inlineActions.map((action) => (
-                                            <button
-                                                type="button"
-                                                key={action.id}
-                                                title={getActionTooltip(action)}
-                                                disabled={Boolean(action.disabled)}
-                                                style={{
-                                                    ...WIDGET_STYLES.actionButton,
-                                                    ...getActionToneStyle(action),
-                                                    flex: "1 0 100px",
-                                                    textAlign: "center",
-                                                    ...(pressedActionButtonId === action.id && !action.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
-                                                    ...(action.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
-                                                }}
-                                                onClick={() => {
-                                                    if (action.disabled) return;
-                                                    runServiceAction(action);
-                                                }}
-                                                onMouseDown={() => {
-                                                    if (action.disabled) return;
-                                                    setPressedActionButtonId(action.id);
-                                                }}
-                                                onMouseUp={() => setPressedActionButtonId("")}
-                                                onMouseLeave={() => setPressedActionButtonId("")}
-                                                onBlur={() => setPressedActionButtonId("")}
-                                            >
-                                                {renderActionLabel(action)}
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : null}
-                            </div>
-                        );
-                    })}
-                </div>
-            );
-        };
 
         const getScriptFolder = (panel) => {
             const normalized = String(panel?.id ?? "").replace(/\\/g, "/");
@@ -3843,40 +3984,51 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             );
         }
 
-        if (selectedItem === "global.plugins") {
-            const pluginPanelIds = new Set(pluginScripts.map((script) => script.id));
-            const pluginPanels = centerPanels.filter((panel) => pluginPanelIds.has(panel.id));
-            const { runningPanels, stoppedPanels } = splitScriptPanels(pluginPanels);
-            const dashboardCorePanels = dashboardCoreScripts.map((script) => ({
-                id: script.id,
-                label: script.label,
-                running: script.running,
-                daemon: script.daemon,
-            }));
-            const { runningPanels: runningCorePanels, stoppedPanels: stoppedCorePanels } = splitScriptPanels(dashboardCorePanels);
+        if (selectedItem === "global.coreModules") {
+            const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
                 <>
-                    <Card title="Plugin Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
+                    <Card title="Core Module Controls" accent="#6ee7a8" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
                         {renderServiceActions(pluginListTopActions)}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Plugins" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
+                    <Card title="Core Modules" accent="#6ee7a8" subtitle="Dashboard core scripts" widgetStyles={WIDGET_STYLES}>
                         <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
+                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running dashboard core scripts.</div>}
                         <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
                         <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
-                    </Card>
-                    <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Dashboard Core" accent="#6ee7a8" subtitle="Dashboard core scripts" widgetStyles={WIDGET_STYLES}>
-                        <div style={WIDGET_STYLES.heading}>Running ({runningCorePanels.length})</div>
-                        {runningCorePanels.length > 0 ? renderScriptButtons(runningCorePanels) : <div style={WIDGET_STYLES.muted}>No running dashboard core scripts.</div>}
-                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedCorePanels.length})</div>
-                        {stoppedCorePanels.length > 0 ? renderScriptButtons(stoppedCorePanels) : <div style={WIDGET_STYLES.muted}>No stopped dashboard core scripts.</div>}
+                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped dashboard core scripts.</div>}
                     </Card>
                 </>
+            );
+        }
+
+        if (selectedItem === "global.integrations") {
+            const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
+
+            return (
+                <Card title="Integrations" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
+                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running integrations.</div>}
+                    <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped integrations.</div>}
+                </Card>
+            );
+        }
+
+        if (selectedItem === "global.plugins") {
+            const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
+
+            return (
+                <Card title="Plugins" accent="#6cb4ff" subtitle="Plugin Controls" widgetStyles={WIDGET_STYLES}>
+                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
+                    <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
+                </Card>
             );
         }
 
@@ -3908,12 +4060,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                     style={{
                                         ...WIDGET_STYLES.actionButton,
                                         width: "100%",
-                                        ...((selectedItem === "global.options" || selectedItem === "global.plugins") ? {
+                                        ...(isGlobalListMenuItem(selectedItem) ? {
                                             borderColor: panel.running ? "rgba(110, 231, 168, 0.45)" : "rgba(255, 122, 122, 0.45)",
                                             color: panel.running ? "#baf6d2" : "#ffb0b0",
                                             background: panel.running ? "rgba(10, 26, 10, 0.95)" : "rgba(26, 10, 10, 0.95)",
                                         } : {}),
-                                        ...((selectedItem === "global.options" || selectedItem === "global.plugins") ? {} : getHealthStyle(panelLevel)),
+                                        ...(isGlobalListMenuItem(selectedItem) ? {} : getHealthStyle(panelLevel)),
                                         ...(isSelected ? getActiveHealthStyle(panelLevel) : {})
                                     }}
                                     onClick={() => {
@@ -3941,7 +4093,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                     }}
                                 >
                                     {panel.label}{hasInlineScriptActions && isSelected ? (isInlineActionsExpanded ? " -" : " +") : ""}
-                                    {(selectedItem === "global.options" || selectedItem === "global.plugins") ? null : renderHealthBadge(panelLevel)}
+                                    {isGlobalListMenuItem(selectedItem) ? null : renderHealthBadge(panelLevel)}
                                 </button>
 
                                 {shouldShowInlineScriptActions ? (
@@ -4140,23 +4292,54 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         });
     };
 
+    const GLOBAL_LIST_META = {
+        "global.coreModules": {
+            sourceScripts: dashboardCoreScripts,
+            listTitle: "Core Modules",
+            listSubtitle: "Dashboard core scripts",
+            accent: "#6ee7a8",
+            scriptTitle: "Core Module",
+            scriptSubtitle: "Dashboard core status and controls",
+            emptyWithScripts: "Select a core module to view its status.",
+            emptyNoScripts: "No dashboard core scripts were found.",
+        },
+        "global.integrations": {
+            sourceScripts: integrationScripts,
+            listTitle: "Integrations",
+            listSubtitle: "Independently-runnable scripts with a dashboard descriptor",
+            accent: "#6cb4ff",
+            scriptTitle: "Integration",
+            scriptSubtitle: "Integration status and controls",
+            emptyWithScripts: "Select an integration to view its status.",
+            emptyNoScripts: "No integrations were found.",
+        },
+        "global.plugins": {
+            sourceScripts: pluginScripts,
+            listTitle: "Plugins",
+            listSubtitle: "Packaged dashboard plugin scripts",
+            accent: "#6cb4ff",
+            scriptTitle: "Plugin",
+            scriptSubtitle: "Plugin status and controls",
+            emptyWithScripts: "Select a plugin to view its status.",
+            emptyNoScripts: "No plugins were found.",
+        },
+    };
+
     const renderGlobalOptions = () => {
-        const isPluginList = selectedItem === "global.plugins";
-        const sourceScripts = isPluginList ? [...pluginScripts, ...dashboardCoreScripts] : nonPluginScripts;
+        const listMetaConfig = GLOBAL_LIST_META[selectedItem];
+        const sourceScripts = listMetaConfig ? listMetaConfig.sourceScripts : nonPluginScripts;
         const selectedScript = resolveSelectedScriptPanel(selectedCenterPanel, sourceScripts);
-        const selectedDashboardCore = isPluginList && isDashboardCoreScript(selectedScript?.filename);
         const selectedSupervisor = selectedScript?.filename === SERVICE_SUPERVISOR_SCRIPT;
-        const selectedScriptContext = { ...serviceContext, selectedScript };
         const selectedScriptLines = getStateLines({ selectedScript });
         const listMeta = getPanelMeta("default", {
-            title: isPluginList ? "Plugin List" : "Script List",
-            accent: isPluginList ? "#6cb4ff" : "#ff7bd0",
-            subtitle: isPluginList ? "Dashboard plugin scripts" : "Home directory scripts"
+            title: listMetaConfig?.listTitle ?? "Scripts",
+            accent: listMetaConfig?.accent ?? "#ff7bd0",
+            subtitle: listMetaConfig?.listSubtitle ?? "Home directory scripts"
         });
         const scriptMeta = getPanelMeta("script", {
-            title: isPluginList ? "Plugin" : "Script",
-            accent: isPluginList ? "#6cb4ff" : "#ff7bd0",
-            subtitle: isPluginList ? "Plugin status and controls" : "Script status and controls"
+            title: listMetaConfig?.scriptTitle ?? "Script",
+            accent: listMetaConfig?.accent ?? "#ff7bd0",
+            subtitle: listMetaConfig?.scriptSubtitle ?? "Script status and controls"
         });
         if (!selectedScript) {
             const panelId = "default";
@@ -4168,10 +4351,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 sections: [],
                 inputs: [],
                 actions: [],
-                emptyMessage: isPluginList
-                    ? (sourceScripts.length > 0
-                        ? "Select a plugin or Dashboard Core script to view its status."
-                        : "No plugin integrations or Dashboard Core scripts were found.")
+                emptyMessage: listMetaConfig
+                    ? (sourceScripts.length > 0 ? listMetaConfig.emptyWithScripts : listMetaConfig.emptyNoScripts)
                     : getScriptListDetailEmptyMessage(sourceScripts),
                 healthLevel: panelHealthLevel,
                 healthSummary: panelHealthSummary,
@@ -4184,10 +4365,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         return renderContractPanel({
             meta: {
                 title: selectedScript.label || scriptMeta.title,
-                accent: selectedDashboardCore ? "#6ee7a8" : scriptMeta.accent,
-                subtitle: selectedSupervisor
-                    ? "Managed service status and controls"
-                    : selectedDashboardCore ? "Dashboard core status and controls" : scriptMeta.subtitle,
+                accent: scriptMeta.accent,
+                subtitle: selectedSupervisor ? "Managed service status and controls" : scriptMeta.subtitle,
             },
             stateLines: selectedScriptLines,
             sections: [],
@@ -4200,7 +4379,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const renderDataPanel = () => {
-        if (selectedItem === "global.options" || selectedItem === "global.plugins") {
+        if (isGlobalListMenuItem(selectedItem)) {
             return renderGlobalOptions();
         }
 
@@ -4505,6 +4684,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                             const itemSelected = item.dashboardViewId
                                                 ? activeView?.id === item.dashboardViewId
                                                 : !activeView && selectedItem === item.id;
+                                            const itemService = item.dashboardViewId
+                                                ? null
+                                                : dashboardServiceRegistry.services.find((candidate) => candidate.id === item.id);
+                                            const itemHasRuntime = Boolean(itemService?.pluginFile);
+                                            const itemRunning = itemHasRuntime
+                                                && homeScripts.some((script) => script?.filename === itemService.pluginFile && script?.running);
+                                            const itemStatusDotColor = !itemHasRuntime
+                                                ? null
+                                                : itemRunning
+                                                    ? "#6ee7a8"
+                                                    : itemService?.pluginMetadata?.daemon === true
+                                                        ? "#ff8080"
+                                                        : "#ffd88a";
                                             return (
                                             <button
                                                 type="button"
@@ -4513,14 +4705,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                 title={getServiceItemTooltip(item.id)}
                                                 style={{
                                                     ...WIDGET_STYLES.menuItemButton,
-                                                    ...getHealthStyle(itemLevel),
-                                                    ...(itemSelected ? getActiveHealthStyle(itemLevel) : {})
+                                                    ...(itemSelected ? getActiveHealthStyle("neutral") : {})
                                                 }}
                                                 onMouseDown={(event) => selectMenuItem(event, item.id)}
                                                 onClick={(event) => selectMenuItemFromKeyboard(event, item.id)}
                                             >
                                                 {item.label}
                                                 {renderHealthBadge(itemLevel)}
+                                                {itemStatusDotColor ? (
+                                                    <span style={{ marginLeft: "6px", color: itemStatusDotColor }}>●</span>
+                                                ) : null}
                                             </button>
                                             );
                                         })}
@@ -4543,23 +4737,42 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     {renderSubWidgets()}
                 </div>
 
-                <div
-                    ref={rightColumnRef}
-                    data-dashboard-theme-role="workspace-column"
-                    style={{
-                        ...WIDGET_STYLES.column,
-                        ...(visibleWorkspaceWidgets.length > 0 ? {
+                {visibleWorkspaceWidgets.length > 0 ? (
+                    <div
+                        data-dashboard-theme-role="workspace-column"
+                        style={{
+                            ...WIDGET_STYLES.column,
                             display: "grid",
                             gridTemplateColumns: `minmax(0, 1fr) ${PLAYER_STATS_WIDGET_WIDTH}px`,
                             gap: "10px",
-                            alignItems: "start",
-                        } : {}),
-                    }}
-                    onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
-                >
-                    <div style={{ minWidth: 0 }}>{renderDataPanel()}</div>
-                    {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
-                </div>
+                            overflow: "hidden",
+                        }}
+                    >
+                        <div
+                            ref={rightColumnRef}
+                            style={{ minWidth: 0, height: "100%", overflowY: "auto" }}
+                            onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
+                        >
+                            {renderDataPanel()}
+                        </div>
+                        <div
+                            ref={playerStatsColumnRef}
+                            style={{ height: "100%", overflowY: "auto" }}
+                            onScroll={(e) => rememberScroll("playerStats", e.currentTarget.scrollTop)}
+                        >
+                            {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
+                        </div>
+                    </div>
+                ) : (
+                    <div
+                        ref={rightColumnRef}
+                        data-dashboard-theme-role="workspace-column"
+                        style={WIDGET_STYLES.column}
+                        onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
+                    >
+                        <div style={{ minWidth: 0 }}>{renderDataPanel()}</div>
+                    </div>
+                )}
                 </div>
             </>
             )}

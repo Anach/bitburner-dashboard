@@ -1,7 +1,7 @@
 export const DASHBOARD_VIEW_METADATA = {
     "id": "files",
     "renderer": "file-manager",
-    "menuGroup": "globalOptions",
+    "menuGroup": "software",
     "menuLabel": "File Manager",
     "title": "Home File Manager",
     "subtitle": "Two-pane filesystem control for home scripts and data.",

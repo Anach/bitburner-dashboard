@@ -158,6 +158,7 @@ affiliations
 hacking
 finances
 hardware
+software
 automation
 globalOptions
 ```
