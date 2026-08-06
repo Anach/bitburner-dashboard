@@ -125,3 +125,34 @@ export function buildDashboardMenuGroups(services = [], menuGroups = [], options
             .map((service) => ({ id: service.id, label: service.menuLabel, alwaysVisible: Boolean(service.alwaysVisible) })),
     }));
 }
+
+// Some plugins (Mailbox, Network Map, File Manager, Script Log) hide their own service entry
+// (menuVisible: false) and instead surface a full-window VIEW as the actual clickable menu
+// item - hiding the service itself would have no visible effect for those, so callers that
+// need to target "whatever actually shows in the nav" look up the view backed by a service id.
+export function findAssociatedViewForService(views = [], serviceId) {
+    if (typeof serviceId !== "string" || !serviceId) return null;
+    return views.find((view) => view?.data?.serviceId === serviceId) ?? null;
+}
+
+// Views with no backing service (e.g. File Manager, Script Log) never get discovered as a
+// "plugin script" - there's no running process to point at. They still need a selectable row
+// in the Plugins list so their left-nav menu entry can be hidden/shown like everything else.
+export function getViewOnlyPluginEntries(views = []) {
+    return views
+        .filter((view) => typeof view?.data?.serviceId !== "string" || !view.data.serviceId)
+        .map((view) => ({
+            id: `view:${view.id}`,
+            label: view.menuLabel,
+            running: undefined,
+            daemon: false,
+            viewOnly: true,
+            viewId: view.id,
+        }));
+}
+
+export function isViewQualified(view, pluginRequirements, hideMode) {
+    const serviceId = view?.data?.serviceId;
+    if (typeof serviceId !== "string" || !serviceId) return true;
+    return !isHiddenByQualificationMode(pluginRequirements?.[serviceId], hideMode);
+}

@@ -1,12 +1,10 @@
-import { buildDashboardActions, DASHBOARD_ACTION_GROUPS } from "dashboard/libs/dashboard-actions.js";
+import { buildDashboardActions, buildScopedKillListActions, DASHBOARD_ACTION_GROUPS } from "dashboard/libs/dashboard-actions.js";
 import {
     DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
     DEFAULT_IGNORED_SCRIPT_FOLDERS,
     DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
     dashboardOptionsEqual,
     getDefaultDashboardOptions,
-    getServiceAutostartOptionKey,
-    getServiceMenuVisibilityOptionKey,
     HIDE_UNQUALIFIED_PLUGINS_MODES,
     isServiceVisibleInMenu,
     normalizeDashboardOptions,
@@ -16,9 +14,12 @@ import {
     applyDashboardViewWidgetContributions as applyDashboardViewWidgetContributionsDefinition,
     buildDashboardMenuGroups,
     getDefaultSelectedServiceId as getDefaultSelectedServiceIdDefinition,
+    getViewOnlyPluginEntries,
+    isViewQualified,
     validateDashboardServices as validateDashboardServicesDefinition,
     validateDashboardViews as validateDashboardViewsDefinition,
 } from "dashboard/libs/dashboard-registry.js";
+import { buildScriptListActions, buildServiceAutostartAction } from "dashboard/libs/script-list-actions.js";
 import { getDashboardPluginAdapterFactories } from "dashboard/libs/plugin-adapters.js";
 import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
@@ -122,7 +123,6 @@ import {
 import {
     buildPluginRequirementSection,
     buildPluginRequirementsSnapshot,
-    isHiddenByQualificationMode,
 } from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import {
@@ -1568,61 +1568,10 @@ function isDashboardIntegrationScript(filename) {
     });
 }
 
-// Views with no backing service (e.g. File Manager, Script Log) never get discovered as a
-// "plugin script" - there's no running process to point at. They still need a selectable row
-// in the Plugins list so their left-nav menu entry can be hidden/shown like everything else.
-function getViewOnlyPluginEntries() {
-    return getDashboardViewRegistry().views
-        .filter((view) => typeof view?.data?.serviceId !== "string" || !view.data.serviceId)
-        .map((view) => ({
-            id: `view:${view.id}`,
-            label: view.menuLabel,
-            running: undefined,
-            daemon: false,
-            viewOnly: true,
-            viewId: view.id,
-        }));
-}
-
-function buildViewOnlyPluginVisibilityAction(entry, options) {
-    if (typeof entry?.viewId !== "string" || !entry.viewId) return null;
-    const optionKey = getServiceMenuVisibilityOptionKey(entry.viewId);
-    const visible = isServiceVisibleInMenu(entry.viewId, options);
-    return {
-        id: `${entry.id}-menu-visibility`,
-        label: visible ? "Hide" : "Show",
-        kind: "save-options",
-        tone: visible ? "success" : "warn",
-        tooltip: visible
-            ? `${entry.label} is shown in the left-nav menu. Click to hide it.`
-            : `${entry.label} is hidden from the left-nav menu. Click to show it again.`,
-        optionOverrides: { [optionKey]: !visible },
-    };
-}
-
-function buildScriptListActions(selectedScript, dashboardOptions, scriptActionOptions) {
-    if (selectedScript?.viewOnly) {
-        const visibilityAction = buildViewOnlyPluginVisibilityAction(selectedScript, dashboardOptions);
-        return visibilityAction ? [visibilityAction] : [];
-    }
-    const baseActions = buildScriptActions(selectedScript, scriptActionOptions);
-    if (!selectedScript?.filename) return baseActions;
-    const matchedService = getDashboardServiceRegistry().services.find((service) => service.pluginFile === selectedScript.filename);
-    const autostartAction = matchedService
-        ? buildServiceAutostartAction(matchedService, dashboardOptions)
-        : buildScriptAutostartAction(selectedScript, dashboardOptions);
-    // Menu visibility only makes sense for a real registered service - a bare daemon script
-    // was never shown in the left-nav menu to begin with.
-    const menuVisibilityAction = matchedService ? buildServiceMenuVisibilityAction(matchedService, dashboardOptions) : null;
-    const extraActions = [autostartAction, menuVisibilityAction].filter(Boolean);
-    if (extraActions.length === 0) return baseActions;
-
-    // Slot these right after Restart, ahead of the Edit actions, rather than tacking them
-    // onto the very end of the row.
-    const restartIndex = baseActions.findIndex((action) => action.actionId === SCRIPT_ACTION_IDS.RESTART);
-    const insertAt = restartIndex >= 0 ? restartIndex + 1 : baseActions.length;
-    return [...baseActions.slice(0, insertAt), ...extraActions, ...baseActions.slice(insertAt)];
-}
+// getViewOnlyPluginEntries, buildServiceAutostartAction, buildScriptAutostartAction,
+// buildServiceMenuVisibilityAction, and buildScriptListActions live in
+// dashboard/libs/dashboard-registry.js and dashboard/libs/script-list-actions.js - they're
+// pure functions over registry data passed in by the entry orchestrator below.
 
 function buildSupervisorServiceStateLines(services, homeScripts, pluginRequirements, supervisorRunning, autostartPaused) {
     const managedServices = (Array.isArray(services) ? services : []).filter((service) => {
@@ -1668,7 +1617,8 @@ function getNonPluginScripts(homeScripts, ignoredFolders, ignoredFiles = []) {
 function buildScriptBuckets(
     homeScripts = [],
     rawIgnoredFolders = DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
-    rawIgnoredFiles = DEFAULT_IGNORED_SCRIPT_FILES_OPTION
+    rawIgnoredFiles = DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
+    views = []
 ) {
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
     const ignoredFolders = parseScriptFolders(rawIgnoredFolders);
@@ -1676,7 +1626,7 @@ function buildScriptBuckets(
     const integrationScripts = scripts.filter((script) => isDashboardIntegrationScript(script?.filename));
     const pluginScripts = [
         ...scripts.filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename)),
-        ...getViewOnlyPluginEntries(),
+        ...getViewOnlyPluginEntries(views),
     ];
     const dashboardCoreScripts = scripts.filter((script) => isDashboardCoreScript(script?.filename));
     const nonPluginScripts = getNonPluginScripts(scripts, ignoredFolders, ignoredFiles);
@@ -2034,8 +1984,8 @@ const DASHBOARD_SERVICES = [
                 ),
             ];
         },
-        getActions: ({ selectedScript, options }) => {
-            return buildScriptListActions(selectedScript, options);
+        getActions: ({ selectedScript, options, services, views }) => {
+            return buildScriptListActions(selectedScript, options, undefined, services, views);
         },
     },
     {
@@ -2073,8 +2023,8 @@ const DASHBOARD_SERVICES = [
                 { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
             ];
         },
-        getActions: ({ selectedScript, options }) => {
-            return buildScriptListActions(selectedScript, options);
+        getActions: ({ selectedScript, options, services, views }) => {
+            return buildScriptListActions(selectedScript, options, undefined, services, views);
         },
     },
     {
@@ -2085,7 +2035,7 @@ const DASHBOARD_SERVICES = [
         rendererKey: "global.plugins",
         defaultPanelId: "",
         subviews: [],
-        getPanels: (homeScripts = []) => [
+        getPanels: (homeScripts = [], views = []) => [
             ...homeScripts
                 .filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename))
                 .map((script) => ({
@@ -2094,7 +2044,7 @@ const DASHBOARD_SERVICES = [
                     running: script.running,
                     daemon: script.daemon,
                 })),
-            ...getViewOnlyPluginEntries(),
+            ...getViewOnlyPluginEntries(views),
         ],
         panelMeta: {
             default: { title: "Plugins", accent: "#6cb4ff", subtitle: "Packaged dashboard plugin scripts" },
@@ -2121,8 +2071,8 @@ const DASHBOARD_SERVICES = [
                 { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
             ];
         },
-        getActions: ({ selectedScript, options }) => {
-            return buildScriptListActions(selectedScript, options);
+        getActions: ({ selectedScript, options, services, views }) => {
+            return buildScriptListActions(selectedScript, options, undefined, services, views);
         },
     },
     {
@@ -2160,8 +2110,8 @@ const DASHBOARD_SERVICES = [
                 { label: "Threads", value: `${selectedScript.runningThreads ?? 0}`, tone: "neutral" },
             ];
         },
-        getActions: ({ selectedScript, options }) => {
-            return buildScriptListActions(selectedScript, options);
+        getActions: ({ selectedScript, options, services, views }) => {
+            return buildScriptListActions(selectedScript, options, undefined, services, views);
         },
     },
 ];
@@ -2365,12 +2315,6 @@ function getMenuGroups(options = {}, pluginRequirements = {}) {
     return buildDashboardMenuGroups(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS, options, pluginRequirements);
 }
 
-function isViewQualified(view, pluginRequirements, hideMode) {
-    const serviceId = view?.data?.serviceId;
-    if (typeof serviceId !== "string" || !serviceId) return true;
-    return !isHiddenByQualificationMode(pluginRequirements?.[serviceId], hideMode);
-}
-
 function getCenterPanelsForItem(selectedItem, homeScripts = []) {
     const service = getServiceById(selectedItem);
     if (!service) {
@@ -2378,7 +2322,7 @@ function getCenterPanelsForItem(selectedItem, homeScripts = []) {
     }
 
     if (typeof service.getPanels === "function") {
-        const dynamicPanels = service.getPanels(homeScripts);
+        const dynamicPanels = service.getPanels(homeScripts, getDashboardViewRegistry().views);
         if (Array.isArray(dynamicPanels) && dynamicPanels.length > 0) {
             return dynamicPanels;
         }
@@ -2444,86 +2388,6 @@ function getServiceInputs(service, context) {
     }
 
     return inputs.filter((input) => input && typeof input.id === "string" && typeof input.label === "string" && typeof input.optionKey === "string");
-}
-
-function buildServiceAutostartAction(service, options) {
-    if (typeof service?.id !== "string" || !service.id) return null;
-    if (!service?.pluginFile) return null;
-    if (service?.pluginMetadata?.daemon === false) return null;
-
-    // Autostart defaults off until the user explicitly opts in via this toggle - nothing
-    // gets to assume it's safe to auto-launch just by having a daemon-eligible descriptor.
-    const optionKey = getServiceAutostartOptionKey(service.id);
-    const enabled = options?.[optionKey] === true;
-    return {
-        id: `${service.id}-autostart`,
-        label: "Autostart",
-        kind: "save-options",
-        tone: enabled ? "success" : "neutral",
-        tooltip: enabled
-            ? `${service.menuLabel} is auto-started and auto-restarted by the Integration Service Supervisor. Click to disable.`
-            : `${service.menuLabel} will not be started or restarted automatically (opt-in). Click to enable.`,
-        optionOverrides: { [optionKey]: !enabled },
-    };
-}
-
-// A user-configurable runtime preference for whether this service shows up as a clickable
-// entry in the left-nav menu, independent of its running/stopped state and distinct from the
-// descriptor's own static menuVisible/alwaysVisible flags (which the author controls in code).
-// Some plugins (Mailbox, Network Map, File Manager, Script Log) hide their own service entry
-// (menuVisible: false) and instead surface a full-window VIEW as the actual clickable menu
-// item - hiding the service itself would have no visible effect for those, so find whichever
-// view declares itself backed by this service and target that instead.
-function findAssociatedViewForService(service) {
-    if (typeof service?.id !== "string" || !service.id) return null;
-    return getDashboardViewRegistry().views.find((view) => view?.data?.serviceId === service.id) ?? null;
-}
-
-function buildServiceMenuVisibilityAction(service, options) {
-    if (typeof service?.id !== "string" || !service.id) return null;
-    if (!service?.pluginFile) return null;
-
-    // Some services surface as a left-nav menu entry (directly or via an associated view);
-    // others (e.g. Player Stats) surface only as a workspace/system-overview widget column.
-    // Either way the same option key is reused as a general visibility flag for the service.
-    const associatedView = findAssociatedViewForService(service);
-    const menuTargetId = associatedView?.id ?? service.id;
-    const menuTargetLabel = associatedView?.menuLabel ?? service.menuLabel;
-
-    const optionKey = getServiceMenuVisibilityOptionKey(menuTargetId);
-    const visible = isServiceVisibleInMenu(menuTargetId, options);
-    return {
-        id: `${service.id}-menu-visibility`,
-        label: visible ? "Hide" : "Show",
-        kind: "save-options",
-        tone: visible ? "success" : "warn",
-        tooltip: visible
-            ? `${menuTargetLabel} is visible. Click to hide it - it keeps running in the background either way.`
-            : `${menuTargetLabel} is hidden. Click to show it again.`,
-        optionOverrides: { [optionKey]: !visible },
-    };
-}
-
-// For a script with no dashboard integration at all - just a `DASHBOARD_SCRIPT_METADATA:
-// { daemon: true }` header - the Integration Service Supervisor will still autostart/restart
-// it (see service-supervisor.js's discoverBareDaemonScripts), keyed by its filename rather
-// than a serviceId since none exists. This mirrors buildServiceAutostartAction for that case.
-function buildScriptAutostartAction(script, options) {
-    if (typeof script?.filename !== "string" || !script.filename) return null;
-    if (script?.daemon !== true) return null;
-
-    const optionKey = getServiceAutostartOptionKey(script.filename);
-    const enabled = options?.[optionKey] === true;
-    return {
-        id: `${script.filename}-autostart`,
-        label: "Autostart",
-        kind: "save-options",
-        tone: enabled ? "success" : "neutral",
-        tooltip: enabled
-            ? `${script.label ?? script.filename} is auto-started and auto-restarted by the Integration Service Supervisor. Click to disable.`
-            : `${script.label ?? script.filename} will not be started or restarted automatically (opt-in). Click to enable.`,
-        optionOverrides: { [optionKey]: !enabled },
-    };
 }
 
 function getServiceHealth(service, context) {
@@ -3031,8 +2895,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         ],
     }));
     const scriptBuckets = React.useMemo(
-        () => buildScriptBuckets(homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles),
-        [homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles]
+        () => buildScriptBuckets(homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles, dashboardViews),
+        [homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles, dashboardViews]
     );
     const nonPluginScripts = scriptBuckets.nonPluginScripts;
     const integrationScripts = scriptBuckets.integrationScripts;
@@ -3249,6 +3113,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         homeRamStatus,
         options,
         pluginDashboardOptionInputs,
+        services: dashboardServiceRegistry.services,
+        views: dashboardViews,
     };
 
     const getPanelMeta = (panelId, fallbackMeta) => getServicePanelMeta(selectedService, panelId, fallbackMeta);
@@ -3911,36 +3777,33 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const isPluginOnlyScript = (filename) => isDashboardPluginScript(filename) && !isDashboardIntegrationScript(filename);
 
     const hasLocalCoreModuleTargets = serviceSupervisorRunning;
-    const coreModulesListDisabledActionIds = [
-        ...(!hasLocalCoreModuleTargets ? [DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS] : []),
-        DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS, // core modules never run remotely
-        ...(serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : []),
-    ];
-    const coreModulesListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.CORE_MODULES_LIST_CONTROLS, {
-        disabledActionIds: coreModulesListDisabledActionIds,
-        payload: { filenames: dashboardCoreScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
+    const coreModulesListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.CORE_MODULES_LIST_CONTROLS, {
+        homeActionId: DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS,
+        remoteActionId: DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS,
+        hasLocalTargets: hasLocalCoreModuleTargets,
+        hasRemoteTargets: false, // core modules never run remotely
+        extraDisabledActionIds: serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : [],
+        filenames: dashboardCoreScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
     });
 
     const hasLocalIntegrationTargets = serviceSupervisorRunning || runningHomeFilenames.some(isIntegrationOnlyScript);
     const hasRemoteIntegrationTargets = runningRemoteFilenames.some(isIntegrationOnlyScript);
-    const integrationsListDisabledActionIds = [
-        ...(!hasLocalIntegrationTargets ? [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS] : []),
-        ...(!hasRemoteIntegrationTargets ? [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS] : []),
-    ];
-    const integrationsListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.INTEGRATIONS_LIST_CONTROLS, {
-        disabledActionIds: integrationsListDisabledActionIds,
-        payload: { filenames: integrationScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
+    const integrationsListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.INTEGRATIONS_LIST_CONTROLS, {
+        homeActionId: DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS,
+        remoteActionId: DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS,
+        hasLocalTargets: hasLocalIntegrationTargets,
+        hasRemoteTargets: hasRemoteIntegrationTargets,
+        filenames: integrationScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
     });
 
     const hasLocalPluginTargets = serviceSupervisorRunning || runningHomeFilenames.some(isPluginOnlyScript);
     const hasRemotePluginTargets = runningRemoteFilenames.some(isPluginOnlyScript);
-    const pluginsListDisabledActionIds = [
-        ...(!hasLocalPluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS] : []),
-        ...(!hasRemotePluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS] : []),
-    ];
-    const pluginsListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.PLUGINS_LIST_CONTROLS, {
-        disabledActionIds: pluginsListDisabledActionIds,
-        payload: { filenames: pluginScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
+    const pluginsListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.PLUGINS_LIST_CONTROLS, {
+        homeActionId: DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS,
+        remoteActionId: DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS,
+        hasLocalTargets: hasLocalPluginTargets,
+        hasRemoteTargets: hasRemotePluginTargets,
+        filenames: pluginScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
     });
 
     const renderScriptButtons = (panels, renderOptions = {}) => {
@@ -3976,7 +3839,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             viewId: panel.viewId,
                         },
                         options,
-                        { includeDisabledStates: true }
+                        { includeDisabledStates: true },
+                        dashboardServiceRegistry.services,
+                        dashboardViews
                     );
                     const inlineActions = selectedItem === "global.options"
                         ? [

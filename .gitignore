@@ -56,8 +56,8 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 DASHBOARD_REWORK_RULES.md
-plan.md
 DASHBOARD_OPTIMIZATION_PLAN.md
+DASHBOARD_DESIGN_PRINCIPLES.md
 tools
 NetscriptDefinitions.d.ts
 NetscriptGlobals.d.ts

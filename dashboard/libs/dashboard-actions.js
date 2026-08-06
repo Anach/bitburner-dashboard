@@ -58,3 +58,23 @@ export function buildDashboardActions(actionIds = [], options = {}) {
 
     return actions;
 }
+
+// Shared shape for the "Kill Local"/"Kill Remote" pair on a scoped script-list panel (Core
+// Modules, Integrations, Plugins): disable whichever side has no matching running target, and
+// attach the exact filename set the action-worker should kill (see action-worker-contract.js's
+// SCOPED_KILL_LIST_ACTIONS) so each panel only ever kills its own scripts.
+export function buildScopedKillListActions(actionGroup, {
+    homeActionId,
+    remoteActionId,
+    hasLocalTargets,
+    hasRemoteTargets,
+    filenames = [],
+    extraDisabledActionIds = [],
+} = {}) {
+    const disabledActionIds = [
+        ...(!hasLocalTargets ? [homeActionId] : []),
+        ...(!hasRemoteTargets ? [remoteActionId] : []),
+        ...extraDisabledActionIds,
+    ];
+    return buildDashboardActions(actionGroup, { disabledActionIds, payload: { filenames } });
+}
