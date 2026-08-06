@@ -627,17 +627,22 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         }
     };
 
+    // Label the toggle with the action it will perform, so the button also reports the
+    // current read state of whatever message is open or highlighted.
+    const activeTarget = findMessageById(activeTargetId());
+    const readToggleLabel = getDashboardViewValue(activeTarget, readField) ? "Mark-Unread" : "Mark-Read";
+
     const shortcuts = [
-        { key: "↑↓", label: "Nav", onClick: () => (selectedMessageId ? scrollReaderBy(24) : moveCursor(1)) },
-        { key: "Enter", label: "Open", onClick: () => { if (!selectedMessageId && cursorId) openMessage(findMessageById(cursorId)); } },
-        { key: "Esc", label: "Back", onClick: closeReader },
-        { key: "PgUp/PgDn", label: "Page", onClick: () => (selectedMessageId ? scrollReaderBy(240) : moveCursor(10)) },
-        { key: "Home/End", label: "Jump", onClick: () => (selectedMessageId ? scrollReaderTo("end") : jumpCursor("end")) },
-        { key: "/", label: "Search", onClick: () => setSearchOpen(true) },
-        { key: "d", label: "Delete", onClick: () => deleteMessage(activeTargetId()) },
-        { key: "m", label: "Read/Unread", onClick: () => toggleReadMessage(activeTargetId()) },
-        { key: "a", label: "Mark all", onClick: markAllRead },
-        { key: "q", label: "Close", onClick: () => onExit?.() },
+        { id: "nav", key: "↑↓", label: "Nav", onClick: () => (selectedMessageId ? scrollReaderBy(24) : moveCursor(1)) },
+        { id: "open", key: "Enter", label: "Open", onClick: () => { if (!selectedMessageId && cursorId) openMessage(findMessageById(cursorId)); } },
+        { id: "back", key: "Esc", label: "Back", onClick: closeReader },
+        { id: "page", key: "PgUp/PgDn", label: "Page", onClick: () => (selectedMessageId ? scrollReaderBy(240) : moveCursor(10)) },
+        { id: "jump", key: "Home/End", label: "Jump", onClick: () => (selectedMessageId ? scrollReaderTo("end") : jumpCursor("end")) },
+        { id: "search", key: "/", label: "Search", onClick: () => setSearchOpen(true) },
+        { id: "delete", key: "d", label: "Delete", onClick: () => deleteMessage(activeTargetId()) },
+        { id: "read-toggle", key: "m", label: readToggleLabel, onClick: () => toggleReadMessage(activeTargetId()) },
+        { id: "mark-all", key: "a", label: "Mark all", onClick: markAllRead },
+        { id: "close", key: "q", label: "Close", onClick: () => onExit?.() },
     ];
 
     const unreadTotal = Number(folderCounts?.Inbox) || 0;
@@ -676,13 +681,13 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
                 {shortcuts.map((shortcut) => (
                     <button
                         type="button"
-                        key={shortcut.label}
+                        key={shortcut.id}
                         style={{
                             ...STYLES.shortcutItem,
-                            ...(hoveredShortcut === shortcut.label ? STYLES.shortcutItemHover : {}),
+                            ...(hoveredShortcut === shortcut.id ? STYLES.shortcutItemHover : {}),
                         }}
                         onClick={shortcut.onClick}
-                        onMouseEnter={() => setHoveredShortcut(shortcut.label)}
+                        onMouseEnter={() => setHoveredShortcut(shortcut.id)}
                         onMouseLeave={() => setHoveredShortcut("")}
                     >
                         <span style={STYLES.shortcutKey}>{shortcut.key}</span>

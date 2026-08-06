@@ -127,8 +127,11 @@ function drainFeed(ns, messages, networkHosts) {
         const originHostType = source === "home" ? "home" : networkHosts.has(source) ? "network" : "darknet";
         const record = ensureRecord(messages, source, filename, originHostType);
         if (typeof content === "string") {
-            record.content = content;
-            record.subject = deriveSubject(content, filename);
+            // Strip here as well as in the reader/darknet agent: remote hosts can be running an
+            // older copy of the reader, so the scanner never trusts feed content to be clean.
+            const cleaned = stripLitMarkup(content);
+            record.content = cleaned;
+            record.subject = deriveSubject(cleaned, filename);
         }
     }
 }
@@ -176,9 +179,9 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
         const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
         if (readerCost <= 0 || freeRam < readerCost) continue;
 
-        if (!ns.fileExists(READER_SCRIPT, host)) {
-            ns.scp(READER_SCRIPT, host, "home");
-        }
+        // Always re-copy rather than only when missing: a host that still holds an older reader
+        // would otherwise keep running stale capture logic forever.
+        ns.scp(READER_SCRIPT, host, "home");
         ns.exec(READER_SCRIPT, host, 1);
         readerLaunchState.set(host, Date.now());
     }

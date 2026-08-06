@@ -15,7 +15,7 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 - Generic start, stop, restart, edit, option, action, and requirement controls.
 - A metadata-driven supervisor for integrated daemon services.
 - JSON telemetry fields, quick statistics, gauges, history graphs, lists, and resource cards.
-- Metadata-driven full-window overview, network-map, file-manager, and script-log views.
+- Metadata-driven full-window overview, network-map, file-manager, script-log, and mailbox views.
 - Health filtering and daemon/on-demand lifecycle presentation.
 - Persistent dashboard options stored on `home`.
 - Safe metadata parsing with `JSON.parse`; integration source is never evaluated.
@@ -278,6 +278,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `network-map`
 - `file-manager`
 - `script-log`
+- `mailbox`
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 
