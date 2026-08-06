@@ -184,38 +184,45 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
     }
 }
 
-function dedupeMessagesByFilename(messages) {
-    // The same filename (e.g. lore drops named "<origin>:<title>.lit") can legitimately turn
-    // up on more than one host; collapse those into a single canonical record instead of
-    // showing one row per host it happened to be discovered on.
-    const canonicalIdByFilename = new Map();
+function dedupeMessagesByFilenameAndContent(messages) {
+    // Lore drops named "<origin>:<title>.lit" legitimately turn up on more than one host with
+    // identical content - collapse those into a single canonical record. But .msg filenames
+    // (e.g. "j2.msg") can be short/generic and coincidentally match across genuinely different
+    // messages, so filename alone isn't proof of duplication - require matching content too.
+    // Records with unresolved content are skipped entirely until they have something to compare.
+    const canonicalIdByKey = new Map();
     for (const id of Object.keys(messages)) {
         const record = messages[id];
-        const canonicalId = canonicalIdByFilename.get(record.filename);
+        if (record.content == null) continue;
+        const key = `${record.filename}::${record.content}`;
+        const canonicalId = canonicalIdByKey.get(key);
         if (!canonicalId) {
-            canonicalIdByFilename.set(record.filename, id);
+            canonicalIdByKey.set(key, id);
             continue;
         }
         if (canonicalId === id) continue;
 
         const canonical = messages[canonicalId];
-        const canonicalIsOlder = canonical.firstSeenAt <= record.firstSeenAt;
-        const keep = canonicalIsOlder ? canonical : record;
-        const keepId = canonicalIsOlder ? canonicalId : id;
-        const drop = canonicalIsOlder ? record : canonical;
-        const dropId = canonicalIsOlder ? id : canonicalId;
+        // Duplicate copies of the same content often resolve at different times (home reads
+        // instantly, remote copies lag behind RAM/root access), so a fresh duplicate can turn up
+        // well after an earlier copy was already read. Once either copy has been read, that id
+        // must stay canonical permanently - otherwise a still-unread twin keeps "winning" the
+        // firstSeenAt tie-break and silently undoes the read state the user already set.
+        const preferCanonical = canonical.read === record.read
+            ? canonical.firstSeenAt <= record.firstSeenAt
+            : canonical.read;
+        const keep = preferCanonical ? canonical : record;
+        const keepId = preferCanonical ? canonicalId : id;
+        const drop = preferCanonical ? record : canonical;
+        const dropId = preferCanonical ? id : canonicalId;
 
-        if (drop.content != null && keep.content == null) {
-            keep.content = drop.content;
-            keep.subject = drop.subject;
-        }
         if (drop.read && !keep.read) {
             keep.read = true;
             keep.readAt = drop.readAt ?? keep.readAt;
         }
 
         delete messages[dropId];
-        canonicalIdByFilename.set(record.filename, keepId);
+        canonicalIdByKey.set(key, keepId);
     }
 }
 
@@ -234,6 +241,7 @@ function drainCommands(ns, messages) {
         const raw = ns.readPort(MAILBOX_COMMAND_PORT);
         if (raw === "NULL PORT DATA") break;
         const command = String(raw);
+        ns.print(`[MAILBOX] Command received: ${command}`);
 
         if (command.startsWith("MarkRead:")) {
             const id = decodeURIComponent(command.slice("MarkRead:".length));
@@ -242,6 +250,9 @@ function drainCommands(ns, messages) {
                 record.read = true;
                 record.readAt = Date.now();
                 lastCommand = { status: "success", message: `Marked as read: ${record.subject}`, timestamp: Date.now() };
+            } else {
+                ns.print(`[MAILBOX] MarkRead target not found: ${id}`);
+                lastCommand = { status: "error", message: `Mark read failed - message not found (${id}).`, timestamp: Date.now() };
             }
             continue;
         }
@@ -253,6 +264,9 @@ function drainCommands(ns, messages) {
                 record.read = false;
                 record.readAt = null;
                 lastCommand = { status: "success", message: `Marked as unread: ${record.subject}`, timestamp: Date.now() };
+            } else {
+                ns.print(`[MAILBOX] MarkUnread target not found: ${id}`);
+                lastCommand = { status: "error", message: `Mark unread failed - message not found (${id}).`, timestamp: Date.now() };
             }
             continue;
         }
@@ -278,9 +292,14 @@ function drainCommands(ns, messages) {
                 const subject = messages[id].subject;
                 delete messages[id];
                 lastCommand = { status: "success", message: `Deleted: ${subject}`, timestamp: Date.now() };
+            } else {
+                ns.print(`[MAILBOX] Delete target not found: ${id}`);
+                lastCommand = { status: "error", message: `Delete failed - message not found (${id}).`, timestamp: Date.now() };
             }
             continue;
         }
+
+        ns.print(`[MAILBOX] Unrecognized command: ${command}`);
     }
     return lastCommand;
 }
@@ -327,7 +346,7 @@ export async function main(ns) {
         scanNetworkForPendingFiles(ns, messages, networkHosts, readerLaunchState);
         ensureDarknetAgentRunning(ns);
         drainFeed(ns, messages, networkHosts);
-        dedupeMessagesByFilename(messages);
+        dedupeMessagesByFilenameAndContent(messages);
 
         const commandResult = drainCommands(ns, messages);
         if (commandResult) lastCommand = commandResult;

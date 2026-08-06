@@ -1782,12 +1782,12 @@ function performScriptFileAction(ns, action, filename) {
 const DASHBOARD_MENU_GROUPS = [
     { id: "overview", title: "Overview" },
     { id: "affiliations", title: "Affiliations" },
-    { id: "hacking", title: "Hacking" },
+    { id: "automation", title: "Automation" },
     { id: "finances", title: "Finances" },
+    { id: "hacking", title: "Hacking" },
     { id: "hardware", title: "Hardware" },
     { id: "software", title: "Software" },
-    { id: "automation", title: "Automation" },
-    { id: "globalOptions", title: "Global Options" },
+    { id: "globalOptions", title: "Options" },
 ];
 
 const DASHBOARD_SERVICES = [

@@ -21,7 +21,8 @@ export const DASHBOARD_VIEW_METADATA = {
         "content": "content",
         "read": "read",
         "folder": "folder",
-        "firstSeenAt": "firstSeenAt"
+        "firstSeenAt": "firstSeenAt",
+        "type": "type"
     },
     "folders": [
         { "id": "Inbox", "label": "Inbox" },

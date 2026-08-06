@@ -31,6 +31,7 @@ const COLORS = {
     blue: "#8fc5ff",
     muted: "#789589",
     amber: "#ffd17a",
+    bar: "#123322",
 };
 
 const STYLES = {
@@ -44,6 +45,7 @@ const STYLES = {
         border: `1px solid ${COLORS.border}`,
         background: COLORS.background,
         color: COLORS.text,
+        outline: "none",
     },
     header: {
         ...getDashboardFrameHeaderStyle(),
@@ -62,9 +64,36 @@ const STYLES = {
         marginTop: "2px",
     },
     closeButton: getDashboardFrameControlStyle("neutral"),
+    shortcutBar: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "1px 14px",
+        padding: "5px 9px",
+        background: COLORS.bar,
+        borderBottom: `1px solid ${COLORS.border}`,
+    },
+    shortcutItem: {
+        display: "inline-flex",
+        alignItems: "baseline",
+        gap: "0",
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        color: COLORS.bright,
+        fontFamily: "inherit",
+        fontSize: "10px",
+        fontWeight: 400,
+        padding: "2px 3px",
+    },
+    shortcutItemHover: {
+        fontWeight: 800,
+    },
+    shortcutKey: {
+        color: COLORS.green,
+    },
     body: {
         display: "grid",
-        gridTemplateColumns: "160px minmax(220px, 300px) minmax(0, 1fr)",
+        gridTemplateColumns: "160px minmax(0, 1fr)",
         gap: "8px",
         minHeight: 0,
         flex: "1 1 auto",
@@ -74,7 +103,6 @@ const STYLES = {
     folderPane: {
         display: "flex",
         flexDirection: "column",
-        gap: "4px",
         minHeight: 0,
         overflow: "auto",
         border: `1px solid ${COLORS.border}`,
@@ -82,13 +110,16 @@ const STYLES = {
         padding: "6px",
         boxSizing: "border-box",
     },
+    folderList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+    },
     folderButton: {
         display: "flex",
-        justifyContent: "space-between",
         alignItems: "center",
-        gap: "6px",
         width: "100%",
-        padding: "7px 8px",
+        padding: "6px 7px",
         border: "none",
         background: "transparent",
         color: COLORS.text,
@@ -102,91 +133,24 @@ const STYLES = {
         background: "rgba(12, 31, 22, 0.94)",
         boxShadow: "inset 3px 0 0 #6ee7a8",
     },
-    folderBadge: {
-        color: COLORS.muted,
-        fontSize: "10px",
+    folderDivider: {
+        borderTop: `1px dashed ${COLORS.border}`,
+        margin: "8px 2px",
     },
-    folderBadgeUnread: {
-        color: COLORS.amber,
-    },
-    messageListPane: {
+    folderSummary: {
         display: "flex",
         flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-        border: `1px solid ${COLORS.border}`,
-        background: COLORS.panel,
+        gap: "3px",
+        padding: "0 7px",
     },
-    toolbar: {
+    folderSummaryRow: {
         display: "flex",
-        gap: "5px",
-        flexWrap: "wrap",
-        padding: "7px",
-        borderBottom: `1px solid ${COLORS.border}`,
-    },
-    toolbarButton: {
-        minHeight: "28px",
-        border: `1px solid ${COLORS.border}`,
-        background: "rgba(8, 12, 10, 0.94)",
-        color: COLORS.muted,
-        padding: "5px 9px",
-        fontFamily: "inherit",
+        justifyContent: "space-between",
+        gap: "8px",
         fontSize: "10px",
-        cursor: "pointer",
-        textTransform: "uppercase",
-    },
-    messageList: {
-        flex: "1 1 auto",
-        minHeight: 0,
-        overflowY: "auto",
-    },
-    messageRow: {
-        display: "grid",
-        gridTemplateColumns: "auto minmax(0, 1fr)",
-        gap: "2px 8px",
-        width: "100%",
-        padding: "7px 8px",
-        border: "none",
-        borderBottom: "1px solid rgba(125, 160, 212, 0.12)",
-        background: COLORS.background,
-        color: COLORS.text,
-        textAlign: "left",
-        fontFamily: "inherit",
-        cursor: "pointer",
-    },
-    messageRowActive: {
-        color: COLORS.bright,
-        background: "rgba(12, 31, 22, 0.94)",
-        boxShadow: "inset 3px 0 0 #6ee7a8",
-    },
-    messageSource: {
-        gridColumn: "2",
-        color: COLORS.muted,
-        fontSize: "9px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-    },
-    messageSubject: {
-        gridColumn: "2",
-        fontSize: "11px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-    },
-    messageSubjectUnread: {
-        color: COLORS.bright,
-        fontWeight: 700,
-    },
-    messageStatusDot: {
-        gridRow: "1 / span 2",
-        color: COLORS.green,
-        fontSize: "11px",
-    },
-    messageStatusDotRead: {
         color: COLORS.muted,
     },
-    detailPane: {
+    mainPane: {
         display: "flex",
         flexDirection: "column",
         minWidth: 0,
@@ -195,33 +159,144 @@ const STYLES = {
         border: `1px solid ${COLORS.border}`,
         background: "#000000",
     },
-    detailHeader: {
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: "10px",
-        padding: "7px 9px",
+    indexToolbar: {
+        padding: "6px 9px",
         borderBottom: `1px solid ${COLORS.border}`,
+        color: COLORS.muted,
+        fontSize: "10px",
         flex: "0 0 auto",
     },
-    detailSubject: {
-        color: COLORS.green,
-        fontSize: "12px",
-        fontWeight: 800,
+    indexList: {
+        flex: "1 1 auto",
+        minHeight: 0,
+        overflowY: "auto",
     },
-    detailBody: {
+    indexRow: {
+        display: "grid",
+        gridTemplateColumns: "16px 26px 60px 150px 46px minmax(0, 1fr)",
+        alignItems: "baseline",
+        gap: "0 8px",
+        width: "100%",
+        padding: "4px 9px",
+        border: "none",
+        borderBottom: "1px solid rgba(125, 160, 212, 0.1)",
+        background: "transparent",
+        color: COLORS.text,
+        textAlign: "left",
+        fontFamily: "inherit",
+        fontSize: "11px",
+        cursor: "pointer",
+    },
+    indexRowCursor: {
+        background: "rgba(12, 31, 22, 0.94)",
+        boxShadow: "inset 3px 0 0 #6ee7a8",
+    },
+    indexRowUnread: {
+        color: COLORS.bright,
+        fontWeight: 700,
+    },
+    indexDot: {
+        color: COLORS.green,
+    },
+    indexDotRead: {
+        color: COLORS.muted,
+    },
+    indexNum: {
+        color: COLORS.muted,
+        textAlign: "right",
+        fontWeight: 400,
+    },
+    indexDate: {
+        color: COLORS.muted,
+        fontWeight: 400,
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+    },
+    indexSender: {
+        color: COLORS.blue,
+        fontWeight: 400,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    indexSize: {
+        color: COLORS.muted,
+        fontWeight: 400,
+        textAlign: "right",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+    },
+    indexSubject: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    readerScroll: {
         flex: "1 1 auto",
         minHeight: 0,
         overflow: "auto",
-        padding: "10px",
+        padding: "10px 14px",
         boxSizing: "border-box",
         color: COLORS.text,
-        background: "#000000",
+        fontSize: "11px",
+    },
+    readerRule: {
+        borderTop: `1px dashed ${COLORS.border}`,
+        margin: "6px 0",
+    },
+    readerSubjectLine: {
+        color: COLORS.bright,
+        fontSize: "13px",
+        fontWeight: 800,
+        margin: "8px 0",
+    },
+    readerCaret: {
+        color: COLORS.amber,
+        fontWeight: 800,
+        marginRight: "4px",
+    },
+    readerMetaGrid: {
+        display: "grid",
+        gridTemplateColumns: "110px minmax(0, 1fr)",
+        rowGap: "3px",
+        columnGap: "10px",
+        fontSize: "11px",
+        margin: "10px 0",
+    },
+    readerMetaLabel: {
+        color: COLORS.muted,
+    },
+    readerMetaValue: {
+        color: COLORS.text,
+    },
+    readerBody: {
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
-        fontSize: "11px",
         userSelect: "text",
         WebkitUserSelect: "text",
+        marginTop: "10px",
+    },
+    searchBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "5px 9px",
+        borderTop: `1px solid ${COLORS.border}`,
+        background: COLORS.panel,
+    },
+    searchPrompt: {
+        color: COLORS.amber,
+        fontWeight: 800,
+        fontSize: "11px",
+    },
+    searchInput: {
+        flex: "1 1 auto",
+        background: "transparent",
+        border: "none",
+        outline: "none",
+        color: COLORS.bright,
+        fontFamily: "inherit",
+        fontSize: "11px",
     },
     statusBar: {
         borderTop: `1px solid ${COLORS.border}`,
@@ -237,10 +312,35 @@ const STYLES = {
     },
 };
 
-function formatTimestamp(value) {
-    const ms = Number(value);
-    if (!Number.isFinite(ms) || ms <= 0) return "";
-    return new Date(ms).toLocaleString();
+function formatIndexDate(value) {
+    const date = new Date(Number(value));
+    if (!Number.isFinite(date.getTime())) return "";
+    const month = date.toLocaleString("en-US", { month: "short" });
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${month} ${day}`;
+}
+
+function formatReceivedTimestamp(value) {
+    const date = new Date(Number(value));
+    if (!Number.isFinite(date.getTime())) return "";
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = date.toLocaleString("en-US", { month: "short" });
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${day} ${month} ${year} ${hours}:${minutes}`;
+}
+
+function formatSize(charCount) {
+    const bytes = Math.max(0, Number(charCount) || 0);
+    if (bytes < 1024) return `${bytes}B`;
+    const kb = bytes / 1024;
+    return kb >= 10 ? `${Math.round(kb)}K` : `${kb.toFixed(1)}K`;
+}
+
+function capitalize(value) {
+    const text = String(value ?? "");
+    return text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInputFocusChange, onExit, headerActions }) {
@@ -265,6 +365,7 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
     const readField = fields.read ?? "read";
     const folderField = fields.folder ?? "folder";
     const firstSeenField = fields.firstSeenAt ?? "firstSeenAt";
+    const typeField = fields.type ?? "type";
 
     const rawMessages = getDashboardViewValue(telemetry, dataConfig.messagesKey ?? "messages");
     const allMessages = Array.isArray(rawMessages) ? rawMessages : [];
@@ -272,24 +373,66 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
     // root access/RAM on its origin server isn't "obtained" yet, so it shouldn't appear at all.
     const messages = allMessages.filter((message) => getDashboardViewValue(message, contentField) != null);
     const folderCounts = getDashboardViewValue(telemetry, dataConfig.folderCountsKey ?? "folderCounts") ?? {};
+    const totalCounts = getDashboardViewValue(telemetry, dataConfig.totalCountsKey ?? "totalCounts") ?? {};
     const lastResult = getDashboardViewValue(telemetry, dataConfig.lastResultKey ?? "lastCommand");
+
+    const idOf = (message) => String(getDashboardViewValue(message, idField) ?? "");
+    const findMessageById = (id) => messages.find((message) => idOf(message) === id) ?? null;
 
     const savedInteraction = getDashboardViewInteractionState(view?.id ?? "");
     const [selectedFolder, setSelectedFolder] = React.useState(() => String(savedInteraction?.selectedFolder ?? folders[0]?.id ?? "Inbox"));
     const [selectedMessageId, setSelectedMessageId] = React.useState(() => String(savedInteraction?.selectedMessageId ?? ""));
+    const [cursorId, setCursorId] = React.useState(() => String(savedInteraction?.cursorId ?? ""));
+    const [searchOpen, setSearchOpen] = React.useState(false);
+    const [searchQuery, setSearchQuery] = React.useState("");
+    const [isSearchFocused, setIsSearchFocused] = React.useState(false);
+    const [hoveredShortcut, setHoveredShortcut] = React.useState("");
+
+    const shellRef = React.useRef(null);
+    const detailBodyElRef = React.useRef(null);
+    const messageListElRef = React.useRef(null);
+    const rowRefs = React.useRef({});
+    const searchInputRef = React.useRef(null);
 
     React.useEffect(() => {
         saveDashboardViewInteractionState(view?.id ?? "", {
             ...getDashboardViewInteractionState(view?.id ?? ""),
             selectedFolder,
             selectedMessageId,
+            cursorId,
         });
-    }, [view?.id, selectedFolder, selectedMessageId]);
+    }, [view?.id, selectedFolder, selectedMessageId, cursorId]);
 
-    const messageListRef = (node) => {
+    // The tail redraws (and rebuilds its DOM) on every dashboard refresh tick, which drops
+    // focus back to the terminal. Reclaim it after every render - but only when focus has
+    // actually drifted outside the mailbox, so typing in the search box is left alone.
+    React.useLayoutEffect(() => {
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        if (isSearchFocused) {
+            const input = searchInputRef.current;
+            if (input && active !== input) input.focus();
+            return;
+        }
+        const shell = shellRef.current;
+        if (shell && (!active || !shell.contains(active))) {
+            shell.focus();
+        }
+    });
+
+    React.useEffect(() => {
+        return () => onInputFocusChange?.(false);
+    }, []);
+
+    React.useEffect(() => {
+        if (searchOpen) searchInputRef.current?.focus?.();
+    }, [searchOpen]);
+
+    const setMessageListRef = (node) => {
+        messageListElRef.current = node;
         if (node) node.scrollTop = Number(savedInteraction?.messageListScrollTop) || 0;
     };
-    const detailBodyRef = (node) => {
+    const setDetailBodyRef = (node) => {
+        detailBodyElRef.current = node;
         if (node) node.scrollTop = Number(savedInteraction?.detailScrollTop) || 0;
     };
     const onMessageListScroll = (event) => {
@@ -305,16 +448,39 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         });
     };
 
+    const searchNormalized = searchQuery.trim().toLowerCase();
     const visibleMessages = messages
         .filter((message) => {
             return selectedFolder === "Inbox"
                 ? !getDashboardViewValue(message, readField)
                 : getDashboardViewValue(message, folderField) === selectedFolder;
         })
+        .filter((message) => {
+            if (!searchNormalized) return true;
+            const haystack = `${getDashboardViewValue(message, subjectField) ?? ""} ${getDashboardViewValue(message, sourceField) ?? ""}`.toLowerCase();
+            return haystack.includes(searchNormalized);
+        })
         .slice()
-        .sort((a, b) => (Number(getDashboardViewValue(b, firstSeenField)) || 0) - (Number(getDashboardViewValue(a, firstSeenField)) || 0));
+        .sort((a, b) => (Number(getDashboardViewValue(a, firstSeenField)) || 0) - (Number(getDashboardViewValue(b, firstSeenField)) || 0));
 
-    const selectedMessage = messages.find((message) => String(getDashboardViewValue(message, idField)) === selectedMessageId) ?? null;
+    const visibleIdsKey = visibleMessages.map(idOf).join("|");
+    React.useEffect(() => {
+        if (visibleMessages.length === 0) {
+            if (cursorId) setCursorId("");
+            return;
+        }
+        if (!visibleMessages.some((message) => idOf(message) === cursorId)) {
+            setCursorId(idOf(visibleMessages[0]));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleIdsKey, cursorId]);
+
+    React.useEffect(() => {
+        if (!cursorId) return;
+        rowRefs.current[cursorId]?.scrollIntoView?.({ block: "nearest" });
+    }, [cursorId]);
+
+    const selectedMessage = findMessageById(selectedMessageId);
 
     const sendCommand = (command) => {
         if (!serviceId || !command) return;
@@ -326,14 +492,19 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         setSelectedMessageId("");
     };
 
-    const selectMessage = (message) => {
-        const id = String(getDashboardViewValue(message, idField) ?? "");
+    const openMessage = (message) => {
+        if (!message) return;
+        const id = idOf(message);
         setSelectedMessageId(id);
-        const hasContent = getDashboardViewValue(message, contentField) != null;
-        if (hasContent && !getDashboardViewValue(message, readField)) {
+        setCursorId(id);
+        if (!getDashboardViewValue(message, readField)) {
             const prefix = commandsConfig.markReadPrefix ?? "MarkRead:";
             sendCommand(`${prefix}${encodeURIComponent(id)}`);
         }
+    };
+
+    const closeReader = () => {
+        if (selectedMessageId) setSelectedMessageId("");
     };
 
     const markAllRead = () => {
@@ -341,26 +512,148 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         sendCommand(`${prefix}${encodeURIComponent(selectedFolder)}`);
     };
 
-    const deleteSelected = () => {
-        if (!selectedMessage) return;
-        const id = String(getDashboardViewValue(selectedMessage, idField) ?? "");
+    const deleteMessage = (id) => {
+        const message = findMessageById(id);
+        if (!message) return;
         const prefix = commandsConfig.deletePrefix ?? "Delete:";
         sendCommand(`${prefix}${encodeURIComponent(id)}`);
-        setSelectedMessageId("");
+        if (selectedMessageId === id) setSelectedMessageId("");
     };
 
-    const toggleReadSelected = () => {
-        if (!selectedMessage) return;
-        const id = String(getDashboardViewValue(selectedMessage, idField) ?? "");
-        const isRead = Boolean(getDashboardViewValue(selectedMessage, readField));
+    const toggleReadMessage = (id) => {
+        const message = findMessageById(id);
+        if (!message) return;
+        const isRead = Boolean(getDashboardViewValue(message, readField));
         const prefix = isRead
             ? (commandsConfig.markUnreadPrefix ?? "MarkUnread:")
             : (commandsConfig.markReadPrefix ?? "MarkRead:");
         sendCommand(`${prefix}${encodeURIComponent(id)}`);
     };
 
+    const activeTargetId = () => selectedMessageId || cursorId;
+
+    const moveCursor = (delta) => {
+        if (selectedMessageId || visibleMessages.length === 0) return;
+        const ids = visibleMessages.map(idOf);
+        const currentIndex = Math.max(0, ids.indexOf(cursorId));
+        const nextIndex = Math.min(ids.length - 1, Math.max(0, currentIndex + delta));
+        setCursorId(ids[nextIndex]);
+    };
+
+    const jumpCursor = (edge) => {
+        if (selectedMessageId || visibleMessages.length === 0) return;
+        setCursorId(idOf(edge === "start" ? visibleMessages[0] : visibleMessages[visibleMessages.length - 1]));
+    };
+
+    const scrollReaderBy = (deltaPx) => {
+        const node = detailBodyElRef.current;
+        if (!node) return;
+        node.scrollTop = Math.max(0, Math.min(node.scrollHeight, node.scrollTop + deltaPx));
+    };
+
+    const scrollReaderTo = (edge) => {
+        const node = detailBodyElRef.current;
+        if (!node) return;
+        node.scrollTop = edge === "start" ? 0 : node.scrollHeight;
+    };
+
+    const closeSearch = () => {
+        setSearchOpen(false);
+        setSearchQuery("");
+        shellRef.current?.focus?.();
+    };
+
+    const handleKeyDown = (event) => {
+        if (isSearchFocused) return;
+        switch (event.key) {
+            case "ArrowDown":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderBy(24) : moveCursor(1);
+                break;
+            case "ArrowUp":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderBy(-24) : moveCursor(-1);
+                break;
+            case "PageDown":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderBy(240) : moveCursor(10);
+                break;
+            case "PageUp":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderBy(-240) : moveCursor(-10);
+                break;
+            case "Home":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderTo("start") : jumpCursor("start");
+                break;
+            case "End":
+                event.preventDefault();
+                selectedMessageId ? scrollReaderTo("end") : jumpCursor("end");
+                break;
+            case "Enter":
+                event.preventDefault();
+                if (!selectedMessageId && cursorId) openMessage(findMessageById(cursorId));
+                break;
+            case "Escape":
+                event.preventDefault();
+                closeReader();
+                break;
+            case "/":
+                event.preventDefault();
+                setSearchOpen(true);
+                break;
+            case "d":
+            case "D":
+                event.preventDefault();
+                deleteMessage(activeTargetId());
+                break;
+            case "m":
+            case "M":
+                event.preventDefault();
+                toggleReadMessage(activeTargetId());
+                break;
+            case "a":
+            case "A":
+                event.preventDefault();
+                markAllRead();
+                break;
+            case "q":
+            case "Q":
+                event.preventDefault();
+                onExit?.();
+                break;
+            default:
+                break;
+        }
+    };
+
+    const shortcuts = [
+        { key: "↑↓", label: "Nav", onClick: () => (selectedMessageId ? scrollReaderBy(24) : moveCursor(1)) },
+        { key: "Enter", label: "Open", onClick: () => { if (!selectedMessageId && cursorId) openMessage(findMessageById(cursorId)); } },
+        { key: "Esc", label: "Back", onClick: closeReader },
+        { key: "PgUp/PgDn", label: "Page", onClick: () => (selectedMessageId ? scrollReaderBy(240) : moveCursor(10)) },
+        { key: "Home/End", label: "Jump", onClick: () => (selectedMessageId ? scrollReaderTo("end") : jumpCursor("end")) },
+        { key: "/", label: "Search", onClick: () => setSearchOpen(true) },
+        { key: "d", label: "Delete", onClick: () => deleteMessage(activeTargetId()) },
+        { key: "m", label: "Read/Unread", onClick: () => toggleReadMessage(activeTargetId()) },
+        { key: "a", label: "Mark all", onClick: markAllRead },
+        { key: "q", label: "Close", onClick: () => onExit?.() },
+    ];
+
+    const unreadTotal = Number(folderCounts?.Inbox) || 0;
+    const totalResolved = Object.values(totalCounts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+    const readTotal = Math.max(0, totalResolved - unreadTotal);
+
+    const statusSummary = `${selectedFolder} — ${visibleMessages.length} shown${searchQuery ? `, filtered by "${searchQuery}"` : ""}`;
+
     return (
-        <main data-dashboard-theme-role="app-frame" style={STYLES.shell}>
+        <main
+            data-dashboard-theme-role="app-frame"
+            ref={shellRef}
+            tabIndex={0}
+            onKeyDown={handleKeyDown}
+            style={STYLES.shell}
+        >
             <header style={STYLES.header}>
                 <div>
                     <div style={STYLES.title}>{view?.title ?? "Mailbox"}</div>
@@ -379,85 +672,152 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
                 </div>
             </header>
 
+            <div style={STYLES.shortcutBar}>
+                {shortcuts.map((shortcut) => (
+                    <button
+                        type="button"
+                        key={shortcut.label}
+                        style={{
+                            ...STYLES.shortcutItem,
+                            ...(hoveredShortcut === shortcut.label ? STYLES.shortcutItemHover : {}),
+                        }}
+                        onClick={shortcut.onClick}
+                        onMouseEnter={() => setHoveredShortcut(shortcut.label)}
+                        onMouseLeave={() => setHoveredShortcut("")}
+                    >
+                        <span style={STYLES.shortcutKey}>{shortcut.key}</span>
+                        <span>:{shortcut.label}</span>
+                    </button>
+                ))}
+            </div>
+
             <div style={STYLES.body}>
                 <aside data-dashboard-theme-role="control-frame" style={STYLES.folderPane}>
-                    {folders.map((folder) => {
-                        const count = Number(folderCounts?.[folder.id]) || 0;
-                        return (
-                            <button
-                                type="button"
-                                data-dashboard-theme-role="navigation-item"
-                                key={folder.id}
-                                style={{ ...STYLES.folderButton, ...(selectedFolder === folder.id ? STYLES.folderButtonActive : {}) }}
-                                onClick={() => selectFolder(folder.id)}
-                            >
-                                <span>{folder.label}</span>
-                                <span style={{ ...STYLES.folderBadge, ...(folder.id === "Inbox" && count > 0 ? STYLES.folderBadgeUnread : {}) }}>
-                                    {count}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </aside>
-
-                <section data-dashboard-theme-role="control-frame" style={STYLES.messageListPane}>
-                    <div style={STYLES.toolbar}>
-                        <button type="button" style={STYLES.toolbarButton} onClick={markAllRead}>Mark all read</button>
-                    </div>
-                    <div ref={messageListRef} onScroll={onMessageListScroll} style={STYLES.messageList}>
-                        {visibleMessages.map((message) => {
-                            const id = String(getDashboardViewValue(message, idField) ?? "");
-                            const isRead = Boolean(getDashboardViewValue(message, readField));
+                    <div style={STYLES.folderList}>
+                        {folders.map((folder) => {
+                            const isInbox = folder.id === "Inbox";
+                            const count = isInbox ? unreadTotal : null;
                             return (
                                 <button
                                     type="button"
                                     data-dashboard-theme-role="navigation-item"
-                                    key={id}
-                                    style={{ ...STYLES.messageRow, ...(selectedMessageId === id ? STYLES.messageRowActive : {}) }}
-                                    onClick={() => selectMessage(message)}
+                                    key={folder.id}
+                                    style={{ ...STYLES.folderButton, ...(selectedFolder === folder.id ? STYLES.folderButtonActive : {}) }}
+                                    onClick={() => selectFolder(folder.id)}
                                 >
-                                    <span style={{ ...STYLES.messageStatusDot, ...(isRead ? STYLES.messageStatusDotRead : {}) }}>
-                                        {isRead ? "○" : "●"}
-                                    </span>
-                                    <span style={STYLES.messageSource}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span>
-                                    <span style={{ ...STYLES.messageSubject, ...(isRead ? {} : STYLES.messageSubjectUnread) }}>
-                                        {String(getDashboardViewValue(message, subjectField) ?? "")}
-                                    </span>
+                                    {folder.label}{count !== null ? ` (${count})` : ""}
                                 </button>
                             );
                         })}
-                        {visibleMessages.length === 0 ? <div style={STYLES.empty}>No messages in this folder.</div> : null}
                     </div>
-                </section>
+                    <div style={STYLES.folderDivider} />
+                    <div style={STYLES.folderSummary}>
+                        <div style={STYLES.folderSummaryRow}><span>Unread</span><span>{unreadTotal}</span></div>
+                        <div style={STYLES.folderSummaryRow}><span>Read</span><span>{readTotal}</span></div>
+                    </div>
+                </aside>
 
-                <section data-dashboard-theme-role="control-frame" style={STYLES.detailPane}>
+                <section data-dashboard-theme-role="control-frame" style={STYLES.mainPane}>
                     {selectedMessage ? (
-                        <>
-                            <div style={STYLES.detailHeader}>
-                                <div>
-                                    <div style={STYLES.detailSubject}>{String(getDashboardViewValue(selectedMessage, subjectField) ?? "")}</div>
-                                    <div style={STYLES.subtitle}>
-                                        {String(getDashboardViewValue(selectedMessage, sourceField) ?? "")} · {formatTimestamp(getDashboardViewValue(selectedMessage, firstSeenField))}
-                                    </div>
-                                </div>
-                                <div style={{ display: "flex", gap: "5px", flex: "0 0 auto" }}>
-                                    <button type="button" style={STYLES.toolbarButton} onClick={toggleReadSelected}>
-                                        {getDashboardViewValue(selectedMessage, readField) ? "Mark unread" : "Mark read"}
-                                    </button>
-                                    <button type="button" style={STYLES.toolbarButton} onClick={deleteSelected}>Delete</button>
-                                </div>
+                        <div ref={setDetailBodyRef} onScroll={onDetailScroll} style={STYLES.readerScroll}>
+                            <div style={STYLES.readerRule} />
+                            <div style={STYLES.readerSubjectLine}>
+                                <span style={STYLES.readerCaret}>{"›"}</span>
+                                {String(getDashboardViewValue(selectedMessage, subjectField) ?? "")}
                             </div>
-                            <div ref={detailBodyRef} onScroll={onDetailScroll} style={STYLES.detailBody}>
+                            <div style={STYLES.readerMetaGrid}>
+                                <span style={STYLES.readerMetaLabel}>Sender</span>
+                                <span style={STYLES.readerMetaValue}>{String(getDashboardViewValue(selectedMessage, sourceField) ?? "")}</span>
+                                <span style={STYLES.readerMetaLabel}>Received</span>
+                                <span style={STYLES.readerMetaValue}>{formatReceivedTimestamp(getDashboardViewValue(selectedMessage, firstSeenField))}</span>
+                                <span style={STYLES.readerMetaLabel}>Location</span>
+                                <span style={STYLES.readerMetaValue}>{String(getDashboardViewValue(selectedMessage, sourceField) ?? "")}</span>
+                                <span style={STYLES.readerMetaLabel}>Type</span>
+                                <span style={STYLES.readerMetaValue}>{capitalize(getDashboardViewValue(selectedMessage, typeField))}</span>
+                            </div>
+                            <div style={STYLES.readerRule} />
+                            <div style={STYLES.readerBody}>
                                 {getDashboardViewValue(selectedMessage, contentField) ?? ""}
                             </div>
-                        </>
+                        </div>
                     ) : (
-                        <div style={STYLES.empty}>Select a message to read it.</div>
+                        <>
+                            <div style={STYLES.indexToolbar}>{selectedFolder}</div>
+                            <div ref={setMessageListRef} onScroll={onMessageListScroll} style={STYLES.indexList}>
+                                {visibleMessages.map((message, index) => {
+                                    const id = idOf(message);
+                                    const isRead = Boolean(getDashboardViewValue(message, readField));
+                                    const isCursor = cursorId === id;
+                                    return (
+                                        <button
+                                            type="button"
+                                            data-dashboard-theme-role="navigation-item"
+                                            key={id}
+                                            ref={(node) => {
+                                                if (node) rowRefs.current[id] = node;
+                                                else delete rowRefs.current[id];
+                                            }}
+                                            style={{
+                                                ...STYLES.indexRow,
+                                                ...(isRead ? {} : STYLES.indexRowUnread),
+                                                ...(isCursor ? STYLES.indexRowCursor : {}),
+                                            }}
+                                            onClick={() => openMessage(message)}
+                                        >
+                                            <span style={{ ...STYLES.indexDot, ...(isRead ? STYLES.indexDotRead : {}) }}>
+                                                {isRead ? "○" : "●"}
+                                            </span>
+                                            <span style={STYLES.indexNum}>{index + 1}</span>
+                                            <span style={STYLES.indexDate}>{formatIndexDate(getDashboardViewValue(message, firstSeenField))}</span>
+                                            <span style={STYLES.indexSender}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span>
+                                            <span style={STYLES.indexSize}>{formatSize(String(getDashboardViewValue(message, contentField) ?? "").length)}</span>
+                                            <span style={STYLES.indexSubject}>
+                                                {String(getDashboardViewValue(message, subjectField) ?? "")}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                                {visibleMessages.length === 0 ? <div style={STYLES.empty}>No messages in this folder.</div> : null}
+                            </div>
+                        </>
                     )}
                 </section>
             </div>
 
-            {lastResult?.message ? <div style={STYLES.statusBar}>{lastResult.message}</div> : null}
+            {searchOpen ? (
+                <div style={STYLES.searchBar}>
+                    <span style={STYLES.searchPrompt}>/</span>
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        value={searchQuery}
+                        placeholder="Search subject or sender..."
+                        style={STYLES.searchInput}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        onFocus={() => {
+                            setIsSearchFocused(true);
+                            onInputFocusChange?.(true);
+                        }}
+                        onBlur={() => {
+                            setIsSearchFocused(false);
+                            onInputFocusChange?.(false);
+                        }}
+                        onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                                event.preventDefault();
+                                closeSearch();
+                            } else if (event.key === "Enter") {
+                                event.preventDefault();
+                                shellRef.current?.focus?.();
+                            }
+                        }}
+                    />
+                </div>
+            ) : null}
+
+            <div style={STYLES.statusBar}>
+                {statusSummary}{lastResult?.message ? ` · ${lastResult.message}` : ""}
+            </div>
         </main>
     );
 }

@@ -1308,7 +1308,10 @@ export function FileManagerView({
                     active={activePane === "left"}
                     rowRefs={rowRefs}
                     scrollRef={paneScrollRefs.left}
-                    onScroll={(event) => setPaneScrollTops((current) => ({ ...current, left: event.currentTarget.scrollTop }))}
+                    onScroll={(event) => {
+                        const scrollTop = event.currentTarget.scrollTop;
+                        setPaneScrollTops((current) => ({ ...current, left: scrollTop }));
+                    }}
                     onActivate={setActivePane}
                     onSelect={selectEntry}
                     onOpen={openEntry}
@@ -1323,7 +1326,10 @@ export function FileManagerView({
                     active={activePane === "right"}
                     rowRefs={rowRefs}
                     scrollRef={paneScrollRefs.right}
-                    onScroll={(event) => setPaneScrollTops((current) => ({ ...current, right: event.currentTarget.scrollTop }))}
+                    onScroll={(event) => {
+                        const scrollTop = event.currentTarget.scrollTop;
+                        setPaneScrollTops((current) => ({ ...current, right: scrollTop }));
+                    }}
                     onActivate={setActivePane}
                     onSelect={selectEntry}
                     onOpen={openEntry}

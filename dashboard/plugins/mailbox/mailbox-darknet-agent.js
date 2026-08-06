@@ -8,6 +8,7 @@ export const DASHBOARD_SCRIPT_METADATA = {
 const dnetFiles = ["dashboard/plugins/mailbox/mailbox-darknet-agent.js"];
 const dnetFile = 0;
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
+const SCANNER_SCRIPT = "dashboard/plugins/mailbox/mailbox-scanner.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
@@ -23,6 +24,13 @@ export async function main(ns) {
     host.checkFiles();
     var dnets = [];
     while (true) {
+        // Stopping the Mailbox Scanner (home) should stop this agent too, wherever it's
+        // currently running (home or a propagated darknet server) - there's no "on kill"
+        // hook in Netscript, so each instance checks and self-exits instead.
+        if (!ns.scriptRunning(SCANNER_SCRIPT, "home")) {
+            ns.print("Mailbox Scanner is no longer running on home; stopping darknet agent.");
+            return;
+        }
         ns.print("Beginning new loop \n");
         host.openCaches();
         // Update the dnets array with new servers
