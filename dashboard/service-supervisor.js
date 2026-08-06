@@ -1,6 +1,7 @@
 import { areCapabilityRequirementsMet, buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import { isServiceAutostartEnabled } from "dashboard/libs/dashboard-options.js";
+import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
@@ -9,6 +10,7 @@ export const DASHBOARD_SCRIPT_METADATA = {
 const SUPERVISOR_INTERVAL_MS = 30000;
 const EXCLUDED_RUNTIME_FOLDERS = ["dashboard", "libs", "trashbin"];
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
+const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 let cachedFileSignature = "";
 let cachedManagedServices = [];
 
@@ -65,6 +67,29 @@ function discoverManagedServices(ns, homeFiles) {
     return cachedManagedServices;
 }
 
+function isExcludedRuntimeFile(filename) {
+    return EXCLUDED_RUNTIME_FOLDERS.some((folder) => filename === folder || filename.startsWith(`${folder}/`));
+}
+
+// Scripts that just declare `DASHBOARD_SCRIPT_METADATA: { daemon: true }` in their own header,
+// with no paired *-integration.js descriptor, still get autostart/restart - just without any
+// telemetry/status UI. This is the escape hatch from having to write a full integration for
+// every simple daemon script.
+function discoverBareDaemonScripts(ns, normalizedFiles, managedFilenames) {
+    const candidates = [];
+    for (const filename of normalizedFiles) {
+        if (!filename.endsWith(".js") && !filename.endsWith(".jsx")) continue;
+        if (managedFilenames.has(filename)) continue;
+        if (isExcludedRuntimeFile(filename)) continue;
+
+        const metadata = loadDashboardScriptMetadata(ns, filename);
+        if (metadata?.daemon !== true) continue;
+
+        candidates.push({ filename, serviceId: filename, requirements: [] });
+    }
+    return candidates;
+}
+
 function startManagedService(ns, service, runningFiles) {
     const script = service.filename;
     if (runningFiles.has(script)) return { status: "already-running" };
@@ -88,12 +113,22 @@ export async function main(ns) {
 
     while (true) {
         const homeFiles = ns.ls("home") ?? [];
-        const services = discoverManagedServices(ns, homeFiles);
+        const integrationServices = discoverManagedServices(ns, homeFiles);
+        const normalizedFiles = homeFiles.filter((filename) => typeof filename === "string");
+        const managedFilenames = new Set(integrationServices.map((service) => service.filename));
+        const bareDaemonScripts = discoverBareDaemonScripts(ns, normalizedFiles, managedFilenames);
+        const services = [...integrationServices, ...bareDaemonScripts];
         if (services.length === 0) {
             const message = "[DASHBOARD] No enabled daemon integrations were discovered; Integration Service Supervisor stopped.";
             ns.print(message);
             ns.tprint(message);
             return;
+        }
+
+        if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) {
+            ns.print("[LIFECYCLE] Autostart is paused (Kill All Scripts); skipping this cycle.");
+            await ns.sleep(SUPERVISOR_INTERVAL_MS);
+            continue;
         }
 
         const runningFiles = new Set((ns.ps("home") ?? []).map((process) => process.filename));

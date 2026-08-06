@@ -51,15 +51,6 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "emptyText": "Waiting for Player Status telemetry."
         }
     ],
-    "dashboardOptions": [
-        {
-            "id": "dashboard-player-stats-mode",
-            "label": "Player stats",
-            "optionKey": "dashboardPlayerHudMode",
-            "type": "select",
-            "options": ["Auto", "Shown", "Hidden"]
-        }
-    ],
     "hud": {
         "title": "Player",
         "updatedAtKey": "generatedAt",

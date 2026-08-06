@@ -21,7 +21,7 @@ export const DASHBOARD_SCRIPT_METADATA = {
 
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
-const USER_INIT_SCRIPT = "init/init-services.js";
+const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 
 function writeResult(ns, requestId, result) {
     ns.write(DASHBOARD_ACTION_WORKER_RESULT_FILE, JSON.stringify({
@@ -155,7 +155,12 @@ function performDashboardKillAction(ns, command) {
         const remoteResult = killMatchingProcesses(ns, remoteHosts, () => true);
         const homeResult = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeWorker);
         const killedCount = remoteResult.killedCount + homeResult.killedCount;
-        return success(`Killed ${killedCount} script${killedCount === 1 ? "" : "s"} across home and all reachable servers (dashboard preserved).`, "warning", {
+        // Kill All is a deliberate "stop everything" action - the supervisor (just killed
+        // along with everything else) would otherwise relaunch every autostart-enabled
+        // service the instant it's restarted for any reason. Pause it until the user
+        // explicitly clicks Start integrations again.
+        ns.write(AUTOSTART_PAUSE_FILE, "1", "w");
+        return success(`Killed ${killedCount} script${killedCount === 1 ? "" : "s"} across home and all reachable servers (dashboard preserved). Autostart paused.`, "warning", {
             killedCount,
         });
     }
@@ -270,10 +275,8 @@ function performFileAction(ns, command) {
 }
 
 function performDashboardAction(ns, command) {
-    if (command.actionId === DASHBOARD_ACTION_IDS.START_SERVICES) {
-        return performScriptAction(ns, { kind: "script", actionId: SCRIPT_ACTION_IDS.START, filename: USER_INIT_SCRIPT, args: [] });
-    }
     if (command.actionId === DASHBOARD_ACTION_IDS.START_INTEGRATIONS) {
+        if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) ns.rm(AUTOSTART_PAUSE_FILE, "home");
         return performScriptAction(ns, { kind: "script", actionId: SCRIPT_ACTION_IDS.START, filename: SERVICE_SUPERVISOR_SCRIPT, args: [] });
     }
     return performDashboardKillAction(ns, command);

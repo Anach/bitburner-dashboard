@@ -1,3 +1,5 @@
+import { isServiceVisibleInMenu } from "dashboard/libs/dashboard-options.js";
+
 export function validateDashboardServices(services = [], menuGroupIds, strictMode = false) {
     const issues = [];
     const validServices = [];
@@ -110,12 +112,13 @@ export function getDefaultSelectedServiceId(services = [], menuGroups = []) {
     return services[0]?.id ?? "";
 }
 
-export function buildDashboardMenuGroups(services = [], menuGroups = []) {
+export function buildDashboardMenuGroups(services = [], menuGroups = [], options = {}) {
     return menuGroups.map((group) => ({
         id: group.id,
         title: group.title,
         items: services
             .filter((service) => service.menuGroup === group.id && service.menuVisible !== false)
+            .filter((service) => isServiceVisibleInMenu(service.id, options))
             .map((service) => ({ id: service.id, label: service.menuLabel, alwaysVisible: Boolean(service.alwaysVisible) })),
     }));
 }

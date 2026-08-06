@@ -23,9 +23,6 @@ import {
     parseScriptFolders,
 } from "dashboard/libs/script-folders.js";
 
-export const DASHBOARD_PLAYER_HUD_MODE_AUTO = "Auto";
-export const DASHBOARD_PLAYER_HUD_MODE_SHOWN = "Shown";
-export const DASHBOARD_PLAYER_HUD_MODE_HIDDEN = "Hidden";
 export const DEFAULT_IGNORED_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
 export const DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_IGNORED_SCRIPT_FOLDERS);
 export const DEFAULT_IGNORED_SCRIPT_FILES_OPTION = "";
@@ -34,8 +31,22 @@ export function getServiceAutostartOptionKey(serviceId) {
     return `serviceAutostart:${serviceId}`;
 }
 
+// Autostart defaults OFF for every daemon (integration or bare script) until the user
+// explicitly opts in via its toggle - nothing gets to assume it's safe to auto-launch.
 export function isServiceAutostartEnabled(serviceId, options) {
-    return getObject(options)[getServiceAutostartOptionKey(serviceId)] !== false;
+    return getObject(options)[getServiceAutostartOptionKey(serviceId)] === true;
+}
+
+export function getServiceMenuVisibilityOptionKey(serviceId) {
+    return `serviceMenuVisible:${serviceId}`;
+}
+
+// Unlike autostart, menu visibility defaults ON - hiding is something the user opts out of
+// per service to declutter the nav list, independent of whether it's currently running.
+// This is a user-configurable runtime preference, distinct from the descriptor's own static
+// menuVisible/alwaysVisible flags, which the plugin/integration author controls in code.
+export function isServiceVisibleInMenu(serviceId, options) {
+    return getObject(options)[getServiceMenuVisibilityOptionKey(serviceId)] !== false;
 }
 
 function isDaemonEligible(pluginMetadata) {
@@ -46,19 +57,11 @@ function getObject(value) {
     return value && typeof value === "object" ? value : {};
 }
 
-export function normalizeDashboardPlayerHudMode(value) {
-    const normalized = String(value ?? "").trim().toLowerCase();
-    if (normalized === DASHBOARD_PLAYER_HUD_MODE_SHOWN.toLowerCase()) return DASHBOARD_PLAYER_HUD_MODE_SHOWN;
-    if (normalized === DASHBOARD_PLAYER_HUD_MODE_HIDDEN.toLowerCase()) return DASHBOARD_PLAYER_HUD_MODE_HIDDEN;
-    return DASHBOARD_PLAYER_HUD_MODE_AUTO;
-}
-
 export function getDefaultDashboardOptions(services = []) {
     const defaults = {
         reservedHomeRam: 1024,
         dashboardThemeMode: DASHBOARD_THEME_MODE_DASHBOARD,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
-        dashboardPlayerHudMode: DASHBOARD_PLAYER_HUD_MODE_AUTO,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
         dashboardLastWindowMode: DASHBOARD_WINDOW_MODE_WINDOWED,
         dashboardWindowedX: -1,
@@ -70,9 +73,8 @@ export function getDefaultDashboardOptions(services = []) {
     };
     for (const service of services) {
         Object.assign(defaults, getPluginIntegrationDefaultOptions(service.pluginMetadata));
-        if (typeof service.id === "string" && service.id && isDaemonEligible(service.pluginMetadata)) {
-            defaults[getServiceAutostartOptionKey(service.id)] = true;
-        }
+        // No autostart default seeded here: it stays unset (off) until the user's own
+        // toggle click writes an explicit true into the options file.
     }
     return defaults;
 }
@@ -95,10 +97,13 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         return Number.isFinite(numeric) ? Math.max(minimum, Math.floor(numeric)) : fallback;
     };
     const normalized = {
+        // Carry through any key this function doesn't explicitly know about (per-service
+        // menu-visibility flags, per-bare-script autostart flags keyed by filename, etc.) -
+        // otherwise every save silently drops anything not enumerated below.
+        ...rawOptions,
         reservedHomeRam: Number(rawOptions.reservedHomeRam) >= 0 ? Math.floor(Number(rawOptions.reservedHomeRam)) : defaults.reservedHomeRam,
         dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
-        dashboardPlayerHudMode: normalizeDashboardPlayerHudMode(rawOptions.dashboardPlayerHudMode ?? defaults.dashboardPlayerHudMode),
         dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),
         dashboardLastWindowMode: normalizeDashboardWindowMode(rawOptions.dashboardLastWindowMode ?? defaults.dashboardLastWindowMode),
         dashboardWindowedX: normalizeGeometryNumber(rawOptions.dashboardWindowedX, defaults.dashboardWindowedX, -1),
@@ -120,7 +125,7 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         Object.assign(normalized, normalizePluginIntegrationOptions(service.pluginMetadata, rawOptions));
         if (typeof service.id === "string" && service.id && isDaemonEligible(service.pluginMetadata)) {
             const autostartKey = getServiceAutostartOptionKey(service.id);
-            normalized[autostartKey] = rawOptions[autostartKey] !== false;
+            normalized[autostartKey] = rawOptions[autostartKey] === true;
         }
     }
     return normalized;
