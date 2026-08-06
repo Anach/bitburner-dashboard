@@ -90,7 +90,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
                 "id": "history",
                 "title": "History",
                 "items": [
-                    { "key": "karma", "label": "Karma", "tone": "success", "format": "number", "themeColor": "hack", "hideWhenZero": true },
+                    { "key": "karma", "label": "Karma", "tone": "success", "format": "number", "themeColor": "hack", "hideBelowAbs": 1 },
                     { "key": "kills", "label": "Kills", "tone": "success", "format": "number", "themeColor": "hack", "hideWhenZero": true },
                     { "key": "factions", "label": "Factions", "tone": "neutral", "format": "number", "themeColor": "rep" },
                     { "key": "jobs", "label": "Jobs", "tone": "neutral", "format": "number", "themeColor": "rep" }

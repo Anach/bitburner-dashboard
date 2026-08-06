@@ -2746,6 +2746,8 @@ function buildDashboardHudDefinition(services, telemetryByServiceId) {
                 const value = getDashboardViewValue(telemetry, item?.key);
                 if (value === undefined || value === null) return null;
                 if (item?.hideWhenZero && Number(value) === 0) return null;
+                const hideBelowAbs = Number(item?.hideBelowAbs);
+                if (Number.isFinite(hideBelowAbs) && Math.abs(Number(value)) < hideBelowAbs) return null;
                 return {
                     id: `${service.id}:${String(group?.id ?? "group")}:${String(item?.key ?? item?.label ?? "item")}`,
                     label: String(item?.label ?? item?.key ?? "Value"),
