@@ -5,7 +5,11 @@ export function normalizeActionTone(tone) {
 }
 
 export const ACTION_TONE_STYLES = {
-    neutral: {},
+    neutral: {
+        borderColor: "rgba(120, 149, 137, 0.4)",
+        color: "#789589",
+        background: "rgba(14, 20, 17, 0.9)",
+    },
     success: {
         borderColor: "rgba(110, 231, 168, 0.5)",
         color: "#d8ffea",
