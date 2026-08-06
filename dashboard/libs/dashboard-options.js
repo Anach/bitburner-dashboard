@@ -49,6 +49,19 @@ export function isServiceVisibleInMenu(serviceId, options) {
     return getObject(options)[getServiceMenuVisibilityOptionKey(serviceId)] !== false;
 }
 
+export const HIDE_UNQUALIFIED_PLUGINS_MODE_NONE = "None";
+export const HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY = "Singularity";
+export const HIDE_UNQUALIFIED_PLUGINS_MODES = [HIDE_UNQUALIFIED_PLUGINS_MODE_NONE, HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY];
+
+// Global switch: which capability gate, if any, should hide plugins/integrations with an unmet
+// *required* requirement from the left-nav menu entirely, on top of the per-service hide/show
+// flag above. Scoped to a single named capability rather than "any unmet requirement" because
+// today Singularity is the only gate worth blanket-hiding for; add more mode values (and their
+// requirement mapping in plugin-requirements.js) as other capability-gated plugins show up.
+export function normalizeHideUnqualifiedPluginsMode(value) {
+    return HIDE_UNQUALIFIED_PLUGINS_MODES.includes(value) ? value : HIDE_UNQUALIFIED_PLUGINS_MODE_NONE;
+}
+
 function isDaemonEligible(pluginMetadata) {
     return pluginMetadata?.daemon !== false;
 }
@@ -63,6 +76,7 @@ export function getDefaultDashboardOptions(services = []) {
         dashboardThemeMode: DASHBOARD_THEME_MODE_DASHBOARD,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
+        hideUnqualifiedPluginsMode: HIDE_UNQUALIFIED_PLUGINS_MODE_NONE,
         dashboardLastWindowMode: DASHBOARD_WINDOW_MODE_WINDOWED,
         dashboardWindowedX: -1,
         dashboardWindowedY: -1,
@@ -105,6 +119,7 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
         dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),
+        hideUnqualifiedPluginsMode: normalizeHideUnqualifiedPluginsMode(rawOptions.hideUnqualifiedPluginsMode ?? defaults.hideUnqualifiedPluginsMode),
         dashboardLastWindowMode: normalizeDashboardWindowMode(rawOptions.dashboardLastWindowMode ?? defaults.dashboardLastWindowMode),
         dashboardWindowedX: normalizeGeometryNumber(rawOptions.dashboardWindowedX, defaults.dashboardWindowedX, -1),
         dashboardWindowedY: normalizeGeometryNumber(rawOptions.dashboardWindowedY, defaults.dashboardWindowedY, -1),

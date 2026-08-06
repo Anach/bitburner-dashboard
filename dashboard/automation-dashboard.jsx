@@ -7,8 +7,10 @@ import {
     getDefaultDashboardOptions,
     getServiceAutostartOptionKey,
     getServiceMenuVisibilityOptionKey,
+    HIDE_UNQUALIFIED_PLUGINS_MODES,
     isServiceVisibleInMenu,
     normalizeDashboardOptions,
+    normalizeHideUnqualifiedPluginsMode,
 } from "dashboard/libs/dashboard-options.js";
 import {
     applyDashboardViewWidgetContributions as applyDashboardViewWidgetContributionsDefinition,
@@ -117,7 +119,11 @@ import {
     normalizePluginIntegrationOptions,
     shouldStartPluginIntegrationAfterOptionChange,
 } from "dashboard/libs/plugin-integration.js";
-import { buildPluginRequirementSection, buildPluginRequirementsSnapshot } from "dashboard/libs/plugin-requirements.js";
+import {
+    buildPluginRequirementSection,
+    buildPluginRequirementsSnapshot,
+    isHiddenByQualificationMode,
+} from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import {
     getScriptListDetailEmptyMessage,
@@ -1941,6 +1947,14 @@ const DASHBOARD_SERVICES = [
                     options: DASHBOARD_TEXT_SIZE_MODES,
                     value: options.dashboardTextSizeMode,
                 },
+                {
+                    id: "hide-unqualified-plugins",
+                    label: "Hide unqualified plugins/integrations",
+                    optionKey: "hideUnqualifiedPluginsMode",
+                    type: "select",
+                    options: HIDE_UNQUALIFIED_PLUGINS_MODES,
+                    value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode),
+                },
                 ...(Array.isArray(pluginDashboardOptionInputs) ? pluginDashboardOptionInputs : []),
                 {
                     id: "ignored-script-folders",
@@ -1966,15 +1980,12 @@ const DASHBOARD_SERVICES = [
                 { label: "Theme", value: normalizeDashboardThemeMode(options.dashboardThemeMode), tone: "info" },
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
+                { label: "Hide unqualified plugins", value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode), tone: "info" },
                 { label: "Last window mode", value: normalizeDashboardWindowMode(options.dashboardLastWindowMode), tone: "neutral" },
                 { label: "Ignored folders", value: configuredFolders.join(", ") || "None", tone: "info" },
                 { label: "Ignored scripts", value: configuredFiles.join(", ") || "None", tone: "info" },
                 { label: "Defaults", value: DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION, tone: "neutral" },
             ];
-        },
-        getActions: ({ selectedCenterPanel }) => {
-            if (selectedCenterPanel !== "options") return [];
-            return [{ id: "save-dashboard-options", label: "Save options", kind: "save-options" }];
         },
     },
     {
@@ -2350,8 +2361,14 @@ function getDefaultSelectedServiceId() {
     return getDefaultSelectedServiceIdDefinition(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS);
 }
 
-function getMenuGroups(options = {}) {
-    return buildDashboardMenuGroups(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS, options);
+function getMenuGroups(options = {}, pluginRequirements = {}) {
+    return buildDashboardMenuGroups(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS, options, pluginRequirements);
+}
+
+function isViewQualified(view, pluginRequirements, hideMode) {
+    const serviceId = view?.data?.serviceId;
+    if (typeof serviceId !== "string" || !serviceId) return true;
+    return !isHiddenByQualificationMode(pluginRequirements?.[serviceId], hideMode);
 }
 
 function getCenterPanelsForItem(selectedItem, homeScripts = []) {
@@ -2995,13 +3012,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const playerStatsColumnRef = React.useRef(null);
     const systemOverviewRef = React.useRef(null);
     const dashboardViews = getDashboardViewRegistry().views;
-    const serviceMenuGroups = getMenuGroups(options);
+    const serviceMenuGroups = getMenuGroups(options, pluginRequirements);
+    const hideUnqualifiedPluginsMode = normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode);
     const menuGroups = serviceMenuGroups.map((group) => ({
         ...group,
         items: [
             ...dashboardViews
                 .filter((view) => view.menuGroup === group.id)
                 .filter((view) => isServiceVisibleInMenu(view.id, options))
+                .filter((view) => isViewQualified(view, pluginRequirements, hideUnqualifiedPluginsMode))
                 .map((view) => ({
                     id: `${DASHBOARD_VIEW_ITEM_PREFIX}${view.id}`,
                     label: view.menuLabel,
@@ -3517,6 +3536,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             enqueueDashboardAction({
                 kind: "dashboard",
                 actionId: action.actionId,
+                ...(action.payload && typeof action.payload === "object" ? action.payload : {}),
             });
             return;
         }
@@ -3887,16 +3907,40 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const runningRemoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames)
         ? runningProcessSnapshot.remoteFilenames
         : [];
-    const hasLocalPluginTargets = serviceSupervisorRunning
-        || runningHomeFilenames.some((filename) => isDashboardPluginScript(filename));
-    const hasRemotePluginTargets = runningRemoteFilenames.some((filename) => isDashboardPluginScript(filename));
-    const pluginListDisabledActionIds = [
-        ...(!hasLocalPluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_HOME_SCRIPTS] : []),
-        ...(!hasRemotePluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGIN_LIST_REMOTE_SCRIPTS] : []),
+    const isIntegrationOnlyScript = (filename) => isDashboardIntegrationScript(filename);
+    const isPluginOnlyScript = (filename) => isDashboardPluginScript(filename) && !isDashboardIntegrationScript(filename);
+
+    const hasLocalCoreModuleTargets = serviceSupervisorRunning;
+    const coreModulesListDisabledActionIds = [
+        ...(!hasLocalCoreModuleTargets ? [DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS] : []),
+        DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS, // core modules never run remotely
         ...(serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : []),
     ];
-    const pluginListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.PLUGIN_LIST_CONTROLS, {
-        disabledActionIds: pluginListDisabledActionIds,
+    const coreModulesListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.CORE_MODULES_LIST_CONTROLS, {
+        disabledActionIds: coreModulesListDisabledActionIds,
+        payload: { filenames: dashboardCoreScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
+    });
+
+    const hasLocalIntegrationTargets = serviceSupervisorRunning || runningHomeFilenames.some(isIntegrationOnlyScript);
+    const hasRemoteIntegrationTargets = runningRemoteFilenames.some(isIntegrationOnlyScript);
+    const integrationsListDisabledActionIds = [
+        ...(!hasLocalIntegrationTargets ? [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS] : []),
+        ...(!hasRemoteIntegrationTargets ? [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS] : []),
+    ];
+    const integrationsListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.INTEGRATIONS_LIST_CONTROLS, {
+        disabledActionIds: integrationsListDisabledActionIds,
+        payload: { filenames: integrationScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
+    });
+
+    const hasLocalPluginTargets = serviceSupervisorRunning || runningHomeFilenames.some(isPluginOnlyScript);
+    const hasRemotePluginTargets = runningRemoteFilenames.some(isPluginOnlyScript);
+    const pluginsListDisabledActionIds = [
+        ...(!hasLocalPluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS] : []),
+        ...(!hasRemotePluginTargets ? [DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS] : []),
+    ];
+    const pluginsListTopActions = buildDashboardActions(DASHBOARD_ACTION_GROUPS.PLUGINS_LIST_CONTROLS, {
+        disabledActionIds: pluginsListDisabledActionIds,
+        payload: { filenames: pluginScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0) },
     });
 
     const renderScriptButtons = (panels, renderOptions = {}) => {
@@ -4116,7 +4160,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             return (
                 <>
                     <Card title="Core Module Controls" accent="#6ee7a8" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
-                        {renderServiceActions(pluginListTopActions)}
+                        {renderServiceActions(coreModulesListTopActions)}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
                     <Card title="Core Modules" accent="#6ee7a8" subtitle="Dashboard core scripts" widgetStyles={WIDGET_STYLES}>
@@ -4134,13 +4178,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
-                <Card title="Integrations" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
-                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running integrations.</div>}
+                <>
+                    <Card title="Integration Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
+                        {renderServiceActions(integrationsListTopActions)}
+                    </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped integrations.</div>}
-                </Card>
+                    <Card title="Integrations" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
+                        <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running integrations.</div>}
+                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped integrations.</div>}
+                    </Card>
+                </>
             );
         }
 
@@ -4148,13 +4198,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
-                <Card title="Plugins" accent="#6cb4ff" subtitle="Plugin Controls" widgetStyles={WIDGET_STYLES}>
-                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
+                <>
+                    <Card title="Plugin Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
+                        {renderServiceActions(pluginsListTopActions)}
+                    </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
-                </Card>
+                    <Card title="Plugins" accent="#6cb4ff" subtitle="Plugin Controls" widgetStyles={WIDGET_STYLES}>
+                        <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
+                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
+                    </Card>
+                </>
             );
         }
 

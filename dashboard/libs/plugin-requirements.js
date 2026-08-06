@@ -28,12 +28,36 @@ function getRequirementLabel(requirement) {
     return String(requirement.id ?? "Unknown requirement");
 }
 
+export function hasUnmetPluginRequirements(requirements = []) {
+    return (Array.isArray(requirements) ? requirements : []).some((requirement) => !requirement?.unlocked && !requirement?.optional);
+}
+
+// Maps a "Hide unqualified plugins" dropdown mode to the specific capability requirement it
+// gates on. Add an entry here (and a matching mode value in dashboard-options.js) as other
+// capability-gated plugins become worth blanket-hiding - today only Singularity applies.
+const QUALIFICATION_MODE_REQUIREMENT_FILTERS = {
+    Singularity: { type: "api", id: "singularity" },
+};
+
+export function isHiddenByQualificationMode(requirements, mode) {
+    const filter = QUALIFICATION_MODE_REQUIREMENT_FILTERS[mode];
+    if (!filter) return false;
+    return (Array.isArray(requirements) ? requirements : []).some((requirement) => {
+        return !requirement?.unlocked
+            && !requirement?.optional
+            && requirement?.type === filter.type
+            && requirement?.id === filter.id;
+    });
+}
+
 export function buildPluginRequirementsSnapshot(ns, services = [], capabilitySnapshot) {
     const snapshot = capabilitySnapshot ?? buildCapabilitySnapshot(ns);
 
     return Object.fromEntries((services ?? []).map((service) => {
         const requirements = Array.isArray(service?.requirements) ? service.requirements : [];
         return [service.id, requirements.map((requirement) => ({
+            type: requirement.type,
+            id: requirement.id,
             label: getRequirementLabel(requirement),
             unlocked: isCapabilityRequirementMet(requirement, snapshot),
             optional: requirement.required === false,
@@ -43,7 +67,7 @@ export function buildPluginRequirementsSnapshot(ns, services = [], capabilitySna
 
 export function buildPluginRequirementSection(requirements = []) {
     if (!Array.isArray(requirements)) return null;
-    const hasUnmetRequirements = requirements.some((requirement) => !requirement.unlocked && !requirement.optional);
+    const hasUnmetRequirements = hasUnmetPluginRequirements(requirements);
     return {
         type: "items",
         title: "Requirements",
