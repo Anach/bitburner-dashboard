@@ -113,6 +113,7 @@ import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs
 import {
     applyPluginIntegrationCommand,
     applyPluginIntegrationOptions,
+    getPluginIntegrationAutoStartFundsThreshold,
     getPluginIntegrationOverviewGauges,
     getPluginIntegrationGraphs,
     getPluginIntegrationOverviewLines,
@@ -176,6 +177,15 @@ const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
 const DASHBOARD_MINIMIZED_UI_TICK_MS = 250;
 const DASHBOARD_ACTION_POLL_MS = 50;
+// Every ns.printRaw() call mounts a brand-new React tree (see wrapUserNode's ever-incrementing
+// key in Bitburner's own NetscriptHelpers.tsx) - no useState/useRef survives between ticks. This
+// MUST be module-level state, not a ref, or a cooldown guard silently resets to empty every tick
+// and never actually blocks anything. Without it, a service that starts and immediately self-exits
+// (e.g. hacknet-buyer/server-buyer finding themselves already fully capped and upgraded) gets
+// restarted on the very next tick, forever. Five minutes matches the retry backoff already used
+// for the same class of problem in singularity/faction-manager.js.
+const FUNDS_AUTO_START_COOLDOWN_MS = 5 * 60 * 1000;
+const fundsAutoStartCooldowns = new Map();
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
@@ -3037,6 +3047,44 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             }
         };
     }, [options, homeScripts]);
+
+    // Auto-start any service configured with `lifecycle.autoStartWhenFundsAbove` once home money
+    // (read from progression-report telemetry, already polled at no extra Netscript RAM cost)
+    // crosses its configured threshold. Unlike the option-increase effect above, this re-checks on
+    // every tick, not just when an option changes, so it reacts to money actually accumulating
+    // rather than only to the user editing a cap.
+    React.useEffect(() => {
+        const currentMoney = Number(telemetryByServiceId?.["progression.report"]?.currentMoney);
+        if (!Number.isFinite(currentMoney)) return;
+
+        const now = Date.now();
+        const cooldowns = fundsAutoStartCooldowns;
+
+        for (const service of getDashboardServiceRegistry().services) {
+            const integration = service.pluginMetadata;
+            if (!integration) continue;
+
+            const fundsThreshold = getPluginIntegrationAutoStartFundsThreshold(integration, options);
+            if (fundsThreshold === null || currentMoney < fundsThreshold) continue;
+
+            const running = homeScripts.some((script) => script?.filename === integration.scriptPath && script?.running);
+            if (running) {
+                // Confirmed alive - clear any cooldown so a future self-exit is retried promptly.
+                cooldowns.delete(integration.serviceId);
+                continue;
+            }
+
+            const lastAttemptAt = cooldowns.get(integration.serviceId) ?? 0;
+            if (now - lastAttemptAt < FUNDS_AUTO_START_COOLDOWN_MS) continue;
+
+            cooldowns.set(integration.serviceId, now);
+            enqueueDashboardAction({
+                kind: "script",
+                actionId: SCRIPT_ACTION_IDS.START,
+                filename: integration.scriptPath,
+            });
+        }
+    }, [telemetryByServiceId, homeScripts, options]);
 
     const selectedItem = uiState.selectedItem;
     const activeView = getDashboardViewRegistry().byId.get(uiState.activeViewId) ?? null;

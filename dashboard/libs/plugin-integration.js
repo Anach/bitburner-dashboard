@@ -139,6 +139,23 @@ export function shouldStartPluginIntegrationAfterOptionChange(integration, previ
     });
 }
 
+// Returns the funds level at/above which this integration should be auto-started (the lowest of
+// its configured `autoStartWhenFundsAbove` option values, since any one of them becoming
+// affordable is reason enough to check), or null if the integration has none configured or every
+// configured threshold is left at its 0/unset default (auto-start-on-funds is opt-in per option).
+export function getPluginIntegrationAutoStartFundsThreshold(integration, currentOptions) {
+    const optionKeys = integration?.lifecycle?.autoStartWhenFundsAbove;
+    if (!Array.isArray(optionKeys) || optionKeys.length === 0) return null;
+
+    const current = normalizePluginIntegrationOptions(integration, currentOptions);
+    const thresholds = optionKeys
+        .filter((optionKey) => typeof optionKey === "string" && optionKey in current)
+        .map((optionKey) => Number(current[optionKey]))
+        .filter((value) => Number.isFinite(value) && value > 0);
+    if (thresholds.length === 0) return null;
+    return Math.min(...thresholds);
+}
+
 export function loadPluginIntegrationStats(ns, integration) {
     if (!ns) return null;
     const telemetry = getObject(integration?.telemetry);
