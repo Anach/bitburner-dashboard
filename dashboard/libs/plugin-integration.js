@@ -2,6 +2,10 @@ import { formatMoney, formatRam, formatSignedMoney } from "dashboard/libs/format
 
 const telemetryJsonCache = new Map();
 const integrationStatsCache = new WeakMap();
+// Keyed by serviceId (a stable string), not the integration object itself - the object reference
+// changes every time the service registry regenerates (every 5s), but we need this to remember
+// the last-toasted summary for the life of the whole running script.
+const lastAppliedOptionsSummaries = new Map();
 
 function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
@@ -228,10 +232,18 @@ export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAc
         ns.writePort(port, value);
     }
 
-    if (typeof logAction === "function") {
-        const summary = (commandMetadata.summaryOptions ?? [])
-            .map((optionKey) => `${optionKey}=${options[optionKey]}`)
-            .join(", ");
+    // The port writes above always happen - a freshly (re)started script has no memory of prior
+    // port commands and must be re-primed every time. But it's the same options every routine
+    // (re)start, so only toast when the values actually differ from what was last applied,
+    // not every time a script happens to (re)start with unchanged settings.
+    const summary = (commandMetadata.summaryOptions ?? [])
+        .map((optionKey) => `${optionKey}=${options[optionKey]}`)
+        .join(", ");
+    const serviceId = integration?.serviceId;
+    const changed = typeof serviceId !== "string" || lastAppliedOptionsSummaries.get(serviceId) !== summary;
+    if (typeof serviceId === "string") lastAppliedOptionsSummaries.set(serviceId, summary);
+
+    if (changed && typeof logAction === "function") {
         logAction("success", `Applied ${displayName} options${summary ? `: ${summary}.` : "."}`);
     }
 }
