@@ -603,10 +603,14 @@ function FileDialog({ dialog, onChangeTarget, onConfirm, onClose, onInputFocusCh
                 </div>
                 <div style={STYLES.modalBody}>
                     {isPreview ? (
-                        <>
-                            <pre style={STYLES.preview}>{dialog.content}</pre>
-                            {dialog.truncated ? <div style={{ color: COLORS.amber, marginTop: "8px", fontSize: "9px" }}>[preview truncated]</div> : null}
-                        </>
+                        dialog.content === null ? (
+                            <div style={{ color: COLORS.muted }}>Loading preview...</div>
+                        ) : (
+                            <>
+                                <pre style={STYLES.preview}>{dialog.content}</pre>
+                                {dialog.truncated ? <div style={{ color: COLORS.amber, marginTop: "8px", fontSize: "9px" }}>[preview truncated]</div> : null}
+                            </>
+                        )
                     ) : dialog.type === "cleanup" ? (
                         <>
                             <div style={{ color: COLORS.amber }}>
@@ -732,9 +736,10 @@ export function FileManagerView({
     ignoredFolders = [],
     initialState = {},
     lastActionResult,
+    lastPreviewResult,
     onStateChange,
     onFileAction,
-    onReadFile,
+    onRequestPreview,
     onInputFocusChange,
     onExit,
     headerActions,
@@ -793,6 +798,7 @@ export function FileManagerView({
     }));
     const selectionModifiersRef = React.useRef({ toggle: false, range: false });
     const seenActionResultRef = React.useRef(0);
+    const seenPreviewResultRef = React.useRef(0);
     const ignoredFolderKey = ignoredFolders.join("|");
     const buildEntries = (pane) => buildFilePaneEntries(files, pane.path, {
         query,
@@ -873,6 +879,20 @@ export function FileManagerView({
     }, [lastActionResult?.timestamp, lastActionResult?.viewId, lastActionResult?.message, view?.id]);
 
     React.useEffect(() => {
+        const resultTime = Number(lastPreviewResult?.timestamp) || 0;
+        if (!resultTime || resultTime <= seenPreviewResultRef.current) return;
+        seenPreviewResultRef.current = resultTime;
+        setDialog((current) => {
+            if (!current || current.type !== "preview" || current.entry?.path !== lastPreviewResult?.path) return current;
+            const maxChars = Math.max(1000, Number(view?.preview?.maxChars) || 80000);
+            const content = lastPreviewResult?.error
+                ? `[Unable to read file: ${lastPreviewResult.error}]`
+                : String(lastPreviewResult?.content ?? "");
+            return { ...current, content: content.slice(0, maxChars), truncated: content.length > maxChars };
+        });
+    }, [lastPreviewResult?.timestamp, lastPreviewResult?.path]);
+
+    React.useEffect(() => {
         const entry = selectedByPane[activePane];
         if (!entry) return;
         rowRefs.current[`${activePane}:${entry.id}`]?.scrollIntoView?.({ block: "nearest" });
@@ -948,19 +968,16 @@ export function FileManagerView({
 
     const showPreview = (entry) => {
         if (!entry || entry.entryType !== "file" || !entry.exists || !isReadableFile(entry.path)) return;
-        const maxChars = Math.max(1000, Number(view?.preview?.maxChars) || 80000);
-        let content = "";
-        try {
-            content = String(onReadFile?.(entry.path) ?? "");
-        } catch (error) {
-            content = `[Unable to read file: ${String(error?.message ?? error)}]`;
-        }
+        // Content isn't available yet - ns.read() can't be called directly from a click handler
+        // (it would race the main dashboard loop's own in-flight ns.sleep()). Show a loading state
+        // and populate content once onRequestPreview's result comes back on a later tick.
         setDialog({
             type: "preview",
             entry,
-            content: content.slice(0, maxChars),
-            truncated: content.length > maxChars,
+            content: null,
+            truncated: false,
         });
+        onRequestPreview?.(entry.path);
     };
 
     const openEntry = (paneId, entry) => {

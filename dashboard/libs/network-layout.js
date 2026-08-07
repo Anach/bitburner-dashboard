@@ -1,14 +1,11 @@
+import { finiteNumber } from "dashboard/libs/number-utils.js";
+
 function getValue(source, key) {
     if (!source || typeof source !== "object" || typeof key !== "string" || !key) return undefined;
     return key.split(".").reduce((value, segment) => {
         if (!value || typeof value !== "object") return undefined;
         return value[segment];
     }, source);
-}
-
-function finiteNumber(value, fallback) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 // Pure function of (nodes, fields, options), but `nodes` is typically a freshly-filtered array

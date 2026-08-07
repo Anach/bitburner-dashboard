@@ -1,3 +1,5 @@
+import { clamp, finiteNumber } from "dashboard/libs/number-utils.js";
+
 export const DASHBOARD_WINDOW_MODE_WINDOWED = "windowed";
 export const DASHBOARD_WINDOW_MODE_MAXIMIZED = "maximized";
 
@@ -21,15 +23,6 @@ export const MINIMUM_TAIL_WIDTH = 150;
 export const MINIMUM_TAIL_HEIGHT = 33;
 export const MINIMIZED_TAIL_WIDTH = 190;
 export const MINIMIZED_TAIL_MARGIN = 12;
-
-function finiteNumber(value, fallback = 0) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function clamp(value, minimum, maximum) {
-    return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
-}
 
 export function normalizeDashboardWindowMode(value) {
     return String(value ?? "").trim().toLowerCase() === DASHBOARD_WINDOW_MODE_MAXIMIZED

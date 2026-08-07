@@ -1,3 +1,5 @@
+import { clamp, finiteNumber } from "dashboard/libs/number-utils.js";
+
 export const DASHBOARD_THEME_MODE_DASHBOARD = "Dashboard";
 export const DASHBOARD_THEME_MODE_GAME = "Follow game";
 export const DASHBOARD_THEME_MODES = [DASHBOARD_THEME_MODE_DASHBOARD, DASHBOARD_THEME_MODE_GAME];
@@ -61,10 +63,6 @@ const THEME_ROLE_PROP = "data-dashboard-theme-role";
 const TYPOGRAPHY_ELEMENT_TYPES = new Set(["button", "input", "select", "textarea"]);
 const PLAYER_STAT_THEME_ROLE_PREFIX = "player-stat-";
 const PLAYER_STAT_THEME_KEYS = new Set(["hp", "money", "hack", "combat", "cha", "int", "rep", "primary", "secondary", "maplocation"]);
-
-function clamp(value, minimum = 0, maximum = 1) {
-    return Math.min(maximum, Math.max(minimum, value));
-}
 
 function parseHexColor(value) {
     const raw = String(value ?? "").trim().slice(1);
@@ -171,10 +169,6 @@ function normalizeGameTheme(rawTheme = {}) {
     return normalized;
 }
 
-function finiteNumber(value, fallback) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : fallback;
-}
 
 function normalizeGameStyles(rawStyles = {}) {
     return {
@@ -433,10 +427,11 @@ export function adaptDashboardColorValue(value, propertyName, theme, themeRole =
     return adaptStyleValue(value, propertyName, theme, themeRole, elementType);
 }
 
-export function normalizeDashboardThemeMode(value) {
-    return String(value ?? "").trim().toLowerCase() === DASHBOARD_THEME_MODE_GAME.toLowerCase()
-        ? DASHBOARD_THEME_MODE_GAME
-        : DASHBOARD_THEME_MODE_DASHBOARD;
+// "Dashboard" mode is retired (inconsistent font resizing on window restore, never fully fixed) -
+// this always resolves to "Follow game" now regardless of what a legacy persisted options file
+// might still contain, so the buggy styling path is permanently unreachable.
+export function normalizeDashboardThemeMode() {
+    return DASHBOARD_THEME_MODE_GAME;
 }
 
 export function getGameThemeSignature(rawTheme = {}) {

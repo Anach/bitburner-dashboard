@@ -123,12 +123,6 @@ export function normalizePluginIntegrationOptions(integration, rawOptions = {}) 
     return normalized;
 }
 
-export function arePluginIntegrationOptionsEqual(integration, leftOptions, rightOptions) {
-    const left = normalizePluginIntegrationOptions(integration, leftOptions);
-    const right = normalizePluginIntegrationOptions(integration, rightOptions);
-    return Object.keys(getObject(integration?.options)).every((optionKey) => left[optionKey] === right[optionKey]);
-}
-
 export function shouldStartPluginIntegrationAfterOptionChange(integration, previousOptions, currentOptions) {
     const optionKeys = integration?.lifecycle?.startOnOptionIncrease;
     if (!Array.isArray(optionKeys) || optionKeys.length === 0) return false;

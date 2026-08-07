@@ -24,15 +24,13 @@ import { getDashboardPluginAdapterFactories } from "dashboard/libs/plugin-adapte
 import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
 import {
-    DASHBOARD_THEME_MODE_DASHBOARD,
-    DASHBOARD_THEME_MODES,
+    DASHBOARD_THEME_MODE_GAME,
     DASHBOARD_TEXT_SIZE_MODES,
     buildDashboardTheme,
     createDashboardThemedReact,
     getGameStylesSignature,
     getGameThemeSignature,
     normalizeDashboardTextSizeMode,
-    normalizeDashboardThemeMode,
 } from "dashboard/libs/theme-adapter.js";
 import {
     DASHBOARD_STARTUP_MODES,
@@ -150,8 +148,7 @@ export const DASHBOARD_SCRIPT_METADATA = {
 
 let React = null;
 let rawReact = null;
-let activeDashboardTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_DASHBOARD);
-let DASH_NS = null;
+let activeDashboardTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_GAME);
 
 const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
@@ -163,6 +160,7 @@ const DASHBOARD_VIEW_INTERACTION_STATE_KEY = "__dashboard_view_interaction_state
 const DASHBOARD_VIEW_DRAG_ACTIVE_KEY = "__dashboard_view_drag_active_v1";
 const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
 const DASHBOARD_FILE_ACTION_RESULT_KEY = "__dashboard_file_action_result_v1";
+const DASHBOARD_FILE_PREVIEW_RESULT_KEY = "__dashboard_file_preview_result_v1";
 const DASHBOARD_FILE_VIEW_RENDER_STATE_KEY = "__dashboard_file_view_render_state_v1";
 const DASHBOARD_ACTION_WORKER_TIMEOUT_MS = 60000;
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
@@ -320,12 +318,6 @@ const WIDGET_STYLES = {
         background: "rgba(72, 24, 24, 0.95)",
         boxShadow: "inset 3px 0 0 #ff9696",
         color: "#ffe0e0"
-    },
-    optionsPanel: {
-        border: "1px solid #355435",
-        borderRadius: "8px",
-        background: "rgba(8, 12, 8, 0.98)",
-        padding: "10px"
     },
     optionGrid: {
         display: "grid",
@@ -494,15 +486,6 @@ const WIDGET_STYLES = {
         gap: "4px",
         flex: "1 1 auto",
         minWidth: 0
-    },
-    heroAction: {
-        flex: "0 0 auto",
-        minWidth: "160px",
-        padding: "8px 12px",
-        textAlign: "center",
-        whiteSpace: "nowrap",
-        fontWeight: 400,
-        background: "rgba(36, 12, 12, 0.78)"
     },
     heroTitle: {
         fontSize: "18px",
@@ -744,13 +727,6 @@ const WIDGET_STYLES = {
         fontWeight: 800,
         letterSpacing: "0.08em",
         textTransform: "uppercase"
-    },
-    homeHint: {
-        color: "#7799b8",
-        fontSize: "10px",
-        letterSpacing: "0.05em",
-        textTransform: "uppercase",
-        textAlign: "right"
     },
     homeWidgetGrid: {
         display: "grid",
@@ -1146,9 +1122,6 @@ const WIDGET_STYLES = {
     strong: {
         fontWeight: 800
     },
-    mono: {
-        fontVariantNumeric: "tabular-nums"
-    },
     sectionGap: {
         height: "5px"
     },
@@ -1535,6 +1508,20 @@ function applyQueuedDashboardActions(ns) {
             } else {
                 queueDashboardWorkerAction(ns, command);
             }
+        },
+        "file-preview": (command) => {
+            // ns.read() is synchronous, but it's still an ns.* call - it must run from here (the
+            // safe main-loop context), never directly from the click handler that requested it,
+            // which risks colliding with this loop's own in-flight ns.sleep().
+            const path = String(command.path ?? "");
+            let content = "";
+            let error = "";
+            try {
+                content = String(ns.read(path) ?? "");
+            } catch (err) {
+                error = String(err?.message ?? err);
+            }
+            globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] = { path, content, error, timestamp: Date.now() };
         },
         script: (command) => {
             if (typeof command.actionId === "string" && typeof command.filename === "string") {
@@ -1935,14 +1922,6 @@ const DASHBOARD_SERVICES = [
             if (selectedCenterPanel !== "options") return [];
             return [
                 {
-                    id: "dashboard-theme-mode",
-                    label: "Dashboard theme",
-                    optionKey: "dashboardThemeMode",
-                    type: "select",
-                    options: DASHBOARD_THEME_MODES,
-                    value: options.dashboardThemeMode,
-                },
-                {
                     id: "dashboard-window-startup-mode",
                     label: "Dashboard window startup",
                     optionKey: "dashboardWindowStartupMode",
@@ -1988,7 +1967,6 @@ const DASHBOARD_SERVICES = [
             const configuredFolders = parseScriptFolders(options.ignoredScriptFolders);
             const configuredFiles = parseScriptFiles(options.ignoredScriptFiles);
             return [
-                { label: "Theme", value: normalizeDashboardThemeMode(options.dashboardThemeMode), tone: "info" },
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
                 { label: "Hide unqualified plugins", value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode), tone: "info" },
@@ -2022,7 +2000,7 @@ const DASHBOARD_SERVICES = [
         getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
             return isDashboardCoreScript(script?.filename);
         })),
-        getState: ({ selectedScript, homeScripts, pluginRequirements, ns }) => {
+        getState: ({ selectedScript, homeScripts, pluginRequirements, autostartPaused }) => {
             if (!selectedScript) return [];
             const scriptLines = [
                 { label: "Dashboard Core", value: selectedScript.label, tone: "info" },
@@ -2041,7 +2019,7 @@ const DASHBOARD_SERVICES = [
                     homeScripts,
                     pluginRequirements,
                     selectedScript.running,
-                    Boolean(ns?.fileExists?.(AUTOSTART_PAUSE_FILE, "home"))
+                    Boolean(autostartPaused)
                 ),
             ];
         },
@@ -2867,7 +2845,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     };
 }
 
-function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot }) {
+function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused }) {
     const [uiState, setUiState] = React.useState(loadUiState);
     const [options, setOptions] = React.useState(() => persistedOptions ?? getDefaultOptions());
     const gameThemeSignature = getGameThemeSignature(gameTheme);
@@ -3205,7 +3183,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     });
 
     const serviceContext = {
-        ns: DASH_NS,
+        autostartPaused,
         telemetryByServiceId,
         pluginRequirements,
         selectedCenterPanel,
@@ -4649,7 +4627,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         viewId: activeView.id,
                         ...action,
                     })}
-                    onReadFile={(path) => DASH_NS?.read(path) ?? ""}
+                    onRequestPreview={(path) => enqueueDashboardAction({
+                        kind: "file-preview",
+                        viewId: activeView.id,
+                        path,
+                    })}
+                    lastPreviewResult={globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] ?? null}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
                     headerActions={windowControl}
@@ -5164,7 +5147,6 @@ export async function main(ns) {
     ns.disableLog("ALL");
     const launchOptions = parseDashboardLaunchOptions(ns.args);
     const { isDaemon, autoStart } = launchOptions;
-    DASH_NS = ns;
 
     if (!ensureSingleDashboardInstance(ns)) {
         return;
@@ -5237,6 +5219,12 @@ export async function main(ns) {
             maximized: layoutSnapshot.maximized,
         });
         const homeRamStatus = getHomeRamStatus(ns);
+        // Computed here (the safe main-loop NS context) and threaded down as a prop rather than
+        // called directly from inside a React handler - a click that re-renders the already-
+        // mounted tree runs independently of this loop's own tick cadence, and calling any ns.*
+        // function synchronously from within that render risks colliding with this loop's own
+        // in-flight ns.sleep(), which Bitburner treats as a fatal concurrency error.
+        const autostartPaused = ns.fileExists(AUTOSTART_PAUSE_FILE, "home");
         const telemetryByServiceId = dashboardSnapshotCoordinator.reuseRecord("telemetry", Object.fromEntries(
             getDashboardServiceRegistry().services
                 .filter((service) => service.pluginMetadata?.telemetry?.path)
@@ -5338,6 +5326,7 @@ export async function main(ns) {
                 scriptLogSnapshots,
                 layoutSnapshot,
                 activeDashboardTheme.signature,
+                autostartPaused,
             ];
             const canSkipRender = Array.isArray(lastRenderedSignature)
                 && renderSignature.length === lastRenderedSignature.length
@@ -5359,6 +5348,7 @@ export async function main(ns) {
                         fileManagerSnapshots={fileManagerSnapshots}
                         scriptLogSnapshots={scriptLogSnapshots}
                         layoutSnapshot={layoutSnapshot}
+                        autostartPaused={autostartPaused}
                     ></DashboardWidget>
                 );
                 ns.ui.renderTail();

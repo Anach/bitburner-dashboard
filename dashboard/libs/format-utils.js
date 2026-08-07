@@ -1,15 +1,3 @@
-export function formatDuration(ms) {
-    if (!Number.isFinite(ms) || ms <= 0) return "now";
-
-    const totalMinutes = Math.ceil(ms / 60000);
-    if (totalMinutes < 60) return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
-
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (minutes === 0) return `${hours} hour${hours === 1 ? "" : "s"}`;
-    return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
-}
-
 export function formatMoney(value) {
     if (!Number.isFinite(value)) return "$0";
     return `$${Math.floor(value).toLocaleString()}`;

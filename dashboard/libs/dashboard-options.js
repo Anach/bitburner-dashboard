@@ -1,5 +1,5 @@
 import {
-    DASHBOARD_THEME_MODE_DASHBOARD,
+    DASHBOARD_THEME_MODE_GAME,
     DASHBOARD_TEXT_SIZE_COMFORTABLE,
     normalizeDashboardTextSizeMode,
     normalizeDashboardThemeMode,
@@ -73,7 +73,7 @@ function getObject(value) {
 export function getDefaultDashboardOptions(services = []) {
     const defaults = {
         reservedHomeRam: 1024,
-        dashboardThemeMode: DASHBOARD_THEME_MODE_DASHBOARD,
+        dashboardThemeMode: DASHBOARD_THEME_MODE_GAME,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
         hideUnqualifiedPluginsMode: HIDE_UNQUALIFIED_PLUGINS_MODE_NONE,
