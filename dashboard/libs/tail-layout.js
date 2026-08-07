@@ -133,15 +133,23 @@ export function getDashboardLayoutTier(width) {
 /**
  * @param {{mode?: string, minimized?: boolean, geometry?: object, viewport?: object | number[], titleHeight?: number}} [raw]
  */
+// Every call otherwise allocates a fresh object even when nothing about the layout actually
+// changed. The upstream geometry/viewport inputs are themselves freshly allocated most calls, so
+// memoize on this function's own small set of final (cheap, primitive) output fields instead of
+// trying to stabilize every object further upstream.
+let cachedDashboardLayoutSnapshot = null;
+
 export function buildDashboardLayoutSnapshot(raw = {}) {
     const { mode, minimized = false, geometry, viewport, titleHeight = DEFAULT_TAIL_TITLE_HEIGHT } = raw;
     const normalizedViewport = normalizeViewport(viewport);
     const normalizedGeometry = normalizeTailGeometry(geometry, getDefaultWindowedGeometry(normalizedViewport));
     const normalizedTitleHeight = clamp(finiteNumber(titleHeight, DEFAULT_TAIL_TITLE_HEIGHT), 0, normalizedGeometry.height);
     const contentHeight = Math.max(0, normalizedGeometry.height - normalizedTitleHeight);
-    return {
-        mode: normalizeDashboardWindowMode(mode),
-        maximized: normalizeDashboardWindowMode(mode) === DASHBOARD_WINDOW_MODE_MAXIMIZED,
+    const normalizedMode = normalizeDashboardWindowMode(mode);
+
+    const next = {
+        mode: normalizedMode,
+        maximized: normalizedMode === DASHBOARD_WINDOW_MODE_MAXIMIZED,
         minimized: Boolean(minimized),
         tailWidth: normalizedGeometry.width,
         tailHeight: normalizedGeometry.height,
@@ -151,4 +159,11 @@ export function buildDashboardLayoutSnapshot(raw = {}) {
         viewportHeight: normalizedViewport.height,
         layoutTier: getDashboardLayoutTier(normalizedGeometry.width),
     };
+
+    const cached = cachedDashboardLayoutSnapshot;
+    if (cached && Object.keys(next).every((key) => cached[key] === next[key])) {
+        return cached;
+    }
+    cachedDashboardLayoutSnapshot = next;
+    return next;
 }

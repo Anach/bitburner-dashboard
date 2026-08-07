@@ -53,6 +53,7 @@ export function createDashboardSnapshotCoordinator(options = {}) {
     const recordCache = new Map();
     let remoteProcesses = { count: 0, filenames: [] };
     let remoteProcessesAt = Number.NEGATIVE_INFINITY;
+    let cachedRunningProcessSnapshot = null;
 
     const getOrCreate = (key, now, intervalMs, signature, factory) => {
         const normalizedKey = String(key ?? "");
@@ -85,16 +86,29 @@ export function createDashboardSnapshotCoordinator(options = {}) {
                 .filter((process) => typeof process?.filename === "string")
                 .map((process) => process.filename);
 
+            // homeFilenames/remoteProcesses only change in content occasionally (remoteProcesses
+            // itself is already reference-stable within its own 5s cadence above); reuse the same
+            // snapshot object rather than allocating a new one every single cycle when nothing
+            // about the running-process set actually changed.
+            const snapshotSignature = `${homeFilenames.join(",")}|${remoteProcesses.filenames.join(",")}`;
+            let runningProcessSnapshot;
+            if (cachedRunningProcessSnapshot?.signature === snapshotSignature) {
+                runningProcessSnapshot = cachedRunningProcessSnapshot.value;
+            } else {
+                runningProcessSnapshot = {
+                    totalCount: homeFilenames.length + remoteProcesses.count,
+                    homeFilenames,
+                    remoteFilenames: remoteProcesses.filenames,
+                };
+                cachedRunningProcessSnapshot = { signature: snapshotSignature, value: runningProcessSnapshot };
+            }
+
             return {
                 now,
                 homeFiles,
                 homeProcesses,
                 fileSignature,
-                runningProcessSnapshot: {
-                    totalCount: homeFilenames.length + remoteProcesses.count,
-                    homeFilenames,
-                    remoteFilenames: remoteProcesses.filenames,
-                },
+                runningProcessSnapshot,
             };
         },
         getOrCreate,

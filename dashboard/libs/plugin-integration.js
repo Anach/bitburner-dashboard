@@ -436,9 +436,22 @@ export function getPluginIntegrationOverviewGauges(integration, stats) {
         .sort((left, right) => left.order - right.order);
 }
 
+// Both functions below are pure functions of their arguments, and `stats` is already
+// reference-stable when telemetry content is unchanged (see loadPluginIntegrationStats' own
+// WeakMap cache). Memoizing by reference avoids rebuilding every section wrapper object (and,
+// downstream, DataGraph's point/path recomputation) on every call when nothing changed.
+let cachedPluginIntegrationSections = null;
+
 export function getPluginIntegrationSections(integration, stats, panelId) {
+    if (cachedPluginIntegrationSections
+        && cachedPluginIntegrationSections.integration === integration
+        && cachedPluginIntegrationSections.stats === stats
+        && cachedPluginIntegrationSections.panelId === panelId) {
+        return cachedPluginIntegrationSections.result;
+    }
+
     const safeStats = getObject(stats);
-    return (integration?.telemetry?.sections ?? [])
+    const result = (integration?.telemetry?.sections ?? [])
         .filter((section) => typeof section?.panelId !== "string" || section.panelId === panelId)
         .map((section) => {
             const source = getTelemetryFieldValue(safeStats, section.sourceKey);
@@ -453,9 +466,32 @@ export function getPluginIntegrationSections(integration, stats, panelId) {
                 items: Array.isArray(source) ? source : [],
             };
         });
+
+    cachedPluginIntegrationSections = { integration, stats, panelId, result };
+    return result;
 }
 
+// Called via flatMap() over every service at once (see the "home graphs" overview widget), so a
+// single-slot cache would thrash on every iteration - a WeakMap keyed by the per-service
+// integration object naturally partitions the cache without any manual key composition.
+const cachedPluginIntegrationGraphsByIntegration = new WeakMap();
+
 export function getPluginIntegrationGraphs(integration, stats) {
+    if (!integration || typeof integration !== "object") {
+        return buildPluginIntegrationGraphs(integration, stats);
+    }
+
+    const cached = cachedPluginIntegrationGraphsByIntegration.get(integration);
+    if (cached && cached.stats === stats) {
+        return cached.result;
+    }
+
+    const result = buildPluginIntegrationGraphs(integration, stats);
+    cachedPluginIntegrationGraphsByIntegration.set(integration, { stats, result });
+    return result;
+}
+
+function buildPluginIntegrationGraphs(integration, stats) {
     const safeStats = getObject(stats);
     return (integration?.telemetry?.sections ?? [])
         .filter((section) => section?.type === "graph")

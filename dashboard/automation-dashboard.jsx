@@ -176,7 +176,6 @@ const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
 const DASHBOARD_MINIMIZED_UI_TICK_MS = 250;
-const DASHBOARD_ACTION_POLL_MS = 50;
 // Every ns.printRaw() call mounts a brand-new React tree (see wrapUserNode's ever-incrementing
 // key in Bitburner's own NetscriptHelpers.tsx) - no useState/useRef survives between ticks. This
 // MUST be module-level state, not a ref, or a cooldown guard silently resets to empty every tick
@@ -187,6 +186,13 @@ const DASHBOARD_ACTION_POLL_MS = 50;
 const FUNDS_AUTO_START_COOLDOWN_MS = 5 * 60 * 1000;
 const fundsAutoStartCooldowns = new Map();
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
+// A shared reference for "this view isn't active" instead of a fresh {} literal each tick, so an
+// inactive File Manager/Script Log view compares equal to itself across ticks.
+const EMPTY_DASHBOARD_SNAPSHOT_MAP = Object.freeze({});
+// The last set of values that actually produced a printRaw()/renderTail() call - see the
+// canSkipRender check in main(). Module-level, not a ref: see the ns.printRaw-remounts-every-tick
+// note above.
+let lastRenderedSignature = null;
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
 let latestHomeProcessFilenames = new Set();
@@ -1649,18 +1655,32 @@ function buildScriptBuckets(
     };
 }
 
+// Purely a function of (homeScripts, registry), and both are already reference-stable within
+// their own refresh cadences - memoizing by reference pair is exact, not approximate: any real
+// change to either input necessarily produces a new reference, invalidating the cache correctly.
+let cachedPluginScriptMetadataResult = null;
+
 function applyPluginScriptMetadata(homeScripts, registry) {
+    if (cachedPluginScriptMetadataResult
+        && cachedPluginScriptMetadataResult.homeScripts === homeScripts
+        && cachedPluginScriptMetadataResult.registry === registry) {
+        return cachedPluginScriptMetadataResult.result;
+    }
+
     const pluginMetadataByFile = new Map(
         (registry?.services ?? [])
             .filter((service) => typeof service?.pluginFile === "string")
             .map((service) => [service.pluginFile, service.pluginMetadata])
     );
 
-    return (homeScripts ?? []).map((script) => {
+    const result = (homeScripts ?? []).map((script) => {
         const pluginMetadata = pluginMetadataByFile.get(script?.filename);
         if (typeof pluginMetadata?.daemon !== "boolean") return script;
         return { ...script, daemon: pluginMetadata.daemon, lifecycleSource: "integration" };
     });
+
+    cachedPluginScriptMetadataResult = { homeScripts, registry, result };
+    return result;
 }
 
 function buildHomeScriptCatalog(ns, homeFiles) {
@@ -1707,6 +1727,12 @@ function buildHomeScriptCatalog(ns, homeFiles) {
         });
 }
 
+// Rebuilding the full script catalog (map + spread per entry) on every tick is wasted work when
+// nothing running actually changed. Cache by a cheap signature of the running-thread state (not
+// object identity of homeProcesses, which is a fresh ns.ps() result every call regardless of
+// content) so unrelated ticks reuse the same array/object references.
+let cachedHomeProcessState = null;
+
 function applyHomeProcessState(scriptCatalog, homeProcesses) {
     const runningThreadsByFile = new Map();
     for (const process of Array.isArray(homeProcesses) ? homeProcesses : []) {
@@ -1714,7 +1740,18 @@ function applyHomeProcessState(scriptCatalog, homeProcesses) {
         runningThreadsByFile.set(process.filename, current + (process.threads ?? 0));
     }
 
-    return (Array.isArray(scriptCatalog) ? scriptCatalog : []).map((script) => {
+    const signature = [...runningThreadsByFile.entries()]
+        .map(([filename, threads]) => `${filename}=${threads}`)
+        .sort()
+        .join(",");
+
+    if (cachedHomeProcessState
+        && cachedHomeProcessState.scriptCatalog === scriptCatalog
+        && cachedHomeProcessState.signature === signature) {
+        return cachedHomeProcessState.result;
+    }
+
+    const result = (Array.isArray(scriptCatalog) ? scriptCatalog : []).map((script) => {
         const runningThreads = runningThreadsByFile.get(script.filename) ?? 0;
         return {
             ...script,
@@ -1723,7 +1760,14 @@ function applyHomeProcessState(scriptCatalog, homeProcesses) {
             runningRam: script.ramPerThread * runningThreads,
         };
     });
+
+    cachedHomeProcessState = { scriptCatalog, signature, result };
+    return result;
 }
+
+// used/total/ratio rarely change between ticks (RAM usage moves in whole-GB steps, not every
+// second) - reuse the same object when the numbers are identical instead of allocating fresh.
+let cachedHomeRamStatus = null;
 
 function getHomeRamStatus(ns) {
     if (!ns) {
@@ -1733,7 +1777,14 @@ function getHomeRamStatus(ns) {
     const used = ns.getServerUsedRam("home");
     const total = ns.getServerMaxRam("home");
     const ratio = total > 0 ? used / total : 0;
-    return { used, total, ratio };
+
+    if (cachedHomeRamStatus && cachedHomeRamStatus.used === used && cachedHomeRamStatus.total === total) {
+        return cachedHomeRamStatus;
+    }
+
+    const status = { used, total, ratio };
+    cachedHomeRamStatus = status;
+    return status;
 }
 
 function logMajorAction(ns, message, toastType = "info") {
@@ -5226,7 +5277,7 @@ export async function main(ns) {
                     homeProcesses: cycleSnapshot.homeProcesses,
                 })
             )
-            : {};
+            : EMPTY_DASHBOARD_SNAPSHOT_MAP;
         const scriptLogSnapshots = activeDashboardView?.renderer === "script-log"
             ? dashboardSnapshotCoordinator.getOrCreate(
                 `script-log:${activeDashboardView.id}`,
@@ -5240,7 +5291,7 @@ export async function main(ns) {
                     }),
                 })
             )
-            : {};
+            : EMPTY_DASHBOARD_SNAPSHOT_MAP;
         const activeFileManagerSnapshot = activeDashboardView?.renderer === "file-manager"
             ? fileManagerSnapshots[activeDashboardView.id] ?? null
             : null;
@@ -5264,37 +5315,59 @@ export async function main(ns) {
             if (optionsInputFocused || viewDragActive || fileManagerRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
-                let remainingSleepMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
-                while (remainingSleepMs > 0) {
-                    const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
-                    await ns.sleep(stepMs);
-                    remainingSleepMs -= stepMs;
-                    applyQueuedDashboardActions(ns);
-                }
+                const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
+                await ns.sleep(tickMs);
+                applyQueuedDashboardActions(ns);
                 continue;
             }
-            ns.clearLog();
-            ns.printRaw(
-                <DashboardWidget
-                    persistedOptions={persistedOptions}
-                    gameTheme={gameTheme}
-                    gameStyles={gameStyles}
-                    homeScripts={homeScripts}
-                    homeRamStatus={homeRamStatus}
-                    runningScriptCount={runningScriptCount}
-                    runningProcessSnapshot={runningProcessSnapshot}
-                    telemetryByServiceId={telemetryByServiceId}
-                    pluginRequirements={pluginRequirements}
-                    fileManagerSnapshots={fileManagerSnapshots}
-                    scriptLogSnapshots={scriptLogSnapshots}
-                    layoutSnapshot={layoutSnapshot}
-                ></DashboardWidget>
-            );
-            ns.ui.renderTail();
-            rememberDashboardFileManagerRender(
-                activeFileManagerSnapshot ? activeDashboardView.id : "",
-                fileManagerRenderSignature
-            );
+
+            // Everything DashboardWidget's visible output depends on, gathered here. Active-view
+            // navigation doesn't need to be tracked separately: the already-mounted tree handles
+            // it reactively via its own React state the instant the user clicks, independent of
+            // whether the Netscript side reprints a fresh tree. This only decides whether a fresh
+            // tree carrying updated Netscript-sourced data (telemetry, homeScripts, options, ...)
+            // is worth the cost of ns.clearLog()/printRaw()/renderTail() this tick.
+            const renderSignature = [
+                persistedOptions,
+                homeScripts,
+                homeRamStatus,
+                runningProcessSnapshot,
+                telemetryByServiceId,
+                pluginRequirements,
+                fileManagerSnapshots,
+                scriptLogSnapshots,
+                layoutSnapshot,
+                activeDashboardTheme.signature,
+            ];
+            const canSkipRender = Array.isArray(lastRenderedSignature)
+                && renderSignature.length === lastRenderedSignature.length
+                && renderSignature.every((value, index) => value === lastRenderedSignature[index]);
+
+            if (!canSkipRender) {
+                ns.clearLog();
+                ns.printRaw(
+                    <DashboardWidget
+                        persistedOptions={persistedOptions}
+                        gameTheme={gameTheme}
+                        gameStyles={gameStyles}
+                        homeScripts={homeScripts}
+                        homeRamStatus={homeRamStatus}
+                        runningScriptCount={runningScriptCount}
+                        runningProcessSnapshot={runningProcessSnapshot}
+                        telemetryByServiceId={telemetryByServiceId}
+                        pluginRequirements={pluginRequirements}
+                        fileManagerSnapshots={fileManagerSnapshots}
+                        scriptLogSnapshots={scriptLogSnapshots}
+                        layoutSnapshot={layoutSnapshot}
+                    ></DashboardWidget>
+                );
+                ns.ui.renderTail();
+                rememberDashboardFileManagerRender(
+                    activeFileManagerSnapshot ? activeDashboardView.id : "",
+                    fileManagerRenderSignature
+                );
+                lastRenderedSignature = renderSignature;
+            }
         } else {
             printFallbackDashboard(
                 ns,
@@ -5306,12 +5379,8 @@ export async function main(ns) {
 
         if (!isDaemon) break;
 
-        let remainingSleepMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
-        while (remainingSleepMs > 0) {
-            const stepMs = Math.min(DASHBOARD_ACTION_POLL_MS, remainingSleepMs);
-            await ns.sleep(stepMs);
-            remainingSleepMs -= stepMs;
-            applyQueuedDashboardActions(ns);
-        }
+        const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
+        await ns.sleep(tickMs);
+        applyQueuedDashboardActions(ns);
     }
 }

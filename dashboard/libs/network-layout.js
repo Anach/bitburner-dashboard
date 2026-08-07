@@ -11,6 +11,12 @@ function finiteNumber(value, fallback) {
     return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+// Pure function of (nodes, fields, options), but `nodes` is typically a freshly-filtered array
+// every render even when the underlying topology hasn't changed. Memoize on a signature of just
+// the fields this layout actually reads, rather than nodes' array identity - the sort/placement
+// work below is the expensive part, not building this string.
+let cachedLayeredLayout = null;
+
 export function buildLayeredNetworkLayout(nodes = [], fields = {}, options = {}) {
     const idKey = fields.id;
     const parentKey = fields.parent;
@@ -20,6 +26,15 @@ export function buildLayeredNetworkLayout(nodes = [], fields = {}, options = {})
     const columnGap = Math.max(20, finiteNumber(options.columnGap, 72));
     const rowGap = Math.max(10, finiteNumber(options.rowGap, 24));
     const padding = Math.max(20, finiteNumber(options.padding, 80));
+
+    const signature = `${nodeWidth}:${nodeHeight}:${columnGap}:${rowGap}:${padding}|${
+        (Array.isArray(nodes) ? nodes : [])
+            .map((node) => `${getValue(node, idKey)}=${getValue(node, parentKey)}:${getValue(node, depthKey)}`)
+            .join(",")
+    }`;
+    if (cachedLayeredLayout && cachedLayeredLayout.signature === signature) {
+        return cachedLayeredLayout.result;
+    }
 
     const nodeById = new Map();
     for (const node of Array.isArray(nodes) ? nodes : []) {
@@ -75,14 +90,19 @@ export function buildLayeredNetworkLayout(nodes = [], fields = {}, options = {})
     for (const id of roots) placeNode(id);
     for (const id of nodeById.keys()) placeNode(id);
 
-    return {
+    const result = {
         positions,
         width: Math.max(nodeWidth + (padding * 2), maximumX + padding),
         height: Math.max(nodeHeight + (padding * 2), maximumY + padding),
         nodeWidth,
         nodeHeight,
     };
+    cachedLayeredLayout = { signature, result };
+    return result;
 }
+
+// Same rationale as buildLayeredNetworkLayout's cache above.
+let cachedGroupedLayout = null;
 
 export function buildGroupedNetworkLayout(nodes = [], fields = {}, options = {}) {
     const idKey = fields.id;
@@ -98,6 +118,16 @@ export function buildGroupedNetworkLayout(nodes = [], fields = {}, options = {})
     const maximumRows = Math.max(1, Math.floor(finiteNumber(options.maxGroupRows, 4)));
     const hubVariant = String(options.hubVariant ?? "hub");
     const groupVariant = String(options.groupVariant ?? "group");
+    const groupOrderKey = Array.isArray(options.groupOrder) ? options.groupOrder.join("|") : "";
+
+    const signature = `${nodeWidth}:${nodeHeight}:${columnGap}:${rowGap}:${groupGap}:${padding}:${maximumRows}:${hubVariant}:${groupVariant}:${groupOrderKey}|${
+        (Array.isArray(nodes) ? nodes : [])
+            .map((node) => `${getValue(node, idKey)}=${getValue(node, labelKey)}:${getValue(node, groupKey)}:${getValue(node, variantKey)}`)
+            .join(",")
+    }`;
+    if (cachedGroupedLayout && cachedGroupedLayout.signature === signature) {
+        return cachedGroupedLayout.result;
+    }
 
     const nodeById = new Map();
     for (const node of Array.isArray(nodes) ? nodes : []) {
@@ -195,13 +225,15 @@ export function buildGroupedNetworkLayout(nodes = [], fields = {}, options = {})
         maximumY = Math.max(maximumY, y + nodeHeight);
     }
 
-    return {
+    const result = {
         positions,
         width: Math.max(nodeWidth + (padding * 2), maximumX + padding),
         height: Math.max(nodeHeight + (padding * 2), maximumY + padding),
         nodeWidth,
         nodeHeight,
     };
+    cachedGroupedLayout = { signature, result };
+    return result;
 }
 
 export function fitNetworkLayout(layout, viewportWidth, viewportHeight, options = {}) {
