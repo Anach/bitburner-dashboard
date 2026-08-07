@@ -230,7 +230,7 @@ const STYLES = {
         background: "rgba(42, 66, 76, 0.35)",
         boxShadow: "inset 2px 0 0 rgba(143, 197, 255, 0.45)",
     },
-    rowIgnored: {
+    rowHidden: {
         color: COLORS.dim,
         fontStyle: "italic",
     },
@@ -529,7 +529,7 @@ function FilePane({ id, path, entries, selectedEntry, selectedIds, active, rowRe
                             title={entry.path}
                             style={{
                                 ...STYLES.row,
-                                ...(entry.ignored ? STYLES.rowIgnored : {}),
+                                ...(entry.hidden ? STYLES.rowHidden : {}),
                                 ...(selected ? (active ? STYLES.rowSelected : STYLES.rowInactiveSelected) : {}),
                                 ...(!entry.exists && entry.entryType === "file" ? { opacity: 0.62 } : {}),
                             }}
@@ -733,7 +733,7 @@ export function FileManagerView({
     view,
     snapshot,
     dashboardTheme,
-    ignoredFolders = [],
+    hiddenFolders = [],
     initialState = {},
     lastActionResult,
     lastPreviewResult,
@@ -780,9 +780,9 @@ export function FileManagerView({
     }));
     const [query, setQuery] = React.useState(() => String(savedState.query ?? ""));
     const [statusFilter, setStatusFilter] = React.useState(() => String(savedState.statusFilter ?? "all"));
-    const [showIgnored, setShowIgnored] = React.useState(() => typeof savedState.showIgnored === "boolean"
-        ? savedState.showIgnored
-        : layout.showIgnoredDefault !== false);
+    const [showHidden, setShowHidden] = React.useState(() => typeof savedState.showHidden === "boolean"
+        ? savedState.showHidden
+        : layout.showHiddenDefault !== false);
     const [dialog, setDialog] = React.useState(null);
     const [notice, setNotice] = React.useState("");
     const [noticeTone, setNoticeTone] = React.useState("success");
@@ -799,12 +799,12 @@ export function FileManagerView({
     const selectionModifiersRef = React.useRef({ toggle: false, range: false });
     const seenActionResultRef = React.useRef(0);
     const seenPreviewResultRef = React.useRef(0);
-    const ignoredFolderKey = ignoredFolders.join("|");
+    const hiddenFolderKey = hiddenFolders.join("|");
     const buildEntries = (pane) => buildFilePaneEntries(files, pane.path, {
         query,
         statusFilter,
-        showIgnored,
-        ignoredFolders,
+        showHidden,
+        hiddenFolders,
     });
     const paneEntries = {
         left: buildEntries(panes.left),
@@ -849,13 +849,13 @@ export function FileManagerView({
             rightSelectedId: panes.right.selectedId,
             rightSelectedIds: panes.right.selectedIds,
             rightAnchorId: panes.right.anchorId,
-            showIgnored,
+            showHidden,
             query,
             statusFilter,
             leftScrollTop: paneScrollTops.left,
             rightScrollTop: paneScrollTops.right,
         });
-    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showIgnored, query, statusFilter, paneScrollTops.left, paneScrollTops.right]);
+    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showHidden, query, statusFilter, paneScrollTops.left, paneScrollTops.right]);
 
     React.useEffect(() => {
         shellRef.current?.focus?.();
@@ -908,18 +908,18 @@ export function FileManagerView({
     }, [panes.left.path, panes.right.path]);
 
     React.useEffect(() => {
-        if (showIgnored) return;
+        if (showHidden) return;
         setPanes((current) => {
             const next = { ...current };
             let changed = false;
             for (const paneId of ["left", "right"]) {
-                if (!isPathInFolders(current[paneId].path, ignoredFolders)) continue;
+                if (!isPathInFolders(current[paneId].path, hiddenFolders)) continue;
                 next[paneId] = { path: "", selectedId: "", selectedIds: [], anchorId: "" };
                 changed = true;
             }
             return changed ? next : current;
         });
-    }, [showIgnored, ignoredFolderKey]);
+    }, [showHidden, hiddenFolderKey]);
 
     const selectEntry = (paneId, selectedId, options = {}) => {
         const entries = paneEntries[paneId] ?? [];
@@ -1306,11 +1306,11 @@ export function FileManagerView({
                 ))}
                 <button
                     type="button"
-                    style={{ ...STYLES.filterButton, ...(showIgnored ? STYLES.filterButtonActive : {}) }}
-                    title={`${ignoredFolders.length} dashboard-ignored folder${ignoredFolders.length === 1 ? "" : "s"}`}
-                    onClick={() => setShowIgnored((current) => !current)}
+                    style={{ ...STYLES.filterButton, ...(showHidden ? STYLES.filterButtonActive : {}) }}
+                    title={`${hiddenFolders.length} dashboard-hidden folder${hiddenFolders.length === 1 ? "" : "s"}`}
+                    onClick={() => setShowHidden((current) => !current)}
                 >
-                    Ignored {showIgnored ? "shown" : "hidden"}
+                    Show Hidden
                 </button>
                 <span style={{ ...STYLES.manifestState, color: normalizedManifest.available ? COLORS.green : COLORS.amber }}>{manifestLabel}</span>
             </div>

@@ -9,14 +9,16 @@ export function formatSignedMoney(value) {
     return `${sign}$${Math.floor(Math.abs(value)).toLocaleString()}`;
 }
 
+const RAM_UNITS = ["GB", "TB", "PB", "EB"];
+
 export function formatRam(value) {
     if (!Number.isFinite(value) || value < 0) return "0 GB";
-    if (value >= 1024) {
-        const tbValue = value / 1024;
-        const roundedTb = tbValue >= 100 ? Math.round(tbValue) : Math.round(tbValue * 10) / 10;
-        return `${roundedTb.toLocaleString()} TB`;
+    let scaled = value;
+    let unitIndex = 0;
+    while (scaled >= 1024 && unitIndex < RAM_UNITS.length - 1) {
+        scaled /= 1024;
+        unitIndex++;
     }
-
-    const roundedGb = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
-    return `${roundedGb.toLocaleString()} GB`;
+    const rounded = scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
+    return `${rounded.toLocaleString()} ${RAM_UNITS[unitIndex]}`;
 }

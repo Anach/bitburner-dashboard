@@ -42,8 +42,15 @@ export async function main(ns) {
         }
         // Removes no longer connected servers
         for (let i = 0; i < dnets.length; i++) {
+            // One fetch per server per loop pass, cached on the instance - isValid()/isConnected()
+            // below both read it rather than re-fetching, since nothing changes it between here
+            // and the connect pass a few lines down (no awaits in between).
+            dnets[i].refreshDetails();
             if (!dnets[i].isValid()) {
-                dnets = dnets.splice(i, 1); i--;
+                // splice() already mutates in place AND returns the removed elements - reassigning
+                // dnets to its return value here discarded the entire rest of the tracked server
+                // list every time just one server went invalid. Just call it for the mutation.
+                dnets.splice(i, 1); i--;
             }
         }
         // Connects to and handles connected dnet servers
@@ -176,13 +183,15 @@ class DarkNet {
     getPasswordType() {
         return false;
     }
+    refreshDetails() {
+        if (this.isDarknetServer) this.details = this.ns.dnet.getServerDetails(this.name);
+        return this.details;
+    }
     isValid() {
-        this.details = this.ns.dnet.getServerDetails(this.name);
         if (this.details.isOnline && this.details.isConnectedToCurrentServer) { return true; }
         return false;
     }
     isConnected() {
-        this.details = this.ns.dnet.getServerDetails(this.name);
         return this.details.hasSession;
     }
     openCaches() {

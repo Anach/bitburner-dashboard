@@ -22,6 +22,8 @@ const COMMAND_PREFIXES = {
     openLocation: "OpenLocation:",
     workCompany: "WorkCompany:",
 };
+const SET_MODE_PREFIX = "SetMode:";
+const DEFAULT_MODE_ID = "network";
 const STORY_SERVERS = new Set(["CSEC", "avmnite-02h", "I.I.I.I", "run4theh111z", "fulcrumassets", "w0r1d_d43m0n"]);
 const LOCATION_GROUPS = ["Companies", "Training", "Services", "Special"];
 const LOCATION_GROUP_ACCENTS = {
@@ -443,7 +445,7 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
     };
 }
 
-function buildSnapshot(ns, graph, singularityAvailable, lastCommand) {
+function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeId) {
     const player = ns.getPlayer();
     const hackingLevel = Number(player?.skills?.hacking) || 0;
     const batcherStats = loadJsonFile(ns, DATA_PATHS.batcherStatsJson);
@@ -561,7 +563,12 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand) {
     for (const city of CITY_NAMES) {
         const id = `city:${city}`;
         const current = player.city === city;
-        maps[id] = buildCityMap(ns, city, nodes, player, singularityAvailable, lastCommand);
+        // Only the currently-viewed mode gets its full detail built (buildCityMap's per-company
+        // getCompanyProgress() is 2 singularity calls each) - every other city just needs the
+        // lightweight picker metadata below, since the frontend only ever reads maps[activeModeId].
+        if (id === activeModeId) {
+            maps[id] = buildCityMap(ns, city, nodes, player, singularityAvailable, lastCommand);
+        }
         mapOptions.push({
             id,
             label: city,
@@ -594,12 +601,19 @@ export async function main(ns) {
     ns.print("[LIFECYCLE] Network Navigator telemetry started.");
 
     let lastCommand = null;
+    let activeModeId = DEFAULT_MODE_ID;
+    let lastSnapshotSignature = "";
     while (true) {
         const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
         const singularityAvailable = canUseSingularity(ns);
 
         while (ns.peek(COMMAND_PORT) !== "NULL PORT DATA") {
             const command = String(ns.readPort(COMMAND_PORT));
+            if (command.startsWith(SET_MODE_PREFIX)) {
+                const requestedMode = decodeTarget(command, SET_MODE_PREFIX);
+                if (requestedMode) activeModeId = requestedMode;
+                continue;
+            }
             const result = runNavigationCommand(ns, command, graph, singularityAvailable);
             if (!result) continue;
             lastCommand = result;
@@ -607,8 +621,15 @@ export async function main(ns) {
             if (result.status === "error") ns.toast(result.message, "warning", 5000);
         }
 
-        const snapshot = buildSnapshot(ns, graph, singularityAvailable, lastCommand);
-        await ns.write(DATA_PATHS.networkNavigatorStatsJson, JSON.stringify(snapshot), "w");
+        const snapshot = buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeId);
+        // Excludes generatedAt (present at the top level and per city map) from the comparison -
+        // it always differs, which would defeat the point. A genuinely new command result still
+        // triggers a write, since makeCommandResult's own `timestamp` field isn't excluded.
+        const snapshotSignature = JSON.stringify(snapshot, (key, value) => key === "generatedAt" ? undefined : value);
+        if (snapshotSignature !== lastSnapshotSignature) {
+            await ns.write(DATA_PATHS.networkNavigatorStatsJson, JSON.stringify(snapshot), "w");
+            lastSnapshotSignature = snapshotSignature;
+        }
         await ns.sleep(SNAPSHOT_INTERVAL_MS);
     }
 }

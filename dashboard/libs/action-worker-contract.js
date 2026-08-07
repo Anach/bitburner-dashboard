@@ -5,14 +5,6 @@ export const DASHBOARD_ACTION_WORKER_SCRIPT = "dashboard/action-worker.js";
 export const DASHBOARD_ACTION_WORKER_RESULT_FILE = "data/dashboard_action_result.json";
 
 const DASHBOARD_ACTIONS = new Set(Object.values(DASHBOARD_ACTION_IDS));
-const SCOPED_KILL_LIST_ACTIONS = new Set([
-    DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS,
-    DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS,
-    DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS,
-    DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS,
-    DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS,
-    DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS,
-]);
 const SCRIPT_ACTIONS = new Set([
     SCRIPT_ACTION_IDS.START,
     SCRIPT_ACTION_IDS.STOP,
@@ -77,14 +69,6 @@ function normalizeDashboardCommand(rawCommand) {
         if (!(dashboardPid > 0)) throw new Error("Invalid dashboard PID.");
         command.dashboardPid = dashboardPid;
         command.args = normalizeScriptArgs(rawCommand.args);
-    }
-    if (actionId.includes("script-list")) {
-        command.ignoredFolders = normalizePathList(Array.isArray(rawCommand.ignoredFolders) ? rawCommand.ignoredFolders : []);
-        command.ignoredFiles = normalizePathList(Array.isArray(rawCommand.ignoredFiles) ? rawCommand.ignoredFiles : []);
-        command.pluginFiles = normalizePathList(Array.isArray(rawCommand.pluginFiles) ? rawCommand.pluginFiles : []);
-    }
-    if (SCOPED_KILL_LIST_ACTIONS.has(actionId)) {
-        command.filenames = normalizePathList(Array.isArray(rawCommand.filenames) ? rawCommand.filenames : []);
     }
     return command;
 }

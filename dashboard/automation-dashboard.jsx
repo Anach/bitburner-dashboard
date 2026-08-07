@@ -1,8 +1,8 @@
-import { buildDashboardActions, buildScopedKillListActions, DASHBOARD_ACTION_GROUPS } from "dashboard/libs/dashboard-actions.js";
+import { buildDashboardActions } from "dashboard/libs/dashboard-actions.js";
 import {
-    DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
-    DEFAULT_IGNORED_SCRIPT_FOLDERS,
-    DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
+    DEFAULT_HIDDEN_SCRIPT_FILES_OPTION,
+    DEFAULT_HIDDEN_SCRIPT_FOLDERS,
+    DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
     dashboardOptionsEqual,
     getDefaultDashboardOptions,
     HIDE_UNQUALIFIED_PLUGINS_MODES,
@@ -111,7 +111,6 @@ import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs
 import {
     applyPluginIntegrationCommand,
     applyPluginIntegrationOptions,
-    getPluginIntegrationAutoStartFundsThreshold,
     getPluginIntegrationOverviewGauges,
     getPluginIntegrationGraphs,
     getPluginIntegrationOverviewLines,
@@ -134,7 +133,7 @@ import {
     summarizeScriptListHealth,
 } from "dashboard/libs/script-list.js";
 import {
-    isScriptFileIgnored,
+    isScriptFileHidden,
     isScriptInFolders,
     normalizeScriptFiles,
     normalizeScriptFolders,
@@ -162,6 +161,7 @@ const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
 const DASHBOARD_FILE_ACTION_RESULT_KEY = "__dashboard_file_action_result_v1";
 const DASHBOARD_FILE_PREVIEW_RESULT_KEY = "__dashboard_file_preview_result_v1";
 const DASHBOARD_FILE_VIEW_RENDER_STATE_KEY = "__dashboard_file_view_render_state_v1";
+const DASHBOARD_NETWORK_MAP_VIEW_RENDER_STATE_KEY = "__dashboard_network_map_view_render_state_v1";
 const DASHBOARD_ACTION_WORKER_TIMEOUT_MS = 60000;
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
@@ -169,20 +169,11 @@ const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const DASHBOARD_VIEW_ITEM_PREFIX = "dashboard.view:";
 const PLAYER_STATS_WIDGET_WIDTH = 360;
-const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_IGNORED_SCRIPT_FOLDERS;
+const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_HIDDEN_SCRIPT_FOLDERS;
 const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
 const DASHBOARD_MINIMIZED_UI_TICK_MS = 250;
-// Every ns.printRaw() call mounts a brand-new React tree (see wrapUserNode's ever-incrementing
-// key in Bitburner's own NetscriptHelpers.tsx) - no useState/useRef survives between ticks. This
-// MUST be module-level state, not a ref, or a cooldown guard silently resets to empty every tick
-// and never actually blocks anything. Without it, a service that starts and immediately self-exits
-// (e.g. hacknet-buyer/server-buyer finding themselves already fully capped and upgraded) gets
-// restarted on the very next tick, forever. Five minutes matches the retry backoff already used
-// for the same class of problem in singularity/faction-manager.js.
-const FUNDS_AUTO_START_COOLDOWN_MS = 5 * 60 * 1000;
-const fundsAutoStartCooldowns = new Map();
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 // A shared reference for "this view isn't active" instead of a fresh {} literal each tick, so an
 // inactive File Manager/Script Log view compares equal to itself across ticks.
@@ -1347,6 +1338,38 @@ function rememberDashboardFileManagerRender(viewId, signature) {
         : null;
 }
 
+// Same purpose as the File Manager trio above, generalized for any full-window view that's
+// bound to a single serviceId's telemetry (network-map today). While such a view is active, its
+// ONLY visible data is that one service's telemetry - every other plugin's telemetry is entirely
+// off-screen, yet the broad renderSignature check still counts it, forcing a fresh ns.printRaw()
+// (a full DOM destroy-and-recreate - see the printRaw-remounts-every-tick note near the top of
+// this file) whenever ANY OTHER plugin ticks, which happens roughly every cycle in practice
+// (player-stats telemetry alone changes almost every tick). Each such remount has a real chance
+// of landing mid-click - the exact DOM node the user is clicking is destroyed/recreated - silently
+// swallowing the interaction. Scoping the stability check to just the active view's own service
+// closes that: unrelated telemetry no longer forces a remount while a full-window view is open.
+function getDashboardServiceScopedViewRenderSignature(viewId, telemetry, serviceStatus, themeSignature = "", layoutSignature = "") {
+    if (!viewId) return "";
+    return JSON.stringify({ viewId, telemetry: telemetry ?? null, serviceStatus: serviceStatus ?? null, themeSignature, layoutSignature });
+}
+
+function isDashboardNetworkMapRenderStable(viewId, signature) {
+    const previous = globalThis[DASHBOARD_NETWORK_MAP_VIEW_RENDER_STATE_KEY];
+    return Boolean(
+        viewId
+        && signature
+        && previous
+        && previous.viewId === viewId
+        && previous.signature === signature
+    );
+}
+
+function rememberDashboardNetworkMapRender(viewId, signature) {
+    globalThis[DASHBOARD_NETWORK_MAP_VIEW_RENDER_STATE_KEY] = viewId && signature
+        ? { viewId, signature }
+        : null;
+}
+
 function getDashboardFileActionView(viewId) {
     const view = getDashboardViewRegistry().byId.get(String(viewId ?? ""));
     return view?.renderer === "file-manager" ? view : null;
@@ -1401,26 +1424,12 @@ function saveDashboardOptions(ns, options) {
     ns.toast("Dashboard options saved", "success", 3500);
 }
 
-function getDashboardPluginFiles() {
-    return getDashboardServiceRegistry().services
-        .map((service) => normalizeFilePath(service?.pluginFile))
-        .filter(Boolean);
-}
-
 function buildDashboardWorkerCommand(ns, command) {
     return buildWorkerCommand(ns, command, {
         restartDashboardActionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
         dashboardScript: DASHBOARD_SCRIPT,
         getDashboardPid: (workerNs) => workerNs.pid,
         getDashboardRestartArgs: (workerNs) => getDashboardRestartArgs(workerNs.args),
-        getScriptListSettings: (workerNs) => {
-            const options = loadDashboardOptions(workerNs);
-            return {
-                ignoredFolders: parseScriptFolders(options.ignoredScriptFolders),
-                ignoredFiles: parseScriptFiles(options.ignoredScriptFiles),
-            };
-        },
-        getPluginFiles: getDashboardPluginFiles,
         resolveScriptActionExecution,
         getScriptLaunchArgs,
         getFileActionView: getDashboardFileActionView,
@@ -1604,35 +1613,35 @@ function buildSupervisorServiceStateLines(services, homeScripts, pluginRequireme
     ];
 }
 
-function isDashboardSupportScript(filename, ignoredFolders = DEFAULT_IGNORED_SCRIPT_FOLDERS, ignoredFiles = []) {
+function isDashboardHiddenScript(filename, hiddenFolders = DEFAULT_HIDDEN_SCRIPT_FOLDERS, hiddenFiles = []) {
     return isDashboardCoreScript(filename)
-        || isScriptInFolders(filename, ignoredFolders)
-        || isScriptFileIgnored(filename, ignoredFiles);
+        || isScriptInFolders(filename, hiddenFolders)
+        || isScriptFileHidden(filename, hiddenFiles);
 }
 
-function getNonPluginScripts(homeScripts, ignoredFolders, ignoredFiles = []) {
+function getNonPluginScripts(homeScripts, hiddenFolders, hiddenFiles = []) {
     return (homeScripts ?? []).filter((script) => {
         return !isDashboardPluginScript(script?.filename)
-            && !isDashboardSupportScript(script?.filename, ignoredFolders, ignoredFiles);
+            && !isDashboardHiddenScript(script?.filename, hiddenFolders, hiddenFiles);
     });
 }
 
 function buildScriptBuckets(
     homeScripts = [],
-    rawIgnoredFolders = DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
-    rawIgnoredFiles = DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
+    rawHiddenFolders = DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
+    rawHiddenFiles = DEFAULT_HIDDEN_SCRIPT_FILES_OPTION,
     views = []
 ) {
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
-    const ignoredFolders = parseScriptFolders(rawIgnoredFolders);
-    const ignoredFiles = parseScriptFiles(rawIgnoredFiles);
+    const hiddenFolders = parseScriptFolders(rawHiddenFolders);
+    const hiddenFiles = parseScriptFiles(rawHiddenFiles);
     const integrationScripts = scripts.filter((script) => isDashboardIntegrationScript(script?.filename));
     const pluginScripts = [
         ...scripts.filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename)),
         ...getViewOnlyPluginEntries(views),
     ];
     const dashboardCoreScripts = scripts.filter((script) => isDashboardCoreScript(script?.filename));
-    const nonPluginScripts = getNonPluginScripts(scripts, ignoredFolders, ignoredFiles);
+    const nonPluginScripts = getNonPluginScripts(scripts, hiddenFolders, hiddenFiles);
 
     return {
         integrationScripts,
@@ -1947,34 +1956,56 @@ const DASHBOARD_SERVICES = [
                 },
                 ...(Array.isArray(pluginDashboardOptionInputs) ? pluginDashboardOptionInputs : []),
                 {
-                    id: "ignored-script-folders",
-                    label: "Ignored folders (comma-separated)",
-                    optionKey: "ignoredScriptFolders",
+                    id: "hidden-script-folders",
+                    label: "Hidden folders (comma-separated)",
+                    optionKey: "hiddenScriptFolders",
                     type: "text",
-                    value: options.ignoredScriptFolders,
+                    value: options.hiddenScriptFolders,
                 },
                 {
-                    id: "ignored-script-files",
-                    label: "Ignored scripts (comma-separated)",
-                    optionKey: "ignoredScriptFiles",
+                    id: "hidden-script-files",
+                    label: "Hidden scripts (comma-separated)",
+                    optionKey: "hiddenScriptFiles",
                     type: "text",
-                    value: options.ignoredScriptFiles,
+                    value: options.hiddenScriptFiles,
                 },
             ];
         },
         getState: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
             if (selectedCenterPanel !== "options") return [];
-            const configuredFolders = parseScriptFolders(options.ignoredScriptFolders);
-            const configuredFiles = parseScriptFiles(options.ignoredScriptFiles);
+            const configuredFolders = parseScriptFolders(options.hiddenScriptFolders);
+            const configuredFiles = parseScriptFiles(options.hiddenScriptFiles);
             return [
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
                 { label: "Hide unqualified plugins", value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode), tone: "info" },
                 { label: "Last window mode", value: normalizeDashboardWindowMode(options.dashboardLastWindowMode), tone: "neutral" },
-                { label: "Ignored folders", value: configuredFolders.join(", ") || "None", tone: "info" },
-                { label: "Ignored scripts", value: configuredFiles.join(", ") || "None", tone: "info" },
-                { label: "Defaults", value: DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION, tone: "neutral" },
+                { label: "Hidden folders", value: configuredFolders.join(", ") || "None", tone: "info" },
+                { label: "Hidden scripts", value: configuredFiles.join(", ") || "None", tone: "info" },
+                { label: "Defaults", value: DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION, tone: "neutral" },
             ];
+        },
+        // One global Kill Local/Kill Remote pair here replaces the four scoped pairs that used to
+        // live on Core Modules, Integrations, Plugins, and Script List - those distinctions never
+        // meant anything to a user (integrations/core never run remotely; "local" vs "remote" is
+        // the only split that actually matters). Wired to the existing KILL_ALL_HOME_SCRIPTS/
+        // KILL_ALL_REMOTE_SCRIPTS actions, which already kill unconditionally across every
+        // category rather than needing a scoped filename list.
+        getActions: ({ selectedCenterPanel, runningProcessSnapshot }) => {
+            if (selectedCenterPanel !== "options") return [];
+            const homeFilenames = Array.isArray(runningProcessSnapshot?.homeFilenames) ? runningProcessSnapshot.homeFilenames : [];
+            const remoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames) ? runningProcessSnapshot.remoteFilenames : [];
+            const hasLocalTargets = homeFilenames.some((filename) => filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT);
+            const hasRemoteTargets = remoteFilenames.length > 0;
+            return buildDashboardActions(
+                [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS, DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS],
+                {
+                    disabledActionIds: [
+                        ...(hasLocalTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS]),
+                        ...(hasRemoteTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS]),
+                    ],
+                }
+            );
         },
     },
     {
@@ -2134,8 +2165,8 @@ const DASHBOARD_SERVICES = [
         },
         getHealth: ({ homeScripts, options }) => summarizeScriptListHealth(getNonPluginScripts(
             homeScripts,
-            parseScriptFolders(options.ignoredScriptFolders),
-            parseScriptFiles(options.ignoredScriptFiles)
+            parseScriptFolders(options.hiddenScriptFolders),
+            parseScriptFiles(options.hiddenScriptFiles)
         )),
         getState: ({ selectedScript }) => {
             if (!selectedScript) return [];
@@ -2936,8 +2967,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         ],
     }));
     const scriptBuckets = React.useMemo(
-        () => buildScriptBuckets(homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles, dashboardViews),
-        [homeScripts, options.ignoredScriptFolders, options.ignoredScriptFiles, dashboardViews]
+        () => buildScriptBuckets(homeScripts, options.hiddenScriptFolders, options.hiddenScriptFiles, dashboardViews),
+        [homeScripts, options.hiddenScriptFolders, options.hiddenScriptFiles, dashboardViews]
     );
     const nonPluginScripts = scriptBuckets.nonPluginScripts;
     const integrationScripts = scriptBuckets.integrationScripts;
@@ -3079,44 +3110,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         };
     }, [options, homeScripts]);
 
-    // Auto-start any service configured with `lifecycle.autoStartWhenFundsAbove` once home money
-    // (read from progression-report telemetry, already polled at no extra Netscript RAM cost)
-    // crosses its configured threshold. Unlike the option-increase effect above, this re-checks on
-    // every tick, not just when an option changes, so it reacts to money actually accumulating
-    // rather than only to the user editing a cap.
-    React.useEffect(() => {
-        const currentMoney = Number(telemetryByServiceId?.["progression.report"]?.currentMoney);
-        if (!Number.isFinite(currentMoney)) return;
-
-        const now = Date.now();
-        const cooldowns = fundsAutoStartCooldowns;
-
-        for (const service of getDashboardServiceRegistry().services) {
-            const integration = service.pluginMetadata;
-            if (!integration) continue;
-
-            const fundsThreshold = getPluginIntegrationAutoStartFundsThreshold(integration, options);
-            if (fundsThreshold === null || currentMoney < fundsThreshold) continue;
-
-            const running = homeScripts.some((script) => script?.filename === integration.scriptPath && script?.running);
-            if (running) {
-                // Confirmed alive - clear any cooldown so a future self-exit is retried promptly.
-                cooldowns.delete(integration.serviceId);
-                continue;
-            }
-
-            const lastAttemptAt = cooldowns.get(integration.serviceId) ?? 0;
-            if (now - lastAttemptAt < FUNDS_AUTO_START_COOLDOWN_MS) continue;
-
-            cooldowns.set(integration.serviceId, now);
-            enqueueDashboardAction({
-                kind: "script",
-                actionId: SCRIPT_ACTION_IDS.START,
-                filename: integration.scriptPath,
-            });
-        }
-    }, [telemetryByServiceId, homeScripts, options]);
-
     const selectedItem = uiState.selectedItem;
     const activeView = getDashboardViewRegistry().byId.get(uiState.activeViewId) ?? null;
     const dashboardServiceRegistry = getDashboardServiceRegistry();
@@ -3192,6 +3185,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         homeRamStatus,
         options,
         pluginDashboardOptionInputs,
+        runningProcessSnapshot,
         services: dashboardServiceRegistry.services,
         views: dashboardViews,
     };
@@ -3846,43 +3840,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const serviceSupervisorRunning = homeScripts.some((script) => {
         return script?.filename === SERVICE_SUPERVISOR_SCRIPT && script?.running;
     });
-    const runningHomeFilenames = Array.isArray(runningProcessSnapshot?.homeFilenames)
-        ? runningProcessSnapshot.homeFilenames
-        : [];
-    const runningRemoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames)
-        ? runningProcessSnapshot.remoteFilenames
-        : [];
-    const isIntegrationOnlyScript = (filename) => isDashboardIntegrationScript(filename);
-    const isPluginOnlyScript = (filename) => isDashboardPluginScript(filename) && !isDashboardIntegrationScript(filename);
-
-    const hasLocalCoreModuleTargets = serviceSupervisorRunning;
-    const coreModulesListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.CORE_MODULES_LIST_CONTROLS, {
-        homeActionId: DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS,
-        remoteActionId: DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS,
-        hasLocalTargets: hasLocalCoreModuleTargets,
-        hasRemoteTargets: false, // core modules never run remotely
-        extraDisabledActionIds: serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : [],
-        filenames: dashboardCoreScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
-    });
-
-    const hasLocalIntegrationTargets = serviceSupervisorRunning || runningHomeFilenames.some(isIntegrationOnlyScript);
-    const hasRemoteIntegrationTargets = runningRemoteFilenames.some(isIntegrationOnlyScript);
-    const integrationsListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.INTEGRATIONS_LIST_CONTROLS, {
-        homeActionId: DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS,
-        remoteActionId: DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS,
-        hasLocalTargets: hasLocalIntegrationTargets,
-        hasRemoteTargets: hasRemoteIntegrationTargets,
-        filenames: integrationScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
-    });
-
-    const hasLocalPluginTargets = serviceSupervisorRunning || runningHomeFilenames.some(isPluginOnlyScript);
-    const hasRemotePluginTargets = runningRemoteFilenames.some(isPluginOnlyScript);
-    const pluginsListTopActions = buildScopedKillListActions(DASHBOARD_ACTION_GROUPS.PLUGINS_LIST_CONTROLS, {
-        homeActionId: DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS,
-        remoteActionId: DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS,
-        hasLocalTargets: hasLocalPluginTargets,
-        hasRemoteTargets: hasRemotePluginTargets,
-        filenames: pluginScripts.map((script) => script.filename).filter((filename) => typeof filename === "string" && filename.length > 0),
+    // Kill Local/Remote used to be scoped separately per panel (Core Modules, Integrations,
+    // Plugins, Script List), but that distinction never meant anything to a user - core and
+    // integrations never run remotely, so half those buttons were permanently dead, and the
+    // other half just duplicated each other's semantics. Replaced with one global Kill Local/
+    // Kill Remote pair under Dashboard Options (see that service's getActions above). Core
+    // Modules keeps only its "Start integrations" action here.
+    const coreModulesTopActions = buildDashboardActions([DASHBOARD_ACTION_IDS.START_INTEGRATIONS], {
+        disabledActionIds: serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : [],
     });
 
     const renderScriptButtons = (panels, renderOptions = {}) => {
@@ -3926,15 +3891,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         ? [
                             ...standardInlineActions,
                             {
-                                id: `ignore-script:${panel.id}`,
-                                label: "Add to ignore list",
+                                id: `hide-script:${panel.id}`,
+                                label: "Hide from list",
                                 kind: "save-options",
                                 tone: "warn",
                                 disabled: false,
-                                tooltip: `Hide ${panel.id} from the Script List and exclude it from Script List kill actions.`,
+                                tooltip: `Hide ${panel.id} from the Script List display. It stays a valid target for Script List's bulk Kill Home/Remote actions.`,
                                 optionOverrides: {
-                                    ignoredScriptFiles: normalizeScriptFiles([
-                                        ...parseScriptFiles(options.ignoredScriptFiles),
+                                    hiddenScriptFiles: normalizeScriptFiles([
+                                        ...parseScriptFiles(options.hiddenScriptFiles),
                                         panel.id,
                                     ]),
                                 },
@@ -4009,23 +3974,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const renderSubWidgets = () => {
-        const ignoredFolders = parseScriptFolders(persistedOptions.ignoredScriptFolders);
-        const ignoredFiles = parseScriptFiles(persistedOptions.ignoredScriptFiles);
-        const isScriptListTarget = (filename) => {
-            return !isDashboardPluginScript(filename)
-                && !isDashboardSupportScript(filename, ignoredFolders, ignoredFiles);
-        };
-        const hasLocalScriptTargets = runningHomeFilenames.some(isScriptListTarget);
-        const hasRemoteScriptTargets = runningRemoteFilenames.some(isScriptListTarget);
-        const scriptListDisabledActionIds = [
-            ...(!hasLocalScriptTargets ? [DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_HOME_SCRIPTS] : []),
-            ...(!hasRemoteScriptTargets ? [DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_REMOTE_SCRIPTS] : []),
-        ];
-        const scriptListTopActions = selectedItem === "global.options"
-            ? buildDashboardActions(DASHBOARD_ACTION_GROUPS.SCRIPT_LIST_CONTROLS, {
-                disabledActionIds: scriptListDisabledActionIds,
-            })
-            : [];
 
         const getScriptFolder = (panel) => {
             const normalized = String(panel?.id ?? "").replace(/\\/g, "/");
@@ -4082,19 +4030,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
-                <>
-                    <Card title="Script Controls" accent="#6cb4ff" subtitle="Unmanaged script actions" widgetStyles={WIDGET_STYLES}>
-                        {renderServiceActions(scriptListTopActions)}
-                    </Card>
+                <Card title="Scripts" accent="#6cb4ff" subtitle="Script Controls" widgetStyles={WIDGET_STYLES}>
+                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                    {runningPanels.length > 0 ? renderGroupedScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running scripts.</div>}
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Scripts" accent="#6cb4ff" subtitle="Script Controls" widgetStyles={WIDGET_STYLES}>
-                        <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                        {runningPanels.length > 0 ? renderGroupedScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running scripts.</div>}
-                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                        {stoppedPanels.length > 0 ? renderGroupedScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped scripts.</div>}
-                    </Card>
-                </>
+                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                    {stoppedPanels.length > 0 ? renderGroupedScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped scripts.</div>}
+                </Card>
             );
         }
 
@@ -4104,7 +4046,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             return (
                 <>
                     <Card title="Core Module Controls" accent="#6ee7a8" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
-                        {renderServiceActions(coreModulesListTopActions)}
+                        {renderServiceActions(coreModulesTopActions)}
                     </Card>
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
                     <Card title="Core Modules" accent="#6ee7a8" subtitle="Dashboard core scripts" widgetStyles={WIDGET_STYLES}>
@@ -4122,19 +4064,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
-                <>
-                    <Card title="Integration Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
-                        {renderServiceActions(integrationsListTopActions)}
-                    </Card>
+                <Card title="Integrations" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
+                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running integrations.</div>}
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Integrations" accent="#6cb4ff" subtitle="Integration Controls" widgetStyles={WIDGET_STYLES}>
-                        <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running integrations.</div>}
-                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped integrations.</div>}
-                    </Card>
-                </>
+                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped integrations.</div>}
+                </Card>
             );
         }
 
@@ -4142,19 +4078,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const { runningPanels, stoppedPanels } = splitScriptPanels(centerPanels);
 
             return (
-                <>
-                    <Card title="Plugin Controls" accent="#6cb4ff" subtitle="Managed script actions" widgetStyles={WIDGET_STYLES}>
-                        {renderServiceActions(pluginsListTopActions)}
-                    </Card>
+                <Card title="Plugins" accent="#6cb4ff" subtitle="Plugin Controls" widgetStyles={WIDGET_STYLES}>
+                    <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
+                    {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
                     <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                    <Card title="Plugins" accent="#6cb4ff" subtitle="Plugin Controls" widgetStyles={WIDGET_STYLES}>
-                        <div style={WIDGET_STYLES.heading}>Running ({runningPanels.length})</div>
-                        {runningPanels.length > 0 ? renderScriptButtons(runningPanels) : <div style={WIDGET_STYLES.muted}>No running plugins.</div>}
-                        <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                        <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
-                        {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
-                    </Card>
-                </>
+                    <div style={WIDGET_STYLES.heading}>Stopped ({stoppedPanels.length})</div>
+                    {stoppedPanels.length > 0 ? renderScriptButtons(stoppedPanels) : <div style={WIDGET_STYLES.muted}>No stopped plugins.</div>}
+                </Card>
             );
         }
 
@@ -4618,7 +4548,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     view={activeView}
                     snapshot={fileManagerSnapshots?.[activeView.id] ?? null}
                     dashboardTheme={dashboardTheme}
-                    ignoredFolders={parseScriptFolders(options.ignoredScriptFolders)}
+                    hiddenFolders={parseScriptFolders(options.hiddenScriptFolders)}
                     initialState={getDashboardViewInteractionState(activeView.id)}
                     lastActionResult={globalThis[DASHBOARD_FILE_ACTION_RESULT_KEY] ?? null}
                     onStateChange={(state) => saveDashboardViewInteractionState(activeView.id, state)}
@@ -5154,6 +5084,7 @@ export async function main(ns) {
 
     setDashboardViewDragActiveState(false);
     rememberDashboardFileManagerRender("", "");
+    rememberDashboardNetworkMapRender("", "");
 
     React = getReactLib();
 
@@ -5296,11 +5227,43 @@ export async function main(ns) {
         const fileManagerRenderStable = activeFileManagerSnapshot
             ? isDashboardFileManagerRenderStable(activeDashboardView.id, fileManagerRenderSignature)
             : false;
+        // Same idea as the File Manager stability check above, for network-map: while it's the
+        // active full-window view, only ITS bound service's telemetry (plus its runtime status,
+        // theme, and layout) should be able to force a remount - other plugins ticking their own
+        // telemetry in the background must not blow away in-progress map interactions. See the
+        // getDashboardServiceScopedViewRenderSignature note for why this matters.
+        const activeNetworkMapServiceId = activeDashboardView?.renderer === "network-map"
+            ? String(activeDashboardView?.data?.serviceId ?? "")
+            : "";
+        const activeNetworkMapService = activeNetworkMapServiceId
+            ? getDashboardServiceRegistry().services.find((service) => service.id === activeNetworkMapServiceId)
+            : null;
+        const activeNetworkMapServiceStatus = activeNetworkMapService
+            ? {
+                serviceId: activeNetworkMapService.id,
+                label: activeNetworkMapService.menuLabel,
+                requiresRuntime: Boolean(activeNetworkMapService.pluginFile),
+                running: !activeNetworkMapService.pluginFile
+                    || homeScripts.some((script) => script?.filename === activeNetworkMapService.pluginFile && script?.running),
+            }
+            : null;
+        const networkMapRenderSignature = activeNetworkMapServiceId
+            ? getDashboardServiceScopedViewRenderSignature(
+                activeDashboardView.id,
+                telemetryByServiceId?.[activeNetworkMapServiceId] ?? null,
+                activeNetworkMapServiceStatus,
+                activeDashboardTheme.signature,
+                `${layoutSnapshot.mode}:${layoutSnapshot.tailWidth}x${layoutSnapshot.tailHeight}`
+            )
+            : "";
+        const networkMapRenderStable = activeNetworkMapServiceId
+            ? isDashboardNetworkMapRenderStable(activeDashboardView.id, networkMapRenderSignature)
+            : false;
         const optionsInputFocused = Boolean(globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY]);
         const viewDragActive = Boolean(globalThis[DASHBOARD_VIEW_DRAG_ACTIVE_KEY]);
 
         if (React) {
-            if (optionsInputFocused || viewDragActive || fileManagerRenderStable) {
+            if (optionsInputFocused || viewDragActive || fileManagerRenderStable || networkMapRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
                 const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
@@ -5355,6 +5318,10 @@ export async function main(ns) {
                 rememberDashboardFileManagerRender(
                     activeFileManagerSnapshot ? activeDashboardView.id : "",
                     fileManagerRenderSignature
+                );
+                rememberDashboardNetworkMapRender(
+                    activeNetworkMapServiceId ? activeDashboardView.id : "",
+                    networkMapRenderSignature
                 );
                 lastRenderedSignature = renderSignature;
             }

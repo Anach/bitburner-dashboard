@@ -31,7 +31,7 @@ export function normalizeScriptFiles(rawFiles) {
     return parseScriptFiles(rawFiles).join(", ");
 }
 
-export function isScriptFileIgnored(filename, files) {
+export function isScriptFileHidden(filename, files) {
     if (typeof filename !== "string" || !Array.isArray(files) || files.length === 0) return false;
     const normalizedFilename = filename.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
     return files.includes(normalizedFilename);

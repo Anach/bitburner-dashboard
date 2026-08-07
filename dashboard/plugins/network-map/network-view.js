@@ -158,6 +158,7 @@ export const DASHBOARD_VIEW_METADATA = {
         "directPrefix": "ConnectDirect:",
         "routePrefix": "ConnectRoute:",
         "hopPrefix": "ConnectHop:",
+        "setModePrefix": "SetMode:",
         "refreshCommand": "Refresh",
         "directLabel": "Direct connect",
         "routeLabel": "Auto route",

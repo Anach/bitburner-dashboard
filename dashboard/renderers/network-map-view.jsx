@@ -71,7 +71,15 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         ?? modeOptions.find((option) => String(getDashboardViewValue(option, modeSelector.idKey) ?? "") === defaultModeId)
         ?? null;
     const activeModeId = String(getDashboardViewValue(activeModeOption, modeSelector.idKey) ?? selectedModeId ?? defaultModeId);
-    const activeTelemetry = modeMaps?.[activeModeId] ?? telemetry;
+    // modeMaps existing but not yet containing activeModeId means the backend is still building
+    // that mode's data on-demand (see network-navigator.js) - falling back to the whole `telemetry`
+    // object here would substitute a DIFFERENT mode's nodes (wrong shape for this layout strategy)
+    // instead of showing "no data yet". That wrong-shaped interim render has non-zero nodes, which
+    // makes the fit-on-load effect below fit against it and mark fittedRef.current = true - so when
+    // the real data for this mode arrives moments later, the effect never re-fits, leaving the map
+    // positioned off-screen. Falling back to null instead keeps nodes.length at 0 during the wait,
+    // which the fit effect already treats as "nothing to fit yet".
+    const activeTelemetry = modeMaps ? (modeMaps[activeModeId] ?? null) : telemetry;
     const layoutStrategy = String(getDashboardViewValue(activeModeOption, modeSelector.layoutKey) ?? "layered");
     const showRoutes = getDashboardViewValue(activeModeOption, modeSelector.routesKey) !== false;
     const showCloudControl = getDashboardViewValue(activeModeOption, modeSelector.cloudKey) !== false;
@@ -97,7 +105,19 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const viewportRef = React.useRef(null);
     const detailsRef = React.useRef(null);
     const panRef = React.useRef(null);
-    const fittedRef = React.useRef(Boolean(savedInteraction?.transform));
+    // Tracks the activeModeId we last fit the transform for (not just a yes/no flag) so a
+    // stale saved transform from a DIFFERENT mode - or from before on-demand mode loading
+    // existed at all - can never be mistaken for "already fit". Restored from savedInteraction's
+    // OWN fittedModeId (the actual fit-completion marker, persisted below), not re-derived from
+    // selectedModeId+transform - those two can go briefly inconsistent right after selectMode()
+    // switches the mode but before real data has actually been fit (transform still holds the
+    // PREVIOUS mode's value in that window), and a remount landing exactly then would otherwise
+    // wrongly trust that stale transform and skip fitting forever.
+    const fittedRef = React.useRef(
+        savedInteraction?.transform && String(savedInteraction?.fittedModeId ?? "") === activeModeId
+            ? activeModeId
+            : null
+    );
     const savedViewportBounds = savedInteraction?.viewportBounds && typeof savedInteraction.viewportBounds === "object"
         ? savedInteraction.viewportBounds
         : {};
@@ -177,11 +197,11 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
 
     React.useLayoutEffect(() => {
         const cloudVisibilityChanged = previousShowCloudRef.current !== showCloud;
-        if ((!cloudVisibilityChanged && fittedRef.current) || !viewportRef.current || nodes.length === 0) return;
+        if ((!cloudVisibilityChanged && fittedRef.current === activeModeId) || !viewportRef.current || nodes.length === 0) return;
         const bounds = viewportRef.current.getBoundingClientRect();
         lastViewportBoundsRef.current = { width: bounds.width, height: bounds.height };
         setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-        fittedRef.current = true;
+        fittedRef.current = activeModeId;
         previousShowCloudRef.current = showCloud;
     }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length]);
 
@@ -199,15 +219,24 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             ) return;
             lastViewportBoundsRef.current = { width: bounds.width, height: bounds.height };
             setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-            fittedRef.current = true;
+            fittedRef.current = activeModeId;
         });
         observer.observe(element);
         return () => observer.disconnect();
     }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length, Boolean(selectedNode)]);
 
-    React.useEffect(() => {
+    // useLayoutEffect (not useEffect) so this save is synchronous with the click that caused it.
+    // The dashboard's outer main loop can remount this whole tree via a fresh ns.printRaw() call
+    // at any moment - driven by its own ns.sleep()-based tick, on a totally separate clock from
+    // React's own scheduling - whenever ANY telemetry changes anywhere in the dashboard, not just
+    // this view's. A plain useEffect defers this save until after paint, leaving a real window
+    // where that external remount lands before the save commits, silently discarding whatever was
+    // just clicked/zoomed/panned (restored state on the fresh mount would still be the stale,
+    // pre-click value). useLayoutEffect runs synchronously as part of the same commit, closing it.
+    React.useLayoutEffect(() => {
         saveDashboardViewInteractionState(view?.id ?? "", {
             transform,
+            fittedModeId: fittedRef.current,
             selectedId,
             stepTargetId,
             showCloud,
@@ -241,7 +270,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         if (!viewportRef.current) return;
         const bounds = viewportRef.current.getBoundingClientRect();
         setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
-        fittedRef.current = true;
+        fittedRef.current = activeModeId;
     };
 
     const centerNode = (nodeId, reserveInspector = Boolean(selectedNode)) => {
@@ -292,6 +321,21 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         onCommand(serviceId, command);
     };
 
+    const lastSentModeIdRef = React.useRef(null);
+    React.useEffect(() => {
+        // Backend `activeModeId` is in-memory only (reset to its default on every script
+        // restart/game reload), while the frontend's initial `selectedModeId` is restored from
+        // persisted interaction state. Without this, a restored non-default mode never tells the
+        // backend to build it - selectMode() only fires on an actual click - so the on-demand
+        // fetch on first open waits forever for data the backend never builds. Runs on mount too,
+        // not just on user-driven switches, since lastSentModeIdRef starts null.
+        if (!actionConfig.setModePrefix) return;
+        const serviceId = String(actionConfig.serviceId ?? dataConfig.serviceId ?? "");
+        if (!serviceId || !activeModeId || lastSentModeIdRef.current === activeModeId) return;
+        lastSentModeIdRef.current = activeModeId;
+        sendCommand(actionConfig.setModePrefix, activeModeId);
+    }, [activeModeId, actionConfig.setModePrefix, actionConfig.serviceId, dataConfig.serviceId]);
+
     const copyNodeActionValue = (value, label) => {
         const text = String(value ?? "");
         if (!text) return;
@@ -334,7 +378,9 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         setSearchText("");
         setFiltersOpen(false);
         setModeMenuOpen(false);
-        fittedRef.current = false;
+        fittedRef.current = null;
+        // The SetMode command itself is sent by the lastSentModeIdRef effect above, which
+        // reacts to activeModeId changing - covers both this click path and initial mount.
     };
 
     const toggleCloudServers = () => {
@@ -592,6 +638,22 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                     );
                 })}
             </div>
+
+            {modeMaps && !activeTelemetry ? (
+                <div style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    pointerEvents: "none",
+                    color: "#8fc5ff",
+                    fontSize: "11px",
+                    letterSpacing: "0.04em",
+                }}>
+                    Loading {activeModeLabel} map…
+                </div>
+            ) : null}
 
             {modeMenuOpen && modeOptions.length > 0 ? (
                 <div data-network-control="true" style={styles.networkModePopup}>

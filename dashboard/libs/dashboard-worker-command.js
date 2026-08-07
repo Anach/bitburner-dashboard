@@ -5,12 +5,6 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
             workerCommand.dashboardPid = context.getDashboardPid?.(ns);
             workerCommand.args = context.getDashboardRestartArgs?.(ns);
         }
-        if (String(command.actionId).includes("script-list")) {
-            Object.assign(workerCommand, context.getScriptListSettings?.(ns));
-        }
-        if (String(command.actionId).includes("script-list") || String(command.actionId).includes("plugin-list")) {
-            workerCommand.pluginFiles = context.getPluginFiles?.();
-        }
         return workerCommand;
     }
     if (command?.kind === "script") {

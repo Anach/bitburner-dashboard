@@ -30,7 +30,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "title": "Player Status",
             "columnStart": 5,
             "columnSpan": 1,
-            "rowStart": 1,
+            "rowStart": 2,
             "rowSpan": 3,
             "orientation": "vertical",
             "serviceIds": ["system.playerStatus"],

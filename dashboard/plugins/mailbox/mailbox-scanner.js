@@ -341,6 +341,7 @@ export async function main(ns) {
     migrateStoredMessages(messages);
     const readerLaunchState = new Map();
     let lastCommand = null;
+    let lastStateSignature = "";
 
     while (true) {
         const networkHosts = new Set(discoverNetwork(ns, "home").servers);
@@ -354,7 +355,18 @@ export async function main(ns) {
         const commandResult = drainCommands(ns, messages);
         if (commandResult) lastCommand = commandResult;
 
-        await ns.write(MAILBOX_STATE_JSON, JSON.stringify(buildSnapshot(messages, lastCommand)), "w");
+        const snapshot = buildSnapshot(messages, lastCommand);
+        // Excludes generatedAt from the comparison - it always differs, which would defeat the
+        // point. A genuinely new command result still triggers a write, since lastCommand's own
+        // timestamp isn't excluded. Same signature-gating pattern as network-navigator.js/
+        // player-stats.js - avoids a redundant write (and the dashboard-wide remount that a
+        // changed telemetry file forces - see the Network Map remount-race note) between the
+        // relatively rare moments a message actually arrives or gets read/deleted.
+        const stateSignature = JSON.stringify(snapshot, (key, value) => key === "generatedAt" ? undefined : value);
+        if (stateSignature !== lastStateSignature) {
+            await ns.write(MAILBOX_STATE_JSON, JSON.stringify(snapshot), "w");
+            lastStateSignature = stateSignature;
+        }
         await ns.sleep(SCAN_INTERVAL_MS);
     }
 }

@@ -23,9 +23,9 @@ import {
     parseScriptFolders,
 } from "dashboard/libs/script-folders.js";
 
-export const DEFAULT_IGNORED_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
-export const DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_IGNORED_SCRIPT_FOLDERS);
-export const DEFAULT_IGNORED_SCRIPT_FILES_OPTION = "";
+export const DEFAULT_HIDDEN_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
+export const DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_HIDDEN_SCRIPT_FOLDERS);
+export const DEFAULT_HIDDEN_SCRIPT_FILES_OPTION = "";
 
 export function getServiceAutostartOptionKey(serviceId) {
     return `serviceAutostart:${serviceId}`;
@@ -82,8 +82,8 @@ export function getDefaultDashboardOptions(services = []) {
         dashboardWindowedY: -1,
         dashboardWindowedWidth: DEFAULT_TAIL_WIDTH,
         dashboardWindowedHeight: DEFAULT_TAIL_HEIGHT,
-        ignoredScriptFolders: DEFAULT_IGNORED_SCRIPT_FOLDERS_OPTION,
-        ignoredScriptFiles: DEFAULT_IGNORED_SCRIPT_FILES_OPTION,
+        hiddenScriptFolders: DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
+        hiddenScriptFiles: DEFAULT_HIDDEN_SCRIPT_FILES_OPTION,
     };
     for (const service of services) {
         Object.assign(defaults, getPluginIntegrationDefaultOptions(service.pluginMetadata));
@@ -93,7 +93,7 @@ export function getDefaultDashboardOptions(services = []) {
     return defaults;
 }
 
-function migrateIgnoredScriptFolders(rawFolders) {
+function migrateHiddenScriptFolders(rawFolders) {
     const migrated = parseScriptFolders(rawFolders).map((folder) => {
         if (folder === "dashboard-core" || folder === "dashboard-integrations" || folder === "dashboard-libs") {
             return "dashboard";
@@ -125,15 +125,16 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         dashboardWindowedY: normalizeGeometryNumber(rawOptions.dashboardWindowedY, defaults.dashboardWindowedY, -1),
         dashboardWindowedWidth: normalizeGeometryNumber(rawOptions.dashboardWindowedWidth, defaults.dashboardWindowedWidth, 150),
         dashboardWindowedHeight: normalizeGeometryNumber(rawOptions.dashboardWindowedHeight, defaults.dashboardWindowedHeight, DEFAULT_TAIL_TITLE_HEIGHT),
-        ignoredScriptFolders: migrateIgnoredScriptFolders(
-            rawOptions.ignoredScriptFolders === undefined
-                ? defaults.ignoredScriptFolders
-                : rawOptions.ignoredScriptFolders
+        // Renamed from ignoredScript{Folders,Files} - "ignored" implied these scripts were also
+        // exempt from the dashboard's own bulk kill actions, which was never the intent and has
+        // since been fixed (they're bulk-killable; only hidden from the Script List display).
+        // Falls back to the old key when present and the new one isn't, so an existing save's
+        // configured value carries forward instead of silently resetting to defaults.
+        hiddenScriptFolders: migrateHiddenScriptFolders(
+            rawOptions.hiddenScriptFolders ?? rawOptions.ignoredScriptFolders ?? defaults.hiddenScriptFolders
         ),
-        ignoredScriptFiles: normalizeScriptFiles(
-            rawOptions.ignoredScriptFiles === undefined
-                ? defaults.ignoredScriptFiles
-                : rawOptions.ignoredScriptFiles
+        hiddenScriptFiles: normalizeScriptFiles(
+            rawOptions.hiddenScriptFiles ?? rawOptions.ignoredScriptFiles ?? defaults.hiddenScriptFiles
         ),
     };
     for (const service of services) {

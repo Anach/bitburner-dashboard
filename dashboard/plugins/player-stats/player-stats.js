@@ -109,8 +109,19 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[PLAYER] Player status telemetry started.");
     ns.print("[LIFECYCLE] Player status telemetry started.");
+    let lastStatusSignature = "";
     while (true) {
-        await ns.write(PLAYER_STATUS_PATH, JSON.stringify(buildPlayerStatus(ns)), "w");
+        const status = buildPlayerStatus(ns);
+        // Excludes generatedAt from the comparison - it always differs, which would defeat the
+        // point. HP/money/XP genuinely change almost every tick during active play, so this
+        // mostly helps during idle/AFK stretches, but it's the same signature-gating pattern
+        // applied to network-navigator.js and keeps this daemon from forcing a dashboard-wide
+        // remount (see the Network Map remount-race note above) when nothing actually moved.
+        const statusSignature = JSON.stringify(status, (key, value) => key === "generatedAt" ? undefined : value);
+        if (statusSignature !== lastStatusSignature) {
+            await ns.write(PLAYER_STATUS_PATH, JSON.stringify(status), "w");
+            lastStatusSignature = statusSignature;
+        }
         await ns.sleep(REFRESH_MS);
     }
 }

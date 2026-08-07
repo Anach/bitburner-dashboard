@@ -10,7 +10,7 @@ export const DASHBOARD_VIEW_METADATA = {
     "layout": {
         "leftPath": "",
         "rightPath": "dashboard",
-        "showIgnoredDefault": true
+        "showHiddenDefault": true
     },
     "commands": {
         "edit": "nano {path}"

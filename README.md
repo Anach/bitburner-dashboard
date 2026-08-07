@@ -30,6 +30,30 @@ No game DOM modification is required. The interface is rendered inside a normal 
 
 The dashboard itself does not require Singularity. An individual integration can declare Singularity or another capability as required or optional.
 
+### RAM requirements
+
+Static RAM cost of each framework and included-plugin script, measured on Bitburner 3.0.2 (pre-SF4 save; figures with Source-File 4 unlocked will be lower for anything using `ns.singularity.*`, since Bitburner applies a 16x RAM penalty to those calls before SF4):
+
+| Component | Static RAM | Notes |
+| --- | ---: | --- |
+| `dashboard/automation-dashboard.jsx` | 4.90 GB | Required. The dashboard itself. |
+| `dashboard/service-supervisor.js` | 4.30 GB | Required if any daemon integration is enabled. Supervises daemon start/restart. |
+| **Combined steady footprint** | **8.60 GB** | Dashboard + supervisor running together, the normal steady state. |
+| `dashboard/action-worker.js` | 8.50 GB | Transient only — a worker instance starts on demand for a script/kill/file action and exits immediately after, never part of the permanent footprint. |
+
+Included plugins (each independently removable; only pay for what you keep installed):
+
+| Plugin runtime | Static RAM | Notes |
+| --- | ---: | --- |
+| Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.1 GB | |
+| Network Navigator (`dashboard/plugins/network-map/network-navigator.js`) | 234.9 GB | Dominated by six pre-SF4-penalized `ns.singularity.*` calls used for city/company details. Drops sharply once Source-File 4 is unlocked — this is expected, not a bug. |
+| Mailbox Scanner (`dashboard/plugins/mailbox/mailbox-scanner.js`) | 5.25 GB | |
+| Mailbox Darknet Agent (`dashboard/plugins/mailbox/mailbox-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
+| Mailbox Reader (`dashboard/plugins/mailbox/mailbox-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
+| File Manager / Script Log / Mailbox views (`file-manager-view.js`, `script-log-view.js`, `mailbox-view.js`) | 1.6 GB each | Pure metadata descriptors with no `main()` — base script cost only. |
+
+These figures are static per-script costs, not a live-usage snapshot — measure your own installation after syncing if you need an exact number, since it depends on exactly which plugins you keep and whether Source-File 4 is unlocked.
+
 ## Install and run
 
 1. Clone or download the framework repository locally.
@@ -212,7 +236,7 @@ Options are stored with the dashboard configuration. The dashboard can send thei
     { "id": "notifications", "label": "Notifications", "optionKey": "notifications", "type": "checkbox" }
 ],
 "commands": {
-    "port": 20,
+    "port": 23,
     "optionBindings": [
         { "optionKey": "sampleInterval", "prefix": "SampleInterval:" },
         { "optionKey": "notifications", "trueValue": "Notifications:on", "falseValue": "Notifications:off" }
@@ -287,7 +311,7 @@ Plugins may contribute widgets to a discovered view through JSON-compatible `vie
 - Preserve folder paths when syncing; Netscript imports are path-based.
 - The runtime framework imports only files beneath `dashboard/`; `data/` files are user or runtime state rather than code dependencies.
 - Keep runtime basenames unique so descriptors pair deterministically.
-- Dashboard Options exclusions affect the Script List only; they do not disable integration discovery.
+- Dashboard Options' Hidden folders/scripts affect the Script List display only — they do not disable integration discovery, and a hidden script remains a valid target for the Script List's own bulk Kill Home/Kill Remote actions.
 - Keep telemetry files valid JSON. Invalid or missing snapshots fail closed and show telemetry as unavailable.
 - Port numbers are shared game-wide; integrations must not reuse ports unintentionally.
 - File-manager actions can move, archive, or delete files on `home`. Running and descriptor-protected files are blocked, but a save backup remains strongly recommended.

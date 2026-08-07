@@ -216,15 +216,15 @@ export function buildFilePaneEntries(files = [], directory = "", options = {}) {
     const prefix = currentDirectory ? `${currentDirectory}/` : "";
     const query = String(options.query ?? "").trim().toLowerCase();
     const statusFilter = String(options.statusFilter ?? "all").toLowerCase();
-    const showIgnored = options.showIgnored !== false;
-    const ignoredFolders = Array.isArray(options.ignoredFolders) ? options.ignoredFolders : [];
-    const browsingIgnoredFolder = isPathInFolders(currentDirectory, ignoredFolders);
+    const showHidden = options.showHidden !== false;
+    const hiddenFolders = Array.isArray(options.hiddenFolders) ? options.hiddenFolders : [];
+    const browsingHiddenFolder = isPathInFolders(currentDirectory, hiddenFolders);
     const matchingFiles = (Array.isArray(files) ? files : []).filter((entry) => {
         const path = normalizeFilePath(entry?.path);
         if (!path.startsWith(prefix)) return false;
         const remainder = path.slice(prefix.length);
         if (!remainder) return false;
-        if (!showIgnored && isPathInFolders(path, ignoredFolders)) return false;
+        if (!showHidden && isPathInFolders(path, hiddenFolders)) return false;
         const matchesStatus = statusFilter === "all"
             || (statusFilter === "running" ? Boolean(entry.running) : entry.syncStatus === statusFilter);
         const matchesQuery = !query || path.toLowerCase().includes(query);
@@ -241,7 +241,7 @@ export function buildFilePaneEntries(files = [], directory = "", options = {}) {
                 ...entry,
                 id: `file:${entry.path}`,
                 entryType: "file",
-                ignored: !browsingIgnoredFolder && isPathInFolders(entry.path, ignoredFolders),
+                hidden: !browsingHiddenFolder && isPathInFolders(entry.path, hiddenFolders),
             });
             continue;
         }
@@ -258,7 +258,7 @@ export function buildFilePaneEntries(files = [], directory = "", options = {}) {
         entryType: "directory",
         path,
         name: getFileName(path),
-        ignored: !browsingIgnoredFolder && isPathInFolders(path, ignoredFolders),
+        hidden: !browsingHiddenFolder && isPathInFolders(path, hiddenFolders),
         ...summarizeDirectory(descendantFiles),
     }));
 

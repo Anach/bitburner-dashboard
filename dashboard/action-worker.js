@@ -12,7 +12,6 @@ import {
     isProtectedFile,
     joinFilePath,
 } from "dashboard/libs/file-utils.js";
-import { isScriptFileIgnored, isScriptInFolders } from "dashboard/libs/script-folders.js";
 import { restartHomeScript, startHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -22,21 +21,6 @@ export const DASHBOARD_SCRIPT_METADATA = {
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
-
-// Each "Kill Local"/"Kill Remote" pair targets its own category's exact filename set (sent by
-// the client as command.filenames) rather than a folder/name heuristic - Core Modules,
-// Integrations, and Plugins are separate menu panels now and must only ever kill their own
-// scripts. Killing home-run Integrations/Plugins also stops the supervisor first so it doesn't
-// immediately relaunch what was just killed on its next ~30s cycle; Core Modules doesn't need
-// that special case since the supervisor script itself is already part of its own filename set.
-const SCOPED_KILL_LIST_ACTIONS = {
-    [DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_HOME_SCRIPTS]: { hosts: "home", label: "core module" },
-    [DASHBOARD_ACTION_IDS.KILL_CORE_MODULES_REMOTE_SCRIPTS]: { hosts: "remote", label: "core module" },
-    [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_HOME_SCRIPTS]: { hosts: "home", label: "integration", stopsSupervisor: true },
-    [DASHBOARD_ACTION_IDS.KILL_INTEGRATIONS_REMOTE_SCRIPTS]: { hosts: "remote", label: "integration" },
-    [DASHBOARD_ACTION_IDS.KILL_PLUGINS_HOME_SCRIPTS]: { hosts: "home", label: "plugin", stopsSupervisor: true },
-    [DASHBOARD_ACTION_IDS.KILL_PLUGINS_REMOTE_SCRIPTS]: { hosts: "remote", label: "plugin" },
-};
 
 function writeResult(ns, requestId, result) {
     ns.write(DASHBOARD_ACTION_WORKER_RESULT_FILE, JSON.stringify({
@@ -139,32 +123,6 @@ function performDashboardKillAction(ns, command) {
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS) {
         const result = killMatchingProcesses(ns, remoteHosts, () => true);
         return success(`Killed ${result.killedCount} script${result.killedCount === 1 ? "" : "s"} across ${result.serverCount} remote server${result.serverCount === 1 ? "" : "s"}.`, "warning", result);
-    }
-    if (actionId === DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_HOME_SCRIPTS
-        || actionId === DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_REMOTE_SCRIPTS) {
-        const pluginFiles = new Set(command.pluginFiles);
-        const matcher = (filename) => typeof filename === "string"
-            && filename !== DASHBOARD_SCRIPT
-            && !pluginFiles.has(filename)
-            && !isScriptInFolders(filename, command.ignoredFolders)
-            && !isScriptFileIgnored(filename, command.ignoredFiles);
-        const hosts = actionId === DASHBOARD_ACTION_IDS.KILL_SCRIPT_LIST_HOME_SCRIPTS ? ["home"] : remoteHosts;
-        const result = killMatchingProcesses(ns, hosts, matcher, excludeWorker);
-        const location = hosts[0] === "home" ? "on home" : `across ${result.serverCount} remote server${result.serverCount === 1 ? "" : "s"}`;
-        return success(`Killed ${result.killedCount} script${result.killedCount === 1 ? "" : "s"} from Script List ${location}.`, "warning", result);
-    }
-    const scopedKillAction = SCOPED_KILL_LIST_ACTIONS[actionId];
-    if (scopedKillAction) {
-        const filenames = new Set(command.filenames);
-        let supervisorStopped = false;
-        if (scopedKillAction.stopsSupervisor) {
-            supervisorStopped = stopHomeScript(ns, SERVICE_SUPERVISOR_SCRIPT).status === "stopped";
-        }
-        const hosts = scopedKillAction.hosts === "home" ? ["home"] : remoteHosts;
-        const result = killMatchingProcesses(ns, hosts, (filename) => filename !== DASHBOARD_SCRIPT && filenames.has(filename), excludeWorker);
-        const location = scopedKillAction.hosts === "home" ? "on home" : `across ${result.serverCount} remote server${result.serverCount === 1 ? "" : "s"}`;
-        const supervisorSummary = supervisorStopped ? " Integration supervisor stopped." : "";
-        return success(`Killed ${result.killedCount} ${scopedKillAction.label} script${result.killedCount === 1 ? "" : "s"} ${location}.${supervisorSummary}`, "warning", result);
     }
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS) {
         const remoteResult = killMatchingProcesses(ns, remoteHosts, () => true);
