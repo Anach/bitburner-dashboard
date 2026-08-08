@@ -1,6 +1,6 @@
 import { areCapabilityRequirementsMet, buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
-import { isServiceAutostartEnabled } from "dashboard/libs/dashboard-options.js";
+import { isServiceAutostartEnabled, sortByServiceStartOrder } from "dashboard/libs/dashboard-options.js";
 import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -25,6 +25,17 @@ function readDashboardOptions(ns) {
 }
 
 function reportLaunchIssue(ns, script, status, previousIssues) {
+    if (status === "reserved") {
+        // Not an error - a deliberate skip to protect the Reserved Home RAM headroom (see
+        // startManagedService). Quiet ns.print only (not tprint): this resolves itself once RAM
+        // frees up or the user reorders/disables something, so it shouldn't read as alarming as
+        // a real launch failure. Logged once per transition into this state, not every cycle.
+        if (previousIssues.get(script) !== status) {
+            ns.print(`[LIFECYCLE] Skipped ${script}: starting it would drop free home RAM below the Reserved Home RAM setting.`);
+            previousIssues.set(script, status);
+        }
+        return;
+    }
     if (status !== "missing" && status !== "failed") {
         previousIssues.delete(script);
         return;
@@ -90,9 +101,20 @@ function discoverBareDaemonScripts(ns, normalizedFiles, managedFilenames) {
     return candidates;
 }
 
-function startManagedService(ns, service, runningFiles) {
+function startManagedService(ns, service, runningFiles, reservedHomeRamGb) {
     const script = service.filename;
     if (runningFiles.has(script)) return { status: "already-running" };
+
+    // Checked fresh (not pre-computed once per cycle) so each successive start in the same pass
+    // sees the real, already-reduced headroom left by every service started earlier in this same
+    // cycle - starting service #1 changes what's actually safe to start for service #2.
+    if (reservedHomeRamGb > 0) {
+        const scriptRam = ns.getScriptRam(script, "home");
+        const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+        if (scriptRam > 0 && freeRam - scriptRam < reservedHomeRamGb) {
+            return { status: "reserved" };
+        }
+    }
 
     const args = Array.isArray(service.metadata?.launchArgs) ? service.metadata.launchArgs : [];
     const pid = ns.run(script, 1, ...args);
@@ -134,14 +156,26 @@ export async function main(ns) {
         const runningFiles = new Set((ns.ps("home") ?? []).map((process) => process.filename));
         const capabilities = buildCapabilitySnapshot(ns);
         const options = readDashboardOptions(ns);
+        // A service that fails ns.run() (out of RAM, exec error, etc.) just gets logged and
+        // retried next cycle in the same order - no RAM-awareness beyond that. Letting the user
+        // set an explicit order (persisted via the dashboard's Service Start Order UI) is how a
+        // cheap/important daemon can be made to win the RAM race ahead of an expensive one when
+        // free RAM is scarce.
+        const orderedServices = sortByServiceStartOrder(services, options);
+        // Reserved Home RAM (same option the Dashboard Options UI already exposes) additionally
+        // stops the supervisor from greedily consuming every last GB: on-demand, transient work
+        // like dashboard/action-worker.js (~8.5GB) has nowhere to run if autostart daemons have
+        // already claimed the entire home server between them. Defaults to 0 (today's prior
+        // behavior - no reservation) unless the user opts in with a higher value.
+        const reservedHomeRamGb = Number(options.reservedHomeRam) || 0;
 
-        for (const service of services) {
+        for (const service of orderedServices) {
             const requirements = Array.isArray(service.requirements) ? service.requirements : [];
             if (!areCapabilityRequirementsMet(requirements, capabilities)) continue;
             if (!isServiceAutostartEnabled(service.serviceId, options)) continue;
 
             const script = service.filename;
-            const result = startManagedService(ns, service, runningFiles);
+            const result = startManagedService(ns, service, runningFiles, reservedHomeRamGb);
             reportLaunchIssue(ns, script, result.status, previousIssues);
         }
 

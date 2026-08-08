@@ -14,6 +14,18 @@ export const DASHBOARD_PLUGIN_METADATA = {
     ],
     "telemetry": {
         "path": "data/network_navigator_stats.json",
+        "overviewGauges": [
+            {
+                "id": "network-ram",
+                "label": "Network RAM",
+                "shortLabel": "NETWORK",
+                "usedKey": "networkRam.used",
+                "totalKey": "networkRam.total",
+                "ratioKey": "networkRam.ratio",
+                "valueFormat": "ram",
+                "order": 20
+            }
+        ],
         "fields": [
             { "key": "generatedAt", "label": "Last Updated", "tone": "neutral", "format": "time", "panelId": "status" },
             { "key": "currentHost", "label": "Connected To", "tone": "info", "panelId": "status" },

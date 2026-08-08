@@ -5,10 +5,12 @@ import {
     DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
     dashboardOptionsEqual,
     getDefaultDashboardOptions,
+    getServiceStartOrder,
     HIDE_UNQUALIFIED_PLUGINS_MODES,
     isServiceVisibleInMenu,
     normalizeDashboardOptions,
     normalizeHideUnqualifiedPluginsMode,
+    sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
 import {
     applyDashboardViewWidgetContributions as applyDashboardViewWidgetContributionsDefinition,
@@ -80,7 +82,7 @@ import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import { MailboxView } from "dashboard/renderers/mailbox-view.jsx";
 import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
-import { configureDashboardMetrics, RamGauge, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
+import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
 import {
     configureSystemOverviewPanels,
     HomePanel,
@@ -833,12 +835,7 @@ const WIDGET_STYLES = {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        minHeight: "130px",
-        borderRadius: "7px",
-        padding: "8px",
-        background: "rgba(5, 9, 8, 0.78)",
-        border: "1px solid rgba(110, 231, 168, 0.14)"
+        justifyContent: "center"
     },
     homeGaugeValue: {
         color: "#91b9a0",
@@ -1217,7 +1214,11 @@ function getDefaultUiState() {
             "global.coreModules": "",
             "global.integrations": "",
             "global.plugins": "",
-        }
+        },
+        // Persisted (not just component state) because ns.printRaw() mounts a brand-new React
+        // tree every dashboard tick - a plain useState here would forget the highlighted row on
+        // the very next refresh, seconds after the user clicked it.
+        startOrderSelectedServiceId: "",
     };
 }
 
@@ -1265,7 +1266,10 @@ function loadUiState() {
         activeViewId: savedActiveViewId === "home" ? "system-overview" : savedActiveViewId,
         healthFilter: HEALTH_FILTER_MODES.has(saved.healthFilter) ? saved.healthFilter : base.healthFilter,
         selectedItem: getServiceById(upgradedSelectedItem) ? upgradedSelectedItem : base.selectedItem,
-        centerPanels: upgradedCenterPanels
+        centerPanels: upgradedCenterPanels,
+        startOrderSelectedServiceId: typeof saved.startOrderSelectedServiceId === "string"
+            ? saved.startOrderSelectedServiceId
+            : base.startOrderSelectedServiceId
     };
 }
 
@@ -1921,10 +1925,17 @@ const DASHBOARD_SERVICES = [
         description: "Controls dashboard-wide presentation and Script List visibility. Plugin discovery is unaffected.",
         alwaysVisible: true,
         defaultPanelId: "options",
+        // Start Order listed first so its button sits just above Options in the center column's
+        // panel selector - the reorderable list itself is too wide for that column, so it only
+        // gets a menu entry there; its actual content renders bespoke in the right column (see
+        // renderStandardServicePanel's start-order special-case) rather than through the generic
+        // getState/getInputs/getActions machinery, which has no concept of a reorderable list.
         subviews: [
+            { id: "start-order", label: "Start Order" },
             { id: "options", label: "Options" },
         ],
         panelMeta: {
+            "start-order": { title: "Service Start Order", accent: "#6cb4ff", subtitle: "Order the Integration Service Supervisor uses when RAM is scarce" },
             options: { title: "Dashboard Options", accent: "#6cb4ff", subtitle: "Configure dashboard-wide behavior" },
         },
         getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
@@ -1984,28 +1995,6 @@ const DASHBOARD_SERVICES = [
                 { label: "Hidden scripts", value: configuredFiles.join(", ") || "None", tone: "info" },
                 { label: "Defaults", value: DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION, tone: "neutral" },
             ];
-        },
-        // One global Kill Local/Kill Remote pair here replaces the four scoped pairs that used to
-        // live on Core Modules, Integrations, Plugins, and Script List - those distinctions never
-        // meant anything to a user (integrations/core never run remotely; "local" vs "remote" is
-        // the only split that actually matters). Wired to the existing KILL_ALL_HOME_SCRIPTS/
-        // KILL_ALL_REMOTE_SCRIPTS actions, which already kill unconditionally across every
-        // category rather than needing a scoped filename list.
-        getActions: ({ selectedCenterPanel, runningProcessSnapshot }) => {
-            if (selectedCenterPanel !== "options") return [];
-            const homeFilenames = Array.isArray(runningProcessSnapshot?.homeFilenames) ? runningProcessSnapshot.homeFilenames : [];
-            const remoteFilenames = Array.isArray(runningProcessSnapshot?.remoteFilenames) ? runningProcessSnapshot.remoteFilenames : [];
-            const hasLocalTargets = homeFilenames.some((filename) => filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT);
-            const hasRemoteTargets = remoteFilenames.length > 0;
-            return buildDashboardActions(
-                [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS, DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS],
-                {
-                    disabledActionIds: [
-                        ...(hasLocalTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS]),
-                        ...(hasRemoteTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS]),
-                    ],
-                }
-            );
         },
     },
     {
@@ -2859,20 +2848,17 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
         return {
             workspaceColumns: "320px 420px minmax(620px, 1fr)",
             statMinimumWidth: 180,
-            gaugeWidth: 72,
         };
     }
     if (tier === "standard") {
         return {
             workspaceColumns: "280px 360px minmax(520px, 1fr)",
             statMinimumWidth: 160,
-            gaugeWidth: 68,
         };
     }
     return {
         workspaceColumns: "minmax(220px, 0.85fr) minmax(280px, 1fr) minmax(480px, 2.2fr)",
         statMinimumWidth: 138,
-        gaugeWidth: 64,
     };
 }
 
@@ -3185,7 +3171,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         homeRamStatus,
         options,
         pluginDashboardOptionInputs,
-        runningProcessSnapshot,
         services: dashboardServiceRegistry.services,
         views: dashboardViews,
     };
@@ -3472,6 +3457,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             return;
         }
         if (action.kind === "dashboard") {
+            // Kill-All is rendered in more than one place (the frame-control corner button, and
+            // the global Kill Controls card below) - route every copy through the same
+            // requestGlobalKill() so the double-click guard (killAllPending/killAllSnapshotRef)
+            // applies consistently no matter which copy was clicked, instead of only the ones
+            // that happen to call requestGlobalKill directly.
+            if (action.actionId === DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS) {
+                requestGlobalKill();
+                return;
+            }
             enqueueDashboardAction({
                 kind: "dashboard",
                 actionId: action.actionId,
@@ -3553,6 +3547,60 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             next[input.optionKey] = String(rawValue ?? "");
             return next;
         });
+    };
+
+    // Bypasses the generic save-options action-button dispatch (runServiceAction) since this
+    // isn't a boolean toggle - persists the fully-reconciled current row order directly.
+    // Persisting the RECONCILED list (not editing the raw stored string in place) is what makes
+    // the saved order self-healing: any id no longer live silently drops out, and any
+    // never-before-seen id that had defaulted into a tail position gets baked into the explicit
+    // order the moment the user touches any row.
+    //
+    // Does NOT go through the normal [options, homeScripts] debounced auto-save effect (its
+    // 250ms idle-based setTimeout) - that debounce loses outright against ns.printRaw()
+    // remounting the whole tree (discarding this component's own pending timers) roughly every
+    // DASHBOARD_UI_TICK_MS whenever any other live telemetry changes, which during normal active
+    // gameplay is most ticks. A single isolated toggle click usually survives that race by luck;
+    // reordering needs several clicks in a row, so the debounce timer kept getting reset by each
+    // new click and never got a clear 250ms window to fire before the next remount wiped the
+    // still-unsaved change. Enqueueing the save immediately (globalThis-backed queue, unaffected
+    // by remounts) sidesteps the race entirely.
+    const persistServiceStartOrderNow = (nextIds) => {
+        const normalizedNext = normalizeDashboardOptionsForCompare({ ...options, serviceStartOrder: nextIds.join(",") });
+        optionsDirtyRef.current = true;
+        setOptions((current) => ({ ...current, serviceStartOrder: nextIds.join(",") }));
+        if (autoSyncTimerRef.current) {
+            clearTimeout(autoSyncTimerRef.current);
+            autoSyncTimerRef.current = null;
+        }
+        enqueueDashboardAction({ kind: "save-options", options: { ...normalizedNext } });
+        lastAutoSyncedOptionsRef.current = normalizedNext;
+        optionsDirtyRef.current = false;
+    };
+
+    const moveServiceInStartOrder = (serviceId, direction) => {
+        const currentIds = orderedServiceStartOrderRows.map((row) => row.serviceId);
+        const index = currentIds.indexOf(serviceId);
+        const swapWith = index + direction;
+        if (index < 0 || swapWith < 0 || swapWith >= currentIds.length) return;
+        const nextIds = [...currentIds];
+        [nextIds[index], nextIds[swapWith]] = [nextIds[swapWith], nextIds[index]];
+        persistServiceStartOrderNow(nextIds);
+        // Keep the moved row highlighted at its new position, keyed by id (not index) so it
+        // stays attached to the same row even as its rank changes underneath it. Persisted via
+        // uiState (not a plain useState) because ns.printRaw() remounts a fresh React tree every
+        // dashboard tick - component state alone would lose the highlight on the next refresh.
+        setUiState((current) => ({ ...current, startOrderSelectedServiceId: serviceId }));
+    };
+
+    const moveServiceToStartOrderEdge = (serviceId, edge) => {
+        const currentIds = orderedServiceStartOrderRows.map((row) => row.serviceId);
+        if (!currentIds.includes(serviceId)) return;
+        const nextIds = currentIds.filter((id) => id !== serviceId);
+        if (edge === "top") nextIds.unshift(serviceId);
+        else nextIds.push(serviceId);
+        persistServiceStartOrderNow(nextIds);
+        setUiState((current) => ({ ...current, startOrderSelectedServiceId: serviceId }));
     };
 
     const renderServiceInputs = (inputs, layout = "default") => {
@@ -3823,10 +3871,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             sourceKind: "plugin",
             title: `${service.menuLabel} · ${graph.title ?? "History"}`,
         })));
-    const hasKillAllTargets = runningProcessSnapshot.remoteFilenames.length > 0
-        || runningProcessSnapshot.homeFilenames.some((filename) => {
-            return filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT;
-        });
+    const hasLocalKillTargets = runningProcessSnapshot.homeFilenames.some((filename) => {
+        return filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT;
+    });
+    const hasRemoteKillTargets = runningProcessSnapshot.remoteFilenames.length > 0;
+    const hasKillAllTargets = hasLocalKillTargets || hasRemoteKillTargets;
     const globalKillAction = buildDashboardActions([DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS], {
         disabledActionIds: hasKillAllTargets && !killAllPending ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS],
     })[0];
@@ -3834,8 +3883,56 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         if (globalKillAction.disabled) return;
         killAllSnapshotRef.current = runningProcessSnapshot;
         setKillAllPending(true);
-        runServiceAction(globalKillAction);
+        // Enqueues directly rather than going through runServiceAction() - that function routes
+        // KILL_ALL_SCRIPTS back into requestGlobalKill() itself (so every rendered copy of the
+        // button shares this same guard), which would recurse infinitely if this function called
+        // it back.
+        enqueueDashboardAction({
+            kind: "dashboard",
+            actionId: DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS,
+        });
     };
+    // Shown at the top of the center column, above the panel selector, only while Dashboard
+    // Options is the selected item (see the render site below) - Kill Local/Kill Remote moved
+    // here from the retired scoped per-panel pairs (see the Kill Local/Remote consolidation
+    // note). This Kill-All button is a second copy of the frame-control corner button, sharing
+    // the exact same requestGlobalKill() guard via runServiceAction's KILL_ALL_SCRIPTS
+    // special-case.
+    const globalScriptControlActions = buildDashboardActions(
+        [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS, DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS, DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS],
+        {
+            disabledActionIds: [
+                ...(hasKillAllTargets && !killAllPending ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS]),
+                ...(hasLocalKillTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS]),
+                ...(hasRemoteKillTargets ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS]),
+            ],
+        }
+    );
+
+    // Mirrors buildScriptListActions' own matching pattern (dashboard/libs/script-list-actions.js):
+    // an integration-backed service resolves via its pluginFile, a bare daemon script (no
+    // -integration.js descriptor, so never present in dashboardServiceRegistry.services) falls
+    // back to its own filename - same identifier space serviceAutostart:${id} already uses.
+    // isDashboardCoreScript excludes automation-dashboard.jsx/service-supervisor.js - both
+    // declare daemon:true (they're long-running). PLUGIN_RUNTIME_EXCLUDED_FOLDERS (dashboard/,
+    // libs/, trashbin/) mirrors service-supervisor.js's own EXCLUDED_RUNTIME_FOLDERS - none of
+    // those are ever really in the set this list is meant to reorder.
+    const serviceStartOrderRows = homeScripts
+        .filter((script) => script?.daemon === true
+            && !isDashboardCoreScript(script?.filename)
+            && !isScriptInFolders(script?.filename, PLUGIN_RUNTIME_EXCLUDED_FOLDERS))
+        .map((script) => {
+            const matchedService = dashboardServiceRegistry.services.find((service) => service.pluginFile === script.filename);
+            return {
+                serviceId: matchedService?.id || script.filename,
+                label: matchedService?.menuLabel || script.label || script.filename,
+                ramPerThread: script.ramPerThread ?? 0,
+                // Bare daemon scripts (no -integration.js descriptor) have no description field
+                // to fall back to - just left blank rather than showing something misleading.
+                description: matchedService?.description || "",
+            };
+        });
+    const orderedServiceStartOrderRows = sortByServiceStartOrder(serviceStartOrderRows, options);
 
     const serviceSupervisorRunning = homeScripts.some((script) => {
         return script?.filename === SERVICE_SUPERVISOR_SCRIPT && script?.running;
@@ -4295,6 +4392,101 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     const renderStandardServicePanel = () => {
         const panelId = selectedCenterPanel ?? selectedService?.defaultPanelId ?? "core-stats";
+
+        // Bespoke, same reasoning as Kill Controls in the center column: a reorderable list
+        // doesn't fit the generic getState/getInputs/getActions machinery this function drives
+        // for every other panel, so it's rendered directly here instead of through
+        // renderContractPanel. Lives in the right column (not the center column, where it was
+        // first placed) because the list itself is too wide for that column - the center column
+        // only gets a menu entry (the "Start Order" subview button) for it.
+        if (selectedItem === "global.dashboardOptions" && panelId === "start-order") {
+            return (
+                <Card title="Service Start Order" accent="#6cb4ff" subtitle="Order the Integration Service Supervisor uses when RAM is scarce" widgetStyles={WIDGET_STYLES}>
+                    {getServiceStartOrder(options).length === 0 ? (
+                        <div style={WIDGET_STYLES.smallMuted}>Not customized yet — using default (alphabetical) start order.</div>
+                    ) : null}
+                    <ul style={{ ...WIDGET_STYLES.list, minWidth: 0 }}>
+                        {orderedServiceStartOrderRows.map((row, index) => (
+                            <li
+                                key={row.serviceId}
+                                style={{
+                                    ...WIDGET_STYLES.item,
+                                    cursor: "pointer",
+                                    minWidth: 0,
+                                    ...(row.serviceId === uiState.startOrderSelectedServiceId ? {
+                                        borderColor: "rgba(108, 180, 255, 0.55)",
+                                        background: "rgba(10, 24, 38, 0.95)",
+                                    } : {}),
+                                }}
+                                onClick={() => setUiState((current) => ({
+                                    ...current,
+                                    startOrderSelectedServiceId: current.startOrderSelectedServiceId === row.serviceId ? "" : row.serviceId,
+                                }))}
+                            >
+                                <div style={{ ...WIDGET_STYLES.itemTitle, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
+                                    <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.label}</span>
+                                    <span style={{ ...WIDGET_STYLES.itemDetail, fontWeight: 400, whiteSpace: "nowrap", flex: "0 0 auto" }}>{formatRam(row.ramPerThread)}</span>
+                                </div>
+                                <div style={{ ...WIDGET_STYLES.itemDetail, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                                    <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8e8e8e" }} title={row.description}>{row.description}</span>
+                                    <span style={{ display: "flex", gap: "4px", flex: "0 0 auto" }}>
+                                        <button
+                                            type="button"
+                                            title="Move to top"
+                                            style={{ ...WIDGET_STYLES.actionButton, ...(index === 0 ? WIDGET_STYLES.actionButtonDisabled : {}) }}
+                                            disabled={index === 0}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                moveServiceToStartOrderEdge(row.serviceId, "top");
+                                            }}
+                                        >
+                                            ⤒
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Move to bottom"
+                                            style={{ ...WIDGET_STYLES.actionButton, ...(index === orderedServiceStartOrderRows.length - 1 ? WIDGET_STYLES.actionButtonDisabled : {}) }}
+                                            disabled={index === orderedServiceStartOrderRows.length - 1}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                moveServiceToStartOrderEdge(row.serviceId, "bottom");
+                                            }}
+                                        >
+                                            ⤓
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Move up"
+                                            style={{ ...WIDGET_STYLES.actionButton, ...(index === 0 ? WIDGET_STYLES.actionButtonDisabled : {}) }}
+                                            disabled={index === 0}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                moveServiceInStartOrder(row.serviceId, -1);
+                                            }}
+                                        >
+                                            ▲
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Move down"
+                                            style={{ ...WIDGET_STYLES.actionButton, ...(index === orderedServiceStartOrderRows.length - 1 ? WIDGET_STYLES.actionButtonDisabled : {}) }}
+                                            disabled={index === orderedServiceStartOrderRows.length - 1}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                moveServiceInStartOrder(row.serviceId, 1);
+                                            }}
+                                        >
+                                            ▼
+                                        </button>
+                                    </span>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                </Card>
+            );
+        }
+
         const fallbackMeta = {
             title: selectedService?.menuLabel ?? "Overview",
             accent: "#6ee7a8",
@@ -4637,7 +4829,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     style={{
                         ...WIDGET_STYLES.statsRow,
                         ...normalContentBounds,
-                        gridTemplateColumns: `minmax(0, 1fr) repeat(${Math.max(1, quickGauges.length)}, ${responsiveLayout.gaugeWidth}px)`,
+                        // One column for the whole gauge stack, not one column per gauge - each
+                        // additional gauge (Cloud/Network/Hacknet/Home) used to cost a whole extra
+                        // dial-width column here; stacked bars fit them all in the width of a
+                        // single stat tile instead.
+                        gridTemplateColumns: `minmax(0, 1fr) ${responsiveLayout.statMinimumWidth}px`,
                     }}
                 >
                 <div
@@ -4652,15 +4848,17 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             title={`${tile.label}: ${tile.value}`}
                             style={WIDGET_STYLES.statTile}
                         >
-                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} />
+                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} sourceLabel={tile.sourceLabel} />
                         </div>
                     ))}
                 </div>
-                {quickGauges.map((gauge) => (
-                    <div key={gauge.key} style={WIDGET_STYLES.ramGaugeSlot}>
-                        <RamGauge {...gauge} />
+                <div style={WIDGET_STYLES.ramGaugeSlot}>
+                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: "5px", width: "100%" }}>
+                        {quickGauges.map((gauge) => (
+                            <RamGaugeBar key={gauge.key} {...gauge} />
+                        ))}
                     </div>
-                ))}
+                </div>
                 </div>
 
                 <div style={{ ...WIDGET_STYLES.workspaceRow, ...normalContentBounds, gridTemplateColumns: workspaceColumns }}>
@@ -4809,6 +5007,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     style={WIDGET_STYLES.column}
                     onScroll={(e) => rememberScroll("center", e.currentTarget.scrollTop)}
                 >
+                    {selectedItem === "global.dashboardOptions" ? (
+                        <>
+                            <Card title="Kill Controls" accent="#ff9a9a" subtitle="Kill scripts across home and remote hosts" widgetStyles={WIDGET_STYLES}>
+                                {renderServiceActions(globalScriptControlActions)}
+                            </Card>
+                            <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                        </>
+                    ) : null}
                     {renderSubWidgets()}
                 </div>
 

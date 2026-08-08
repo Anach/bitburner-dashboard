@@ -141,7 +141,10 @@ export function HomeGaugeCard({ gauge, size = 84 }) {
     const used = Math.max(0, Number(gauge?.used) || 0);
     const total = Math.max(0, Number(gauge?.total) || 0);
     const valueFormat = gauge?.valueFormat ?? "number";
-    return <div style={styles.homeGaugeCard}>
+    // homeGaugeCard is just flex centering now (the card frame - border/background/padding - was
+    // removed). This minHeight reserves room for the value line below the circle so it doesn't
+    // get clipped or crowd the next row, scaling with size rather than a static constant.
+    return <div style={{ ...styles.homeGaugeCard, minHeight: `${size + 30}px` }}>
         <RamGauge {...gauge} size={size} />
         <div style={styles.homeGaugeValue}>{formatResourceValue(used, valueFormat)} / {formatResourceValue(total, valueFormat)}</div>
     </div>;

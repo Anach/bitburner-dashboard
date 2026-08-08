@@ -155,8 +155,12 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
             const selectedGauges = selectDashboardViewItems(gauges, widget);
             const configuredGaugeSize = Math.floor(Number(widget.gaugeSize));
             const gaugeSize = Number.isFinite(configuredGaugeSize) ? configuredGaugeSize : 84;
+            // homeGaugeGrid's static gridTemplateColumns hardcodes a 116px column minimum, which
+            // doesn't track widget.gaugeSize - shrinking the configured size left the grid cell
+            // (and therefore HomeGaugeCard's frame) unchanged, wasting the saved space instead of
+            // shrinking with it. Deriving the minimum from the actual gauge size fixes that.
             return <div key={widget.id} style={wrapperStyle}><HomePanel title={title} subtitle={subtitle} widgetStyles={styles}>
-                {selectedGauges.length > 0 ? <div style={styles.homeGaugeGrid}>
+                {selectedGauges.length > 0 ? <div style={{ ...styles.homeGaugeGrid, gridTemplateColumns: `repeat(auto-fit, minmax(${Math.max(64, gaugeSize + 16)}px, 1fr))` }}>
                     {selectedGauges.map((gauge) => <HomeGaugeCard key={gauge.id} gauge={gauge} size={gaugeSize} />)}
                 </div> : <div style={styles.muted}>{emptyText}</div>}
             </HomePanel></div>;

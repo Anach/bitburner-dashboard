@@ -340,12 +340,10 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         const text = String(value ?? "");
         if (!text) return;
         try {
-            // The dashboard tail window may not hold document focus yet on the
-            // first click, and clipboard.writeText() rejects when unfocused.
-            if (typeof document !== "undefined" && !document.hasFocus?.()) {
-                window.focus?.();
-                document.body?.focus?.();
-            }
+            // No focus pre-check here (would require touching document/window, which
+            // DASHBOARD_DESIGN_PRINCIPLES.md's Platform Boundaries forbids outright). If the tail
+            // window hasn't taken focus yet on the first click, clipboard.writeText() rejects and
+            // the .catch() below falls back to showing the terminal command as text instead.
             const clipboard = globalThis?.navigator?.clipboard;
             if (clipboard && typeof clipboard.writeText === "function") {
                 void Promise.resolve(clipboard.writeText(text))

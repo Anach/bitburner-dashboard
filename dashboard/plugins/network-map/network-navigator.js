@@ -531,6 +531,17 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
         };
     });
 
+    // Rooted normal-network fleet only - excludes home and cloud/purchased servers, since those
+    // already get their own dedicated Capacity gauges (hardware.home:ram, serverBuyer:cloud-ram)
+    // and would otherwise be double-counted here.
+    const rootedNetworkRam = nodes.reduce((totals, node) => {
+        if (!node.hasRoot || node.purchased || node.cloud || node.id === "home") return totals;
+        totals.used += node.ramUsed;
+        totals.total += node.ramMax;
+        return totals;
+    }, { used: 0, total: 0 });
+    rootedNetworkRam.ratio = rootedNetworkRam.total > 0 ? rootedNetworkRam.used / rootedNetworkRam.total : 0;
+
     const networkMap = {
         title: "Network Navigator",
         subtitle: "Known normal-network routes, access state, and server resources.",
@@ -541,6 +552,7 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
         knownServers: nodes.length,
         rootedServers: nodes.filter((node) => node.hasRoot).length,
         backdooredServers: nodes.filter((node) => node.backdoorInstalled).length,
+        networkRam: rootedNetworkRam,
         nodes,
         edges: graph.edges,
         lastCommand,

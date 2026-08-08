@@ -49,6 +49,53 @@ export function isServiceVisibleInMenu(serviceId, options) {
     return getObject(options)[getServiceMenuVisibilityOptionKey(serviceId)] !== false;
 }
 
+function parseServiceStartOrder(rawOrder) {
+    const candidates = Array.isArray(rawOrder) ? rawOrder : String(rawOrder ?? "").split(",");
+    const seen = new Set();
+    const ids = [];
+    for (const candidate of candidates) {
+        const id = String(candidate ?? "").trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids;
+}
+
+export function normalizeServiceStartOrder(rawOrder) {
+    return parseServiceStartOrder(rawOrder).join(",");
+}
+
+// Works against raw, un-normalized options too - service-supervisor.js's own readDashboardOptions
+// never calls normalizeDashboardOptions.
+export function getServiceStartOrder(options) {
+    return parseServiceStartOrder(options?.serviceStartOrder);
+}
+
+// items: array of objects each with a .serviceId field, in the current natural/discovery order.
+// A .map()+.sort() over the ORIGINAL array, not a rebuild through a Map<serviceId,item> - a
+// serviceId can legitimately be "" or collide (integration authors sometimes omit it, the same
+// pre-existing gap the Autostart toggle already has), and collapsing through a keyed Map would
+// silently drop one of the colliding services from iteration entirely, not just misorder it.
+export function sortByServiceStartOrder(items, options) {
+    const order = getServiceStartOrder(options);
+    if (order.length === 0) return items.slice();
+    const rankById = new Map(order.map((id, index) => [id, index]));
+    return items
+        .map((item, naturalIndex) => ({
+            item,
+            naturalIndex,
+            rank: rankById.has(item.serviceId) ? rankById.get(item.serviceId) : null,
+        }))
+        .sort((a, b) => {
+            if (a.rank !== null && b.rank !== null) return a.rank - b.rank;
+            if (a.rank !== null) return -1;
+            if (b.rank !== null) return 1;
+            return a.naturalIndex - b.naturalIndex;
+        })
+        .map((entry) => entry.item);
+}
+
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_NONE = "None";
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY = "Singularity";
 export const HIDE_UNQUALIFIED_PLUGINS_MODES = [HIDE_UNQUALIFIED_PLUGINS_MODE_NONE, HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY];
@@ -72,7 +119,13 @@ function getObject(value) {
 
 export function getDefaultDashboardOptions(services = []) {
     const defaults = {
-        reservedHomeRam: 1024,
+        // Was 1024 while this option was purely decorative (displayed, never enforced). Now that
+        // service-supervisor.js actually respects it as an autostart RAM headroom floor, a huge
+        // default would silently block every autostart daemon on any realistic home RAM size.
+        // Defaults to 0 (today's prior behavior - no reservation) so nothing changes unless the
+        // user opts in with a higher value, consistent with this project's autostart-is-opt-in
+        // convention elsewhere.
+        reservedHomeRam: 0,
         dashboardThemeMode: DASHBOARD_THEME_MODE_GAME,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
@@ -84,6 +137,7 @@ export function getDefaultDashboardOptions(services = []) {
         dashboardWindowedHeight: DEFAULT_TAIL_HEIGHT,
         hiddenScriptFolders: DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
         hiddenScriptFiles: DEFAULT_HIDDEN_SCRIPT_FILES_OPTION,
+        serviceStartOrder: "",
     };
     for (const service of services) {
         Object.assign(defaults, getPluginIntegrationDefaultOptions(service.pluginMetadata));
@@ -136,6 +190,7 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         hiddenScriptFiles: normalizeScriptFiles(
             rawOptions.hiddenScriptFiles ?? rawOptions.ignoredScriptFiles ?? defaults.hiddenScriptFiles
         ),
+        serviceStartOrder: normalizeServiceStartOrder(rawOptions.serviceStartOrder ?? defaults.serviceStartOrder),
     };
     for (const service of services) {
         Object.assign(normalized, normalizePluginIntegrationOptions(service.pluginMetadata, rawOptions));

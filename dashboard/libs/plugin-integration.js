@@ -391,8 +391,18 @@ export function getPluginIntegrationOverviewGauges(integration, stats) {
     return (integration?.telemetry?.overviewGauges ?? [])
         .filter((gauge) => gauge && typeof gauge === "object" && typeof gauge.label === "string")
         .map((gauge, index) => {
-            const used = Math.max(0, Number(getTelemetryFieldValue(safeStats, gauge.usedKey)) || 0);
-            const total = Math.max(0, Number(getTelemetryFieldValue(safeStats, gauge.totalKey)) || 0);
+            const rawUsed = getTelemetryFieldValue(safeStats, gauge.usedKey);
+            const rawTotal = getTelemetryFieldValue(safeStats, gauge.totalKey);
+            // A runtime that deliberately hasn't published this field yet (e.g. a capability-gated
+            // stat like Hacknet Server RAM before Source-File 9 is unlocked) means "not applicable
+            // right now" - distinct from a published value of 0, which is a legitimate reading.
+            // Skipping here, rather than defaulting to a 0/0 gauge, lets a gauge stay hidden until
+            // its data is actually meaningful with no dashboard-side requirement/capability wiring
+            // needed - the runtime publishing (or not publishing) the field is the single source
+            // of truth for whether it currently applies.
+            if (rawUsed === undefined && rawTotal === undefined) return null;
+            const used = Math.max(0, Number(rawUsed) || 0);
+            const total = Math.max(0, Number(rawTotal) || 0);
             const configuredRatio = Number(getTelemetryFieldValue(safeStats, gauge.ratioKey));
             const ratio = Number.isFinite(configuredRatio) && configuredRatio >= 0
                 ? configuredRatio
@@ -410,6 +420,7 @@ export function getPluginIntegrationOverviewGauges(integration, stats) {
                 order: Number(gauge.order) || 0,
             };
         })
+        .filter(Boolean)
         .sort((left, right) => left.order - right.order);
 }
 

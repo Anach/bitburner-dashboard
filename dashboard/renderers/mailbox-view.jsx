@@ -403,21 +403,12 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         });
     }, [view?.id, selectedFolder, selectedMessageId, cursorId]);
 
-    // The tail redraws (and rebuilds its DOM) on every dashboard refresh tick, which drops
-    // focus back to the terminal. Reclaim it after every render - but only when focus has
-    // actually drifted outside the mailbox, so typing in the search box is left alone.
-    React.useLayoutEffect(() => {
-        const active = typeof document !== "undefined" ? document.activeElement : null;
-        if (isSearchFocused) {
-            const input = searchInputRef.current;
-            if (input && active !== input) input.focus();
-            return;
-        }
-        const shell = shellRef.current;
-        if (shell && (!active || !shell.contains(active))) {
-            shell.focus();
-        }
-    });
+    // The tail redraws (and rebuilds its DOM) on every dashboard refresh tick, which drops focus
+    // back to the terminal. This used to reclaim it after every render by checking
+    // document.activeElement, but that's a bare document reference, which
+    // DASHBOARD_DESIGN_PRINCIPLES.md's Platform Boundaries forbids outright - removed rather than
+    // worked around. Accepted regression: focus may occasionally drift back to the terminal after
+    // a remount instead of being automatically reclaimed.
 
     React.useEffect(() => {
         return () => onInputFocusChange?.(false);
