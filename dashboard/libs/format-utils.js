@@ -22,3 +22,20 @@ export function formatRam(value) {
     const rounded = scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
     return `${rounded.toLocaleString()} ${RAM_UNITS[unitIndex]}`;
 }
+
+const RELATIVE_AGE_UNITS = [
+    { unit: "d", ms: 24 * 60 * 60 * 1000 },
+    { unit: "h", ms: 60 * 60 * 1000 },
+    { unit: "m", ms: 60 * 1000 },
+];
+
+// ms is a plain duration (already-computed now - generatedAt), not a timestamp. Negative deltas
+// (clock skew, or generatedAt briefly in the future) fall into the < 1 minute branch below rather
+// than rendering a nonsensical negative bucket.
+export function formatRelativeAge(ms) {
+    if (!Number.isFinite(ms) || ms < 60000) return "just now";
+    for (const { unit, ms: unitMs } of RELATIVE_AGE_UNITS) {
+        if (ms >= unitMs) return `${Math.floor(ms / unitMs)}${unit} ago`;
+    }
+    return "just now";
+}

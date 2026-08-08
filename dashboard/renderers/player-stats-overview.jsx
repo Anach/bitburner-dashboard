@@ -52,7 +52,7 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
         ? new Set(groupIds.filter((value) => typeof value === "string"))
         : null;
     const groups = (Array.isArray(definitions) ? definitions : [])
-        .flatMap((definition) => definition.groups ?? [])
+        .flatMap((definition) => (definition.groups ?? []).map((group) => ({ ...group, sourceLabel: definition.title })))
         .filter((group) => !selectedGroupIds || selectedGroupIds.has(group.sourceId));
     const vertical = String(orientation).trim().toLowerCase() === "vertical";
 
@@ -77,6 +77,7 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
                     </div>;
                 })}
             </div>
+            {group.sourceLabel ? <div style={styles.homeMetricSource}>{group.sourceLabel}</div> : null}
         </section>)}
     </div>;
 }

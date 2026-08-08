@@ -93,12 +93,14 @@ export function buildScriptPluginService(plugin) {
                     : []),
             ];
         },
-        getSections: ({ selectedCenterPanel, telemetryByServiceId }) => {
+        getSections: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
+            const script = findPluginScript(homeScripts, filename);
             return getPluginIntegrationSections(
                 integration,
                 telemetryByServiceId?.[integration.serviceId],
-                selectedCenterPanel
+                selectedCenterPanel,
+                { running: script.running, requiresRuntime: true }
             );
         },
         getInputs: ({ selectedCenterPanel, options }) => {

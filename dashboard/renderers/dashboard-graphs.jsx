@@ -126,7 +126,13 @@ function computeGraphGeometry(section, terminalMode) {
     return geometry;
 }
 
-export function DataGraph({ section, index = 0, presentation = "default" }) {
+// offline: the graph's backing service is stale (was running at some point, isn't right now).
+// The caller (getPluginIntegrationGraphs/getPluginIntegrationSections in plugin-integration.js)
+// already zeroes section.data to [] for an offline service before it gets here, so an offline
+// graph is normally also geometry.empty - the plain "Service is offline." text below (rather than
+// a floating overlay badge, which visually collided with the title/legend text) is enough on its
+// own; both branches still fade via frameStyle's opacity for a subtler, secondary cue.
+export function DataGraph({ section, index = 0, presentation = "default", offline = false, sourceLabel }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
@@ -134,6 +140,9 @@ export function DataGraph({ section, index = 0, presentation = "default" }) {
     const frameStyle = {
         ...styles.sectionFrame,
         marginTop: index > 0 ? "5px" : 0,
+        // Matches TonePill/HomeMetricCard/HomePanel's own stale-state opacity (0.7) for a
+        // consistent fade across every offline-service indicator in the dashboard.
+        opacity: offline ? 0.7 : 1,
         ...(terminalMode ? { padding: "7px 8px 5px", background: "#000000" } : {}),
     };
     const title = section?.title || "History";
@@ -142,7 +151,8 @@ export function DataGraph({ section, index = 0, presentation = "default" }) {
     if (geometry.empty) {
         return <div data-dashboard-theme-role="graph-panel" style={frameStyle}>
             <div data-dashboard-theme-role="data-heading" title={title} style={{ ...styles.strong, ...styles.graphTitle, marginBottom: "5px" }}>{terminalMode ? "> " : ""}{title}</div>
-            <div style={styles.muted}>{section?.emptyText || "Collecting history data..."}</div>
+            <div style={styles.muted}>{offline ? "Service is offline." : (section?.emptyText || "Collecting history data...")}</div>
+            {sourceLabel ? <div style={styles.homeMetricSource}>{sourceLabel}</div> : null}
         </div>;
     }
 
@@ -174,5 +184,6 @@ export function DataGraph({ section, index = 0, presentation = "default" }) {
             <text x={plot.left} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="start">{formatGraphXValue(xMin, xFormat)}</text>
             <text x={plot.right} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="end">{formatGraphXValue(xMax, xFormat)}</text>
         </svg>
+        {sourceLabel ? <div style={styles.homeMetricSource}>{sourceLabel}</div> : null}
     </div>;
 }

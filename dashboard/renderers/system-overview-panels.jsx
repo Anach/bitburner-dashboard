@@ -4,6 +4,7 @@ import {
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
 import { RamGauge } from "dashboard/renderers/dashboard-metrics.jsx";
+import { getTelemetryFreshnessTooltip } from "dashboard/libs/telemetry-freshness.js";
 
 let React = null;
 let rawReact = null;
@@ -26,12 +27,14 @@ function getReact() {
     return React;
 }
 
-export function HomePanel({ title, subtitle = "", children, widgetStyles }) {
+// muted matches TonePill/HomeMetricCard's own stale-state opacity (0.7) so an offline widget
+// fades consistently everywhere, regardless of which of these three components is showing it.
+export function HomePanel({ title, subtitle = "", children, widgetStyles, muted = false }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
     return (
-        <section data-dashboard-theme-role="card-frame" style={styles.homePanel}>
+        <section data-dashboard-theme-role="card-frame" style={{ ...styles.homePanel, opacity: muted ? 0.7 : 1 }}>
             <div style={styles.homePanelHeader}>
                 <div style={styles.homePanelTitle}>{title}</div>
                 {subtitle ? <div style={styles.homePanelSubtitle}>{subtitle}</div> : null}
@@ -85,12 +88,21 @@ export function HomeMetricCard({ metric }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
-    const palette = getHomeTonePalette(metric?.tone);
+    const state = metric?.state ?? "live";
+    const muted = state !== "live";
+    // A stale/missing stat is muted to the neutral palette rather than a new one - see the same
+    // reasoning at TonePill's own freshness handling in dashboard-metrics.jsx.
+    const palette = muted ? getHomeTonePalette("neutral") : getHomeTonePalette(metric?.tone);
+    const subtext = metric?.sourceLabel || "";
+    const freshnessTooltip = getTelemetryFreshnessTooltip(state, { sourceLabel: metric?.sourceLabel, ageText: metric?.ageText });
+    const title = freshnessTooltip
+        ? `${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"} (${freshnessTooltip})`
+        : `${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"}`;
     return (
-        <div title={`${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"}`} style={{ ...styles.homeMetric, borderColor: palette.border, background: `linear-gradient(140deg, ${palette.glow}, rgba(5, 9, 8, 0.82) 58%)`, boxShadow: `inset 0 -2px 0 ${palette.accent}` }}>
+        <div title={title} style={{ ...styles.homeMetric, borderColor: palette.border, background: `linear-gradient(140deg, ${palette.glow}, rgba(5, 9, 8, 0.82) 58%)`, boxShadow: `inset 0 -2px 0 ${palette.accent}`, opacity: muted ? 0.68 : 1 }}>
             <div style={styles.homeMetricLabel}>{metric?.label ?? "Metric"}</div>
             <div data-dashboard-theme-role="stat-value" style={{ ...styles.homeMetricValue, color: palette.accent }}>{metric?.value ?? "n/a"}</div>
-            {metric?.sourceLabel ? <div style={styles.homeMetricSource}>{metric.sourceLabel}</div> : null}
+            {subtext ? <div style={styles.homeMetricSource}>{subtext}</div> : null}
         </div>
     );
 }
@@ -142,11 +154,14 @@ export function HomeGaugeCard({ gauge, size = 84 }) {
     const total = Math.max(0, Number(gauge?.total) || 0);
     const valueFormat = gauge?.valueFormat ?? "number";
     // homeGaugeCard is just flex centering now (the card frame - border/background/padding - was
-    // removed). This minHeight reserves room for the value line below the circle so it doesn't
-    // get clipped or crowd the next row, scaling with size rather than a static constant.
-    return <div style={{ ...styles.homeGaugeCard, minHeight: `${size + 30}px` }}>
+    // removed). This minHeight reserves room for the value + source lines below the circle so
+    // they don't get clipped or crowd the next row, scaling with size rather than a static constant.
+    // marginTop on both lines below is a local override, half of homeGaugeValue's/homeMetricSource's
+    // own default (4px) - tightened for this tighter, denser widget specifically, not globally.
+    return <div style={{ ...styles.homeGaugeCard, minHeight: `${size + (gauge?.sourceLabel ? 40 : 28)}px` }}>
         <RamGauge {...gauge} size={size} />
-        <div style={styles.homeGaugeValue}>{formatResourceValue(used, valueFormat)} / {formatResourceValue(total, valueFormat)}</div>
+        <div style={{ ...styles.homeGaugeValue, marginTop: "0px" }}>{gauge?.offline ? "Offline" : `${formatResourceValue(used, valueFormat)} / ${formatResourceValue(total, valueFormat)}`}</div>
+        {gauge?.sourceLabel ? <div style={{ ...styles.homeMetricSource, marginTop: "0px" }}>{gauge.sourceLabel}</div> : null}
     </div>;
 }
 

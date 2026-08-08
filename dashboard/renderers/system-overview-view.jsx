@@ -18,7 +18,6 @@ import {
     HomeMetricCard,
     HomePanel,
     HomeServiceLandscape,
-    PluginRuntimeWarning,
 } from "dashboard/renderers/system-overview-panels.jsx";
 
 let React = null;
@@ -111,12 +110,16 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
             const selectedDefinitions = (Array.isArray(playerHudDefinitions) ? playerHudDefinitions : [])
                 .filter((definition) => (!serviceIds || serviceIds.has(definition.serviceId)) && (definition.groups?.length ?? 0) > 0);
             const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
-            return <div key={widget.id} style={{ ...wrapperStyle, ...styles.playerStatusColumn }}><HomePanel title={title} subtitle={subtitle} widgetStyles={styles}>
-                <PluginRuntimeWarning statuses={runtimeStatuses} />
-                {selectedDefinitions.length > 0
-                    ? <PlayerStatsOverview definitions={selectedDefinitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation} />
-                    : <div style={styles.muted}>{emptyText}</div>}
-            </HomePanel></div>;
+            const isOffline = runtimeStatuses.some((status) => status?.requiresRuntime && !status?.running);
+            return <div key={widget.id} style={{ ...wrapperStyle, ...styles.playerStatusColumn }}>
+                <HomePanel title={title} subtitle={subtitle} widgetStyles={styles} muted={isOffline}>
+                    {isOffline
+                        ? <div style={styles.muted}>Service is offline.</div>
+                        : selectedDefinitions.length > 0
+                            ? <PlayerStatsOverview definitions={selectedDefinitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation} />
+                            : <div style={styles.muted}>{emptyText}</div>}
+                </HomePanel>
+            </div>;
         }
 
         if (widget.type === "health") {
@@ -146,6 +149,9 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                     }) : <div style={{ ...styles.homeAlert, borderColor: "rgba(110, 231, 168, 0.2)", color: "#8ef0b5" }}>
                         <span>✓</span><span>No warnings or danger alerts.</span>
                     </div>}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px" }}>
+                    <div style={styles.homeMetricSource}>Dashboard</div>
                     {hiddenAlertCount > 0 ? <div style={styles.homePanelSubtitle}>+{hiddenAlertCount} more alert{hiddenAlertCount === 1 ? "" : "s"}</div> : null}
                 </div>
             </HomePanel></div>;
@@ -172,6 +178,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 {selectedGroups.length > 0
                     ? <HomeServiceLandscape groups={selectedGroups} healthById={serviceHealthById} />
                     : <div style={styles.muted}>{emptyText}</div>}
+                <div style={styles.homeMetricSource}>Dashboard</div>
             </HomePanel></div>;
         }
 
@@ -183,7 +190,18 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
             const graphHeight = Number.isFinite(configuredGraphHeight) ? configuredGraphHeight : 160;
             return <div key={widget.id} style={wrapperStyle}><HomePanel title={title} subtitle={subtitle} widgetStyles={styles}>
                 {selectedGraphs.length > 0 ? <div style={{ ...styles.homeGraphGrid, marginTop: 0, gridTemplateColumns: `repeat(${graphColumns}, minmax(0, 1fr))` }}>
-                    {selectedGraphs.map((graph) => <DataGraph key={graph.id} section={{ ...graph, height: graphHeight }} index={0} presentation="terminal" />)}
+                    {selectedGraphs.map((graph) => {
+                        const runtime = serviceRuntimeById?.[graph.serviceId];
+                        const offline = Boolean(runtime?.requiresRuntime && !runtime?.running);
+                        return <DataGraph
+                            key={graph.id}
+                            section={{ ...graph, height: graphHeight }}
+                            index={0}
+                            presentation="terminal"
+                            offline={offline}
+                            sourceLabel={graph.sourceLabel}
+                        />;
+                    })}
                 </div> : <div style={styles.muted}>{emptyText}</div>}
             </HomePanel></div>;
         }

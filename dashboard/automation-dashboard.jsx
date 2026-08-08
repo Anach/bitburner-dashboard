@@ -86,7 +86,6 @@ import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/rend
 import {
     configureSystemOverviewPanels,
     HomePanel,
-    PluginRuntimeWarning,
 } from "dashboard/renderers/system-overview-panels.jsx";
 import { configureDashboardGraphs, DataGraph as DashboardDataGraph } from "dashboard/renderers/dashboard-graphs.jsx";
 import {
@@ -2585,6 +2584,19 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
             {section.title ? (
                 <div data-dashboard-theme-role="data-heading" style={{ ...WIDGET_STYLES.strong, color: section.titleColor }}>{section.title}</div>
             ) : null}
+            {section.sourceLabel ? (
+                // Unlike a graph (which zeroes its data when its source goes stale, see
+                // getPluginIntegrationSections), this list keeps showing its last-known items even
+                // when offline - zeroing a server/resource list would misleadingly read as "you
+                // own nothing" rather than "the tracker stopped reporting". This note is the only
+                // offline signal for this section type, so it always shows the source, and adds an
+                // explicit stale callout when offline rather than silently going quiet.
+                <div style={WIDGET_STYLES.muted}>
+                    {section.offline
+                        ? `${section.sourceLabel} - offline${section.sourceAgeText ? ` (last data ${section.sourceAgeText})` : ""}, showing last-known data`
+                        : `via ${section.sourceLabel}`}
+                </div>
+            ) : null}
             {items.map((item, itemIndex) => {
                 const name = formatResourceCardValue(getGraphValue(item, nameKey));
                 const identity = formatResourceCardValue(getGraphValue(item, idKey));
@@ -3703,7 +3715,20 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     }
 
                     if (section.type === "graph") {
-                        return <DashboardDataGraph key={`graph-${section.title ?? index}`} section={section} index={index} />;
+                        const runtime = serviceRuntimeById[selectedService?.id];
+                        const runtimeOffline = Boolean(runtime?.requiresRuntime && !runtime?.running);
+                        // section.offline already accounts for a labeled sources[] entry's own
+                        // freshness (see getPluginIntegrationSections) - merge with the owning
+                        // integration's own runtime state rather than replacing it, since either
+                        // one being down is a real reason to show this graph as offline.
+                        const offline = runtimeOffline || Boolean(section.offline);
+                        return <DashboardDataGraph
+                            key={`graph-${section.title ?? index}`}
+                            section={section}
+                            index={index}
+                            offline={offline}
+                            sourceLabel={section.sourceLabel}
+                        />;
                     }
 
                     if (section.type === "resource-cards") {
@@ -3792,7 +3817,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         ...dashboardServiceRegistry.services.flatMap((service) => {
             return getPluginIntegrationOverviewLines(
                 service.pluginMetadata,
-                telemetryByServiceId?.[service.id] ?? null
+                telemetryByServiceId?.[service.id] ?? null,
+                {
+                    running: serviceRuntimeById[service.id]?.running,
+                    requiresRuntime: serviceRuntimeById[service.id]?.requiresRuntime,
+                    includeMissingPlaceholders: true,
+                }
             ).map((line) => ({
                 ...line,
                 id: `${service.id}:${line.key ?? line.label}`,
@@ -3817,7 +3847,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const overviewGauges = dashboardServiceRegistry.services
         .flatMap((service) => getPluginIntegrationOverviewGauges(
             service.pluginMetadata,
-            telemetryByServiceId?.[service.id] ?? null
+            telemetryByServiceId?.[service.id] ?? null,
+            {
+                running: serviceRuntimeById[service.id]?.running,
+                requiresRuntime: serviceRuntimeById[service.id]?.requiresRuntime,
+            }
         ).map((gauge) => ({
             ...gauge,
             id: `${service.id}:${gauge.key}`,
@@ -3825,6 +3859,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             serviceId: service.id,
             menuGroup: service.menuGroup,
             sourceKind: "plugin",
+            // Prefer the gauge's own per-source label (set when it's fed by a labeled sources[]
+            // entry, e.g. Cloud RAM from Infrastructure Report) over the owning service's name -
+            // only fall back to the service label for gauges built from this integration's own
+            // locally-published telemetry.
+            sourceLabel: gauge.sourceLabel || service.menuLabel,
         })))
         .sort((left, right) => left.order - right.order);
     const quickGauges = [
@@ -3835,6 +3874,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             serviceId: "hardware.home",
             menuGroup: "hardware",
             sourceKind: "system",
+            sourceLabel: "Dashboard",
             label: "Home RAM",
             shortLabel: "HOME",
             used: homeRamStatus?.used ?? 0,
@@ -3861,7 +3901,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const homeGraphs = dashboardServiceRegistry.services
         .flatMap((service) => getPluginIntegrationGraphs(
             service.pluginMetadata,
-            telemetryByServiceId?.[service.id] ?? null
+            telemetryByServiceId?.[service.id] ?? null,
+            {
+                running: serviceRuntimeById[service.id]?.running,
+                requiresRuntime: serviceRuntimeById[service.id]?.requiresRuntime,
+            }
         ).map((graph, graphIndex) => ({
             ...graph,
             id: `${service.id}:${graph.id ?? `${graph.panelId ?? "graph"}-${graphIndex}`}`,
@@ -3869,7 +3913,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             serviceId: service.id,
             menuGroup: service.menuGroup,
             sourceKind: "plugin",
-            title: `${service.menuLabel} · ${graph.title ?? "History"}`,
+            // No longer prefixed onto the title (DataGraph now shows this as its own subtext
+            // line, consistent with every other widget) - frees up the title for graph-specific
+            // content instead of repeating the service name that used to eat into it.
+            title: graph.title || "History",
+            // Prefer the graph's own per-source label (set when it's fed by a labeled sources[]
+            // entry, e.g. Profit vs Cost from Infrastructure Report) over the owning service's
+            // name - only fall back to the service label for graphs built from this integration's
+            // own locally-published telemetry.
+            sourceLabel: graph.sourceLabel || service.menuLabel,
         })));
     const hasLocalKillTargets = runningProcessSnapshot.homeFilenames.some((filename) => {
         return filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT;
@@ -4409,6 +4461,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         {orderedServiceStartOrderRows.map((row, index) => (
                             <li
                                 key={row.serviceId}
+                                // block: "nearest" makes this a no-op once the row is already
+                                // visible, so it's safe to run on every render (including the
+                                // remount every dashboard tick brings) without fighting the user
+                                // if they manually scroll elsewhere - it only actually scrolls
+                                // right after a click/move takes the highlighted row offscreen.
+                                ref={row.serviceId === uiState.startOrderSelectedServiceId
+                                    ? (node) => node?.scrollIntoView({ block: "nearest" })
+                                    : null}
                                 style={{
                                     ...WIDGET_STYLES.item,
                                     cursor: "pointer",
@@ -4653,17 +4713,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const definitions = playerHudDefinitions
             .filter((definition) => serviceIdSet.has(definition.serviceId) && (definition.groups?.length ?? 0) > 0);
         const runtimeStatuses = serviceIds.map((serviceId) => serviceRuntimeById[serviceId]).filter(Boolean);
+        const isOffline = runtimeStatuses.some((status) => status?.requiresRuntime && !status?.running);
         const title = typeof widget.title === "string" ? widget.title : "Player Status";
         const subtitle = typeof widget.subtitle === "string" ? widget.subtitle : "Live player telemetry";
         const emptyText = typeof widget.emptyText === "string" ? widget.emptyText : "Waiting for player telemetry.";
 
         return (
             <div key={`${widget.contributionServiceId}:${widget.id}`} style={WIDGET_STYLES.playerStatusColumn}>
-                <HomePanel title={title} subtitle={subtitle}>
-                    <PluginRuntimeWarning statuses={runtimeStatuses} />
-                    {definitions.length > 0
-                        ? <PlayerStatsOverviewRenderer definitions={definitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation ?? "vertical"} />
-                        : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
+                <HomePanel title={title} subtitle={subtitle} muted={isOffline}>
+                    {isOffline
+                        ? <div style={WIDGET_STYLES.muted}>Service is offline.</div>
+                        : definitions.length > 0
+                            ? <PlayerStatsOverviewRenderer definitions={definitions} dashboardTheme={dashboardTheme} groupIds={widget.groupIds} orientation={widget.orientation ?? "vertical"} />
+                            : <div style={WIDGET_STYLES.muted}>{emptyText}</div>}
                 </HomePanel>
             </div>
         );
@@ -4848,7 +4910,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             title={`${tile.label}: ${tile.value}`}
                             style={WIDGET_STYLES.statTile}
                         >
-                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} sourceLabel={tile.sourceLabel} />
+                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} sourceLabel={tile.sourceLabel} state={tile.state} ageText={tile.ageText} />
                         </div>
                     ))}
                 </div>
