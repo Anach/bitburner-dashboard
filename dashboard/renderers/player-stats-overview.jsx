@@ -52,11 +52,12 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
         ? new Set(groupIds.filter((value) => typeof value === "string"))
         : null;
     const groups = (Array.isArray(definitions) ? definitions : [])
-        .flatMap((definition) => (definition.groups ?? []).map((group) => ({ ...group, sourceLabel: definition.title })))
+        .flatMap((definition) => definition.groups ?? [])
         .filter((group) => !selectedGroupIds || selectedGroupIds.has(group.sourceId));
     const vertical = String(orientation).trim().toLowerCase() === "vertical";
 
-    return <div style={{ ...styles.homePlayerGroupGrid, ...(vertical ? { gridTemplateColumns: "1fr", gap: "8px" } : {}) }}>
+    return <>
+    <div style={{ ...styles.homePlayerGroupGrid, ...(vertical ? { gridTemplateColumns: "1fr", gap: "8px" } : {}) }}>
         {groups.map((group) => <section key={group.id} style={styles.homePlayerGroup}>
             <div data-dashboard-theme-role="data-heading" style={{ ...styles.heading, marginBottom: "3px" }}>{group.title}</div>
             <div style={{ ...styles.homePlayerStatGrid, ...(vertical ? { gridTemplateColumns: "1fr", gap: "1px" } : {}) }}>
@@ -77,7 +78,8 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
                     </div>;
                 })}
             </div>
-            {group.sourceLabel ? <div style={styles.homeMetricSource}>{group.sourceLabel}</div> : null}
         </section>)}
-    </div>;
+    </div>
+    <div style={styles.homeMetricSource}>Player Status</div>
+    </>;
 }

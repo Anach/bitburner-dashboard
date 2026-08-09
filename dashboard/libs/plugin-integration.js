@@ -339,6 +339,7 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
             id: `${idPrefix}-${input.id}`,
             label,
             optionKey,
+            ...(typeof input.group === "string" && input.group.length > 0 ? { group: input.group } : {}),
             type: input.type,
             value: inputLocked ? (input.lockedValue === "maximum" ? maximum : input.lockedValue) : (input.type === "number" ? numericValue : rawValue),
             ...(Array.isArray(input.values) ? { options: input.values } : {}),

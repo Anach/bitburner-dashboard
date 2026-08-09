@@ -1912,10 +1912,6 @@ const DASHBOARD_SERVICES = [
                 { label: "Utilization", value: formatUtilizationPercent(homeRamStatus.ratio), tone: getRamHealthLevel(homeRamStatus) },
             ];
         },
-        getActions: ({ selectedCenterPanel }) => {
-            if (selectedCenterPanel !== "options") return [];
-            return [{ id: "save-home-options", label: "Save options", kind: "save-options" }];
-        },
     },
     {
         id: "global.dashboardOptions",
@@ -2445,7 +2441,23 @@ function getServiceInputs(service, context) {
         return [];
     }
 
-    return inputs.filter((input) => input && typeof input.id === "string" && typeof input.label === "string" && typeof input.optionKey === "string");
+    // Adapter-normalized inputs are the runtime source of truth for values and constraints, while
+    // the integration descriptor remains the source of truth for presentation-only grouping.
+    // Restore `group` here as a final contract boundary so every adapter can use grouped inputs
+    // without needing to know how the dashboard renderer presents them.
+    const metadataGroupByOptionKey = new Map(
+        (Array.isArray(service?.pluginMetadata?.inputs) ? service.pluginMetadata.inputs : [])
+            .filter((input) => typeof input?.optionKey === "string" && typeof input?.group === "string" && input.group.length > 0)
+            .map((input) => [input.optionKey, input.group])
+    );
+
+    return inputs
+        .filter((input) => input && typeof input.id === "string" && typeof input.label === "string" && typeof input.optionKey === "string")
+        .map((input) => {
+            if (typeof input.group === "string" && input.group.length > 0) return input;
+            const metadataGroup = metadataGroupByOptionKey.get(input.optionKey);
+            return metadataGroup ? { ...input, group: metadataGroup } : input;
+        });
 }
 
 function getServiceHealth(service, context) {
@@ -3620,12 +3632,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             return null;
         }
 
-        const containerStyle = layout === "wrap-180"
+        const isWrappingLayout = layout === "wrap-180";
+        const containerStyle = isWrappingLayout
             ? { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "8px", alignItems: "flex-start" }
             : WIDGET_STYLES.optionGrid;
 
-        const fieldStyle = layout === "wrap-180"
-            ? { ...WIDGET_STYLES.optionField, minWidth: "180px", flex: "1 1 180px" }
+        const fieldStyle = isWrappingLayout
+            ? { display: "flex", flexDirection: "column", gap: "4px", minWidth: "180px", minHeight: "56px", flex: "1 1 180px" }
             : WIDGET_STYLES.optionField;
 
         const controlStyle = {
@@ -3633,57 +3646,108 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             minHeight: "34px",
             height: "34px",
             boxSizing: "border-box",
+            ...(isWrappingLayout ? { marginTop: "auto", width: "100%" } : {}),
         };
+
+        const renderInput = (input) => (
+            <label key={input.id} style={fieldStyle}>
+                <span data-dashboard-theme-role="data-heading">{input.label}</span>
+                {input.type === "select" && Array.isArray(input.options) ? (
+                    <select
+                        data-dashboard-theme-role="data-value"
+                        title={`Adjust ${input.label}`}
+                        style={controlStyle}
+                        value={String(input.value ?? "")}
+                        disabled={Boolean(input.disabled)}
+                        onFocus={() => setOptionsInputFocus(true)}
+                        onBlur={() => setOptionsInputFocus(false)}
+                        onChange={(e) => updateOptionInput(input, e.target.value)}
+                    >
+                        {input.options.map((optionValue) => (
+                            <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
+                        ))}
+                    </select>
+                ) : input.type === "checkbox" ? (
+                    <input
+                        data-dashboard-theme-role="data-value"
+                        title={`Toggle ${input.label}`}
+                        style={WIDGET_STYLES.input}
+                        type="checkbox"
+                        checked={Boolean(input.value)}
+                        disabled={Boolean(input.disabled)}
+                        onFocus={() => setOptionsInputFocus(true)}
+                        onBlur={() => setOptionsInputFocus(false)}
+                        onChange={(e) => updateOptionInput(input, e.target.checked)}
+                    />
+                ) : (
+                    <input
+                        data-dashboard-theme-role="data-value"
+                        title={`Adjust ${input.label}`}
+                        style={controlStyle}
+                        type={input.type ?? "number"}
+                        value={input.value}
+                        min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
+                        max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
+                        disabled={Boolean(input.disabled)}
+                        onFocus={() => setOptionsInputFocus(true)}
+                        onBlur={() => setOptionsInputFocus(false)}
+                        onChange={(e) => updateOptionInput(input, e.target.value)}
+                    />
+                )}
+            </label>
+        );
+
+        // Grouped metadata gets a real layout boundary rather than just a heading in one shared
+        // flex row. This keeps each component's fields together and lets Home (two fields) and
+        // Cloud/Hacknet (three fields each) establish their own evenly aligned columns.
+        const groupedInputs = [];
+        const groupByKey = new Map();
+        for (const input of inputs) {
+            const label = typeof input.group === "string" && input.group.length > 0 ? input.group : "";
+            const key = label || "__ungrouped";
+            let group = groupByKey.get(key);
+            if (!group) {
+                group = { key, label, inputs: [] };
+                groupByKey.set(key, group);
+                groupedInputs.push(group);
+            }
+            group.inputs.push(input);
+        }
+        const hasNamedGroups = groupedInputs.some((group) => group.label.length > 0);
+
+        if (hasNamedGroups) {
+            return (
+                <div style={{ display: "grid", gap: "14px", marginBottom: "8px" }}>
+                    {groupedInputs.map((group) => (
+                        <section key={group.key} style={{ display: "grid", gap: "7px" }}>
+                            {group.label ? (
+                                <div
+                                    data-dashboard-theme-role="data-heading"
+                                    style={{
+                                        ...WIDGET_STYLES.heading,
+                                        marginBottom: 0,
+                                        paddingBottom: "5px",
+                                        borderBottom: "1px solid rgba(125, 160, 212, 0.32)",
+                                    }}
+                                >
+                                    {group.label}
+                                </div>
+                            ) : null}
+                            <div style={isWrappingLayout
+                                ? { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px", alignItems: "stretch" }
+                                : WIDGET_STYLES.optionGrid}
+                            >
+                                {group.inputs.map(renderInput)}
+                            </div>
+                        </section>
+                    ))}
+                </div>
+            );
+        }
 
         return (
             <div style={containerStyle}>
-                {inputs.map((input) => (
-                    <label key={input.id} style={fieldStyle}>
-                        <span data-dashboard-theme-role="data-heading">{input.label}</span>
-                        {input.type === "select" && Array.isArray(input.options) ? (
-                            <select
-                                data-dashboard-theme-role="data-value"
-                                title={`Adjust ${input.label}`}
-                                style={controlStyle}
-                                value={String(input.value ?? "")}
-                                disabled={Boolean(input.disabled)}
-                                onFocus={() => setOptionsInputFocus(true)}
-                                onBlur={() => setOptionsInputFocus(false)}
-                                onChange={(e) => updateOptionInput(input, e.target.value)}
-                            >
-                                {input.options.map((optionValue) => (
-                                    <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
-                                ))}
-                            </select>
-                        ) : input.type === "checkbox" ? (
-                            <input
-                                data-dashboard-theme-role="data-value"
-                                title={`Toggle ${input.label}`}
-                                style={WIDGET_STYLES.input}
-                                type="checkbox"
-                                checked={Boolean(input.value)}
-                                disabled={Boolean(input.disabled)}
-                                onFocus={() => setOptionsInputFocus(true)}
-                                onBlur={() => setOptionsInputFocus(false)}
-                                onChange={(e) => updateOptionInput(input, e.target.checked)}
-                            />
-                        ) : (
-                            <input
-                                data-dashboard-theme-role="data-value"
-                                title={`Adjust ${input.label}`}
-                                style={controlStyle}
-                                type={input.type ?? "number"}
-                                value={input.value}
-                                min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
-                                max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
-                                disabled={Boolean(input.disabled)}
-                                onFocus={() => setOptionsInputFocus(true)}
-                                onBlur={() => setOptionsInputFocus(false)}
-                                onChange={(e) => updateOptionInput(input, e.target.value)}
-                            />
-                        )}
-                    </label>
-                ))}
+                {inputs.map(renderInput)}
             </div>
         );
     };
