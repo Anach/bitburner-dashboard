@@ -1,7 +1,7 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "script",
     "serviceId": "navigation.network",
-    "menuGroup": "hacking",
+    "menuGroup": "software",
     "menuLabel": "Network Telemetry",
     "menuVisible": false,
     "description": "Publishes normal-network topology and city locations, and handles dashboard navigation requests.",

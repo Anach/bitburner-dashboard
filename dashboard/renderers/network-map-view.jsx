@@ -19,7 +19,6 @@ import {
     setDashboardViewDragActiveState,
 } from "dashboard/libs/dashboard-view-state.js";
 import { formatNetworkMapMetric } from "dashboard/libs/network-map-utils.js";
-import { PluginRuntimeWarning } from "dashboard/renderers/system-overview-panels.jsx";
 
 let React = null;
 let rawReact = null;
@@ -54,6 +53,10 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
+    // Deliberately hides the whole map (not just fades it) when the backing service isn't
+    // running - showing nodes/routes/telemetry that are no longer actually being produced would
+    // read as live data when it's really a frozen last-known snapshot, which feels like cheating.
+    const isOffline = Boolean(serviceStatus?.requiresRuntime && !serviceStatus?.running);
     const dataConfig = view?.data ?? {};
     const fields = view?.fields ?? {};
     const layoutConfig = view?.layout ?? {};
@@ -480,11 +483,11 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             data-dashboard-theme-role="app-frame"
             ref={viewportRef}
             aria-label={activeTitle}
-            style={{ ...styles.networkView, cursor: isPanning ? "grabbing" : "grab" }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={endPointerPan}
-            onPointerCancel={endPointerPan}
+            style={{ ...styles.networkView, cursor: isOffline ? "default" : isPanning ? "grabbing" : "grab" }}
+            onPointerDown={isOffline ? undefined : handlePointerDown}
+            onPointerMove={isOffline ? undefined : handlePointerMove}
+            onPointerUp={isOffline ? undefined : endPointerPan}
+            onPointerCancel={isOffline ? undefined : endPointerPan}
         >
             <div style={styles.networkHeader}>
                 <div>
@@ -492,9 +495,6 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                     <div style={{ ...styles.muted, marginTop: "2px", fontSize: "9px" }}>
                         {activeSubtitle}
                         {updatedAt > 0 ? ` · updated ${new Date(updatedAt).toLocaleTimeString()}` : ""}
-                    </div>
-                    <div style={{ marginTop: "7px" }}>
-                        <PluginRuntimeWarning statuses={serviceStatus ? [serviceStatus] : []} />
                     </div>
                 </div>
             </div>
@@ -513,6 +513,19 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                 </button>}
             </div>
 
+            {isOffline ? (
+                <div style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                }}>
+                    <div style={{ color: "#9ab0cc", fontSize: "16px", fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+                        Service is offline
+                    </div>
+                </div>
+            ) : (<>
             <div
                 style={{
                     ...styles.networkWorld,
@@ -988,6 +1001,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                     </div>
                 ) : null}
             </aside>
+            </>)}
         </main>
     );
 }

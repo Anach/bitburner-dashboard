@@ -1,7 +1,7 @@
 export const DASHBOARD_VIEW_METADATA = {
     "id": "network",
     "renderer": "network-map",
-    "menuGroup": "hacking",
+    "menuGroup": "software",
     "menuLabel": "Network Map",
     "title": "Network Navigator",
     "subtitle": "Known normal-network routes, access state, and server resources.",

@@ -3965,14 +3965,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // an integration-backed service resolves via its pluginFile, a bare daemon script (no
     // -integration.js descriptor, so never present in dashboardServiceRegistry.services) falls
     // back to its own filename - same identifier space serviceAutostart:${id} already uses.
-    // isDashboardCoreScript excludes automation-dashboard.jsx/service-supervisor.js - both
-    // declare daemon:true (they're long-running). PLUGIN_RUNTIME_EXCLUDED_FOLDERS (dashboard/,
-    // libs/, trashbin/) mirrors service-supervisor.js's own EXCLUDED_RUNTIME_FOLDERS - none of
-    // those are ever really in the set this list is meant to reorder.
+    // isDashboardCoreScript excludes automation-dashboard.jsx/service-supervisor.js by exact
+    // filename - both declare daemon:true (they're long-running) but are never really in the set
+    // this list is meant to reorder. Do NOT additionally filter by PLUGIN_RUNTIME_EXCLUDED_FOLDERS
+    // (dashboard/, libs/, trashbin/) here - that's the right exclusion for service-supervisor.js's
+    // OWN plugin-descriptor discovery (finding NEW -integration.js files under dashboard/, see
+    // discoverDashboardPlugins's non-co-located branch), but a blanket "dashboard/" prefix match
+    // also wrongly excludes every real plugin runtime script under dashboard/plugins/*/ (mailbox
+    // scanner, player stats, network navigator, etc.) - those ARE co-located with their own
+    // descriptor and were never excluded from discovery in the first place, so excluding them
+    // here just hid them from this list for no reason. isDashboardCoreScript's exact match is
+    // the only exclusion actually needed.
     const serviceStartOrderRows = homeScripts
-        .filter((script) => script?.daemon === true
-            && !isDashboardCoreScript(script?.filename)
-            && !isScriptInFolders(script?.filename, PLUGIN_RUNTIME_EXCLUDED_FOLDERS))
+        .filter((script) => script?.daemon === true && !isDashboardCoreScript(script?.filename))
         .map((script) => {
             const matchedService = dashboardServiceRegistry.services.find((service) => service.pluginFile === script.filename);
             return {

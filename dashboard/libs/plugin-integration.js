@@ -256,7 +256,13 @@ export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAc
         const value = binding.trueValue && binding.falseValue
             ? (options[optionKey] ? binding.trueValue : binding.falseValue)
             : `${binding.prefix ?? ""}${options[optionKey]}`;
-        ns.writePort(port, value);
+        // Per-binding override for an integration whose merged components each still run their
+        // own independent command-drain loop on their own port (only one script can safely drain
+        // a given port - see SCRIPTS_OPTIMIZATION_PLAN.md's Server Buyer merge). Falls back to the
+        // integration's single default port when absent, unchanged for every integration that
+        // doesn't need this.
+        const bindingPort = Number.isFinite(Number(binding.port)) ? Number(binding.port) : port;
+        ns.writePort(bindingPort, value);
     }
 
     // The port writes above always happen - a freshly (re)started script has no memory of prior
