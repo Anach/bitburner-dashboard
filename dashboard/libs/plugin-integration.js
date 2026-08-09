@@ -15,6 +15,21 @@ function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
 }
 
+// A merged integration's option-carrying siblings (faction-gangs.js, faction-manager-boost.js,
+// server-buyer-cloud.js, batcher-beginner.js, etc.) can be autostarted and running entirely on
+// their own, independent of whether the integration's own paired script (scriptPath) is running -
+// confirmed real: with "progression.factions" autostart disabled but faction-gangs.js's own
+// autostart left on, every option send for this integration silently no-op'd forever (checks that
+// only looked at scriptPath), so a changed value could never reach the gang daemon. Checking
+// managedScripts too means delivery/enablement still works as long as anything that consumes it is
+// actually alive.
+export function isIntegrationScriptRunning(integration, runningFilenames) {
+    if (!integration || !(runningFilenames instanceof Set)) return false;
+    if (typeof integration.scriptPath === "string" && runningFilenames.has(integration.scriptPath)) return true;
+    const managedScripts = Array.isArray(integration.managedScripts) ? integration.managedScripts : [];
+    return managedScripts.some((filename) => runningFilenames.has(filename));
+}
+
 function getTelemetryFieldValue(stats, key) {
     if (typeof key !== "string" || key.length === 0) return undefined;
     return key.split(".").reduce((value, segment) => {
@@ -729,7 +744,10 @@ export function buildPluginIntegrationService(plugin) {
         },
         getActions: ({ selectedCenterPanel, homeScripts, options, telemetryByServiceId }) => {
             if (selectedCenterPanel !== optionsPanelId) return [];
-            const running = (homeScripts ?? []).some((script) => script?.filename === integration.scriptPath && script?.running);
+            // Own scriptPath OR any managedScripts sibling - see isIntegrationScriptRunning's own
+            // comment for why this can't just check scriptPath alone.
+            const runningFilenames = new Set((homeScripts ?? []).filter((s) => s?.running).map((s) => s.filename));
+            const running = isIntegrationScriptRunning(integration, runningFilenames);
             return buildPluginIntegrationActions({ ...integration, commands: { ...integration.commands, actionKind: "plugin-command" } }, options, telemetryByServiceId?.[integration.serviceId], {
                 running,
                 idPrefix: integration.serviceId,

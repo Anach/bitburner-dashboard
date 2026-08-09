@@ -2,7 +2,7 @@ import { MAILBOX_FEED_PORT } from "dashboard/plugins/mailbox/mailbox-reader.js";
 import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
-    "daemon": true
+    "daemon": false
 };
 
 const dnetFiles = ["dashboard/plugins/mailbox/mailbox-darknet-agent.js"];

@@ -4,6 +4,7 @@ import {
     buildPluginIntegrationInputs,
     getPluginIntegrationSections,
     getPluginIntegrationStateLines,
+    isIntegrationScriptRunning,
 } from "dashboard/libs/plugin-integration.js";
 
 function findPluginScript(homeScripts, filename) {
@@ -112,13 +113,18 @@ export function buildScriptPluginService(plugin) {
         },
         getActions: ({ selectedCenterPanel, homeScripts, options, telemetryByServiceId }) => {
             if (selectedCenterPanel !== optionsPanelId) return [];
-            const script = findPluginScript(homeScripts, filename);
+            // Own scriptPath OR any managedScripts sibling - a merged integration's action buttons
+            // (gang mode, territory warfare, share-home-ram, etc.) target whichever daemon actually
+            // drains that command's port, which isn't necessarily this integration's own paired
+            // script. See isIntegrationScriptRunning's own comment for the real bug this fixed.
+            const runningFilenames = new Set((homeScripts ?? []).filter((s) => s?.running).map((s) => s.filename));
+            const running = isIntegrationScriptRunning(integration, runningFilenames);
             return buildPluginIntegrationActions(
                 { ...integration, commands: { ...integration.commands, actionKind: "plugin-command" } },
                 options,
                 telemetryByServiceId?.[integration.serviceId],
                 {
-                    running: script.running,
+                    running,
                     idPrefix: integration.serviceId,
                     iconBrackets: true,
                     startingOrder: 30,

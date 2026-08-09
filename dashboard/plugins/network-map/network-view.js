@@ -1,3 +1,12 @@
+// direct/route/hop (and the open-location/work-company nodeActions above) all require Singularity
+// (ns.singularity.connect), handled by the dedicated network-navigator-singularity.js worker on
+// its own port 25 - see network-navigator.js's tiered split. setModePrefix/refreshCommand stay on
+// the base integration's default port (no "port" field) since network-navigator.js itself handles
+// those without any Singularity dependency.
+//
+// NOTE: this object is parsed via a JSON.parse() of its literal text (dashboard/libs/metadata-
+// parser.js), not a real JS import - it must stay strict JSON inside the braces below: no
+// comments, no trailing commas, string keys only.
 export const DASHBOARD_VIEW_METADATA = {
     "id": "network",
     "renderer": "network-map",
@@ -139,7 +148,8 @@ export const DASHBOARD_VIEW_METADATA = {
             "visibleKey": "isLocation",
             "enabledKey": "canOpenLocation",
             "disabledReasonKey": "openBlockedReason",
-            "lockedLabelSuffix": "LOCKED"
+            "lockedLabelSuffix": "LOCKED",
+            "port": 25
         },
         {
             "id": "work-company",
@@ -150,7 +160,8 @@ export const DASHBOARD_VIEW_METADATA = {
             "visibleKey": "isEmployed",
             "enabledKey": "canWorkCompany",
             "disabledReasonKey": "workBlockedReason",
-            "lockedLabelSuffix": "LOCKED"
+            "lockedLabelSuffix": "LOCKED",
+            "port": 25
         }
     ],
     "actions": {
@@ -158,6 +169,7 @@ export const DASHBOARD_VIEW_METADATA = {
         "directPrefix": "ConnectDirect:",
         "routePrefix": "ConnectRoute:",
         "hopPrefix": "ConnectHop:",
+        "port": 25,
         "setModePrefix": "SetMode:",
         "refreshCommand": "Refresh",
         "directLabel": "Direct connect",

@@ -1,26 +1,40 @@
-import { CITY_NAMES, getCityLocations, getLocationCatalogEntry } from "dashboard/plugins/network-map/city-locations.js";
-import { discoverNetwork, pathToHost } from "dashboard/plugins/network-map/topology.js";
+import { CITY_NAMES, getCityLocations } from "dashboard/plugins/network-map/city-locations.js";
+import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
+import { startHomeScript } from "dashboard/libs/runtime-actions.js";
+import { formatXpSuitability } from "dashboard/plugins/network-map/xp-suitability.js";
+import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
+
+const SINGULARITY_REQUIREMENT = { type: "api", id: "singularity" };
+const FORMULAS_REQUIREMENT = { type: "program", id: "Formulas.exe" };
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
 };
 
+// Base/always-on tier of a three-tier split (see SCRIPTS_OPTIMIZATION_PLAN-style launcher/core
+// pattern used elsewhere in this repo): this file's own static call graph contains no
+// ns.singularity.* or ns.formulas.* call anywhere, so it stays cheap regardless of Source-File 4
+// or Formulas.exe ownership. It launches the two worker tiers below once their own capability is
+// cheaply detected, and folds whatever they've most recently published into the single telemetry
+// file the dashboard already reads from - so the frontend never needs to know the data came from
+// three separate processes.
+const FORMULAS_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-formulas.js";
+const SINGULARITY_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-singularity.js";
 const COMMAND_PORT = 20;
 const SNAPSHOT_INTERVAL_MS = 2000;
 const TRAVEL_COST = 200_000;
+// Workers publish on their own ~2s cadence too - anything older than this is treated as "worker
+// isn't actually running/keeping up" rather than trusted stale data, same rationale as
+// factions/faction-manager-boost.js's CORE_STATUS_STALE_AFTER_MS.
+const WORKER_STALE_AFTER_MS = 15000;
 const DATA_PATHS = {
     batcherStatsJson: "data/batcher_stats.json",
     batcherMoneyStatsJson: "data/batcher_money_stats.json",
     batcherXpStatsJson: "data/batcher_xp_stats.json",
     batcherBalancedStatsJson: "data/batcher_balanced_stats.json",
     networkNavigatorStatsJson: "data/network_navigator_stats.json",
-};
-const COMMAND_PREFIXES = {
-    direct: "ConnectDirect:",
-    route: "ConnectRoute:",
-    hop: "ConnectHop:",
-    openLocation: "OpenLocation:",
-    workCompany: "WorkCompany:",
+    networkNavigatorFormulasStatsJson: "data/network_navigator_formulas_stats.json",
+    networkNavigatorSingularityStatsJson: "data/network_navigator_singularity_stats.json",
 };
 const SET_MODE_PREFIX = "SetMode:";
 const DEFAULT_MODE_ID = "network";
@@ -41,6 +55,15 @@ function loadJsonFile(ns, path) {
     } catch (error) {
         return null;
     }
+}
+
+// Returns null (not a fallback object) when the worker isn't running or its data is stale, so
+// callers can tell "no fresh data" apart from "fresh data with empty contents".
+function loadFreshWorkerData(ns, path) {
+    const data = loadJsonFile(ns, path);
+    if (!data) return null;
+    const age = Date.now() - (Number(data.generatedAt) || 0);
+    return age <= WORKER_STALE_AFTER_MS ? data : null;
 }
 
 function collectTargetNames(snapshot, keys) {
@@ -83,45 +106,19 @@ function getBatchAssignment(hostname, activeProfile, profitTargets, frontierTarg
     return assignments.join(" / ") || "Unassigned";
 }
 
-function getXpSuitability(ns, server, player, selected) {
-    const requiredSkill = Number(server.requiredHackingSkill) || 0;
-    if (!server.hasAdminRights) return "Blocked · no root";
-    if (requiredSkill > (Number(player?.skills?.hacking) || 0)) return `Blocked · requires ${requiredSkill.toLocaleString()} skill`;
-
+// Cheap, no-Formulas estimate of the same quantity network-navigator-formulas.js computes
+// precisely via ns.formulas.hacking.* - used as the always-available baseline. Whichever number is
+// available gets run through the shared formatXpSuitability() so "Selected/Eligible/Blocked" stays
+// driven by this script's own live batcher-target/root/skill knowledge either way.
+function estimateXpPerSecond(ns, server, player) {
     let weakenTime = Infinity;
-    let experience = 0;
     try {
-        const mockServer = { ...server, hackDifficulty: server.minDifficulty };
-        weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
-        experience = ns.formulas.hacking.hackExp(mockServer, player);
+        weakenTime = ns.getWeakenTime(server.hostname);
     } catch (error) {
-        try {
-            weakenTime = ns.getWeakenTime(server.hostname);
-        } catch (nestedError) {
-            weakenTime = Infinity;
-        }
-        experience = (3 + ((Number(server.baseDifficulty) || 0) * 0.3)) * (Number(player?.mults?.hacking_exp) || 1);
+        weakenTime = Infinity;
     }
-
-    const xpPerSecond = experience / Math.max(0.001, weakenTime / 1000);
-    if (!Number.isFinite(xpPerSecond) || xpPerSecond <= 0) return "Eligible · score unavailable";
-    const score = xpPerSecond >= 10 ? xpPerSecond.toFixed(1) : xpPerSecond.toFixed(3);
-    return `${selected ? "Selected" : "Eligible"} · ${score} XP/s/thread`;
-}
-
-function getMapValue(mapLike, key) {
-    if (mapLike instanceof Map) return Number(mapLike.get(key)) || 0;
-    if (mapLike && typeof mapLike === "object") return Number(mapLike[key]) || 0;
-    return 0;
-}
-
-function canUseSingularity(ns) {
-    try {
-        const resetInfo = ns.getResetInfo() ?? {};
-        return Number(resetInfo.currentNode) === 4 || getMapValue(resetInfo.ownedSF, 4) >= 1;
-    } catch (error) {
-        return false;
-    }
+    const experience = (3 + ((Number(server.baseDifficulty) || 0) * 0.3)) * (Number(player?.mults?.hacking_exp) || 1);
+    return experience / Math.max(0.001, weakenTime / 1000);
 }
 
 function decodeTarget(command, prefix) {
@@ -129,25 +126,6 @@ function decodeTarget(command, prefix) {
         return decodeURIComponent(command.slice(prefix.length)).trim();
     } catch (error) {
         return "";
-    }
-}
-
-function decodeLocationTarget(command, prefix) {
-    const decoded = decodeTarget(command, prefix);
-    const separatorIndex = decoded.indexOf("|");
-    if (separatorIndex < 1) return null;
-    const city = decoded.slice(0, separatorIndex).trim();
-    const location = decoded.slice(separatorIndex + 1).trim();
-    if (!city || !location || !CITY_NAMES.includes(city)) return null;
-    if (!getLocationCatalogEntry(city, location)) return null;
-    return { city, location };
-}
-
-function connectTo(ns, target) {
-    try {
-        return Boolean(ns.singularity.connect(target));
-    } catch (error) {
-        return false;
     }
 }
 
@@ -161,126 +139,12 @@ function makeCommandResult(kind, target, ok, message) {
     };
 }
 
-function travelForLocation(ns, city, singularityAvailable) {
-    if (!singularityAvailable) {
-        return { ok: false, travelled: false, message: "Location actions require Singularity access (Source-File 4)." };
-    }
-
-    const player = ns.getPlayer();
-    if (player.city === city) return { ok: true, travelled: false, message: "" };
-    if ((Number(player.money) || 0) < TRAVEL_COST) {
-        return { ok: false, travelled: false, message: `Travel to ${city} requires $${TRAVEL_COST.toLocaleString()}.` };
-    }
-
-    try {
-        const travelled = Boolean(ns.singularity.travelToCity(city));
-        return travelled
-            ? { ok: true, travelled: true, message: "" }
-            : { ok: false, travelled: false, message: `Could not travel to ${city}.` };
-    } catch (error) {
-        return { ok: false, travelled: false, message: `Could not travel to ${city}.` };
-    }
-}
-
-function runLocationCommand(ns, command, kind, prefix, singularityAvailable) {
-    const target = decodeLocationTarget(command, prefix);
-    if (!target) return makeCommandResult(kind, "", false, "The requested city location is not known.");
-
-    const travel = travelForLocation(ns, target.city, singularityAvailable);
-    if (!travel.ok) return makeCommandResult(kind, target.location, false, travel.message);
-
-    if (kind === "openLocation") {
-        try {
-            const opened = Boolean(ns.singularity.goToLocation(target.location));
-            const travelMessage = travel.travelled ? `Travelled to ${target.city} and ` : "";
-            return makeCommandResult(
-                kind,
-                target.location,
-                opened,
-                opened ? `${travelMessage}opened ${target.location}.` : `Could not open ${target.location}.`
-            );
-        } catch (error) {
-            return makeCommandResult(kind, target.location, false, `Could not open ${target.location}.`);
-        }
-    }
-
-    const location = getLocationCatalogEntry(target.city, target.location);
-    if (!location?.types?.includes("Company")) {
-        return makeCommandResult(kind, target.location, false, `${target.location} is not a company.`);
-    }
-    if (!ns.getPlayer()?.jobs?.[target.location]) {
-        return makeCommandResult(kind, target.location, false, `You are not employed by ${target.location}.`);
-    }
-    try {
-        const working = Boolean(ns.singularity.workForCompany(target.location, true));
-        const travelMessage = travel.travelled ? `Travelled to ${target.city} and ` : "";
-        return makeCommandResult(
-            kind,
-            target.location,
-            working,
-            working ? `${travelMessage}started work for ${target.location}.` : `Could not start work for ${target.location}.`
-        );
-    } catch (error) {
-        return makeCommandResult(kind, target.location, false, `Could not start work for ${target.location}.`);
-    }
-}
-
-function runNavigationCommand(ns, command, graph, singularityAvailable) {
-    if (command === "Refresh") {
-        return makeCommandResult("refresh", "", true, "Navigation telemetry refreshed.");
-    }
-
-    const commandType = Object.entries(COMMAND_PREFIXES)
-        .find(([, prefix]) => command.startsWith(prefix));
-    if (!commandType) return null;
-
-    const [kind, prefix] = commandType;
-    if (kind === "openLocation" || kind === "workCompany") {
-        return runLocationCommand(ns, command, kind, prefix, singularityAvailable);
-    }
-
-    const target = decodeTarget(command, prefix);
-    if (!target || !graph.servers.includes(target)) {
-        return makeCommandResult(kind, target, false, "The requested server is not in the known network.");
-    }
-    if (!singularityAvailable) {
-        return makeCommandResult(kind, target, false, "Automatic connection requires Singularity access (Source-File 4).");
-    }
-
-    if (kind === "direct" || kind === "hop") {
-        const ok = connectTo(ns, target);
-        return makeCommandResult(
-            kind,
-            target,
-            ok,
-            ok ? `Connected to ${target}.` : `Could not connect directly to ${target} from the current server.`
-        );
-    }
-
-    const route = pathToHost(graph.parentMap, target, "home");
-    if (!route) return makeCommandResult(kind, target, false, `No route to ${target} was found.`);
-    if (!connectTo(ns, "home")) {
-        return makeCommandResult(kind, target, false, "Could not return to home before following the route.");
-    }
-    for (const hop of route.slice(1)) {
-        if (!connectTo(ns, hop)) {
-            return makeCommandResult(kind, target, false, `Connection failed at ${hop}.`);
-        }
-    }
-    return makeCommandResult(kind, target, true, `Connected to ${target} via ${Math.max(0, route.length - 1)} hop(s).`);
-}
-
 function findCurrentHost(serverSnapshots) {
     return serverSnapshots.find((server) => server.isConnectedTo)?.hostname ?? "home";
 }
 
 function normalizeIdentity(value) {
     return String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function formatProgressNumber(value) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "Unavailable";
 }
 
 function quoteTerminalArgument(value) {
@@ -299,19 +163,7 @@ function buildTerminalConnectCommand(route) {
     return ["home", ...hops.map((hop) => `connect ${hop}`)].join("; ");
 }
 
-function getCompanyProgress(ns, companyName, singularityAvailable) {
-    if (!singularityAvailable) return { reputation: "Requires SF4", favor: "Requires SF4" };
-    try {
-        return {
-            reputation: formatProgressNumber(ns.singularity.getCompanyRep(companyName)),
-            favor: formatProgressNumber(ns.singularity.getCompanyFavor(companyName)),
-        };
-    } catch (error) {
-        return { reputation: "Unavailable", favor: "Unavailable" };
-    }
-}
-
-function buildCityMap(ns, city, networkNodes, player, singularityAvailable, lastCommand) {
+function buildCityMap(ns, city, networkNodes, player, singularityAvailable, lastCommand, companyProgressByCity) {
     const catalog = getCityLocations(city);
     const currentCity = player.city === city;
     const canAffordTravel = (Number(player.money) || 0) >= TRAVEL_COST;
@@ -322,6 +174,7 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
         const organizationKey = normalizeIdentity(node.organization);
         if (organizationKey && !serverByOrganization.has(organizationKey)) serverByOrganization.set(organizationKey, node);
     }
+    const cityProgress = companyProgressByCity?.[city] ?? null;
 
     const hubId = `city:${city}`;
     const nodes = [{
@@ -369,7 +222,7 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
             const isCompany = location.types.includes("Company");
             const currentJob = isCompany ? String(player.jobs?.[location.name] ?? "") : "";
             const companyProgress = isCompany
-                ? getCompanyProgress(ns, location.name, singularityAvailable)
+                ? cityProgress?.[location.name] ?? { reputation: singularityAvailable ? "Unavailable" : "Requires SF4", favor: singularityAvailable ? "Unavailable" : "Requires SF4" }
                 : { reputation: "", favor: "" };
             const isCurrentLocation = currentCity && player.location === location.name;
             const interactionStatus = !singularityAvailable
@@ -445,7 +298,7 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
     };
 }
 
-function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeId) {
+function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastCommand, activeModeId, xpPerSecondByHost, companyProgressByCity, singularityLastCommand) {
     const player = ns.getPlayer();
     const hackingLevel = Number(player?.skills?.hacking) || 0;
     const batcherStats = loadJsonFile(ns, DATA_PATHS.batcherStatsJson);
@@ -491,6 +344,7 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
         const moneyAvailable = Number(server.moneyAvailable) || 0;
         const minimumSecurity = Number(server.minDifficulty) || 0;
         const currentSecurity = Number(server.hackDifficulty) || 0;
+        const selectedForXp = xpTargets.has(server.hostname);
         return {
             id: server.hostname,
             hostname: server.hostname,
@@ -506,13 +360,21 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
             purchased: Boolean(server.purchasedByPlayer),
             cloud: cloudServers.has(server.hostname),
             moneyTarget: moneyTargets.has(server.hostname),
-            xpTarget: xpTargets.has(server.hostname),
+            xpTarget: selectedForXp,
             hasContract,
             contractCount,
             story: STORY_SERVERS.has(server.hostname) || hasStoryFile,
             currentlyBeingHacked: activelyHackedTargets.has(server.hostname),
             batchAssignment: getBatchAssignment(server.hostname, activeProfile, profitTargets, frontierTargets, xpTargets),
-            xpSuitability: getXpSuitability(ns, server, player, xpTargets.has(server.hostname)),
+            // The formulas worker's precise score wins once it's running and fresh; otherwise
+            // fall back to the cheap non-Formulas estimate. Either way, formatting (Selected vs
+            // Eligible vs Blocked) is decided here, from this script's own live state.
+            xpSuitability: (() => {
+                const preciseScore = xpPerSecondByHost?.[server.hostname];
+                const usingPreciseScore = Number.isFinite(preciseScore);
+                const xpPerSecond = usingPreciseScore ? preciseScore : estimateXpPerSecond(ns, server, player);
+                return formatXpSuitability(server, player, selectedForXp, xpPerSecond, usingPreciseScore ? "" : " (estimate)");
+            })(),
             connected: server.hostname === currentHost,
             withinHackLevel: requiredHackingSkill <= hackingLevel,
             directConnect: server.hostname === "home" || Boolean(server.backdoorInstalled) || Boolean(server.purchasedByPlayer),
@@ -542,6 +404,12 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
     }, { used: 0, total: 0 });
     rootedNetworkRam.ratio = rootedNetworkRam.total > 0 ? rootedNetworkRam.used / rootedNetworkRam.total : 0;
 
+    // Auto-connect commands (direct/route/hop/open-location/work-company) all require Singularity
+    // and are handled by network-navigator-singularity.js on its own port now - its most recent
+    // result takes priority so the frontend's "last navigation" line reflects it, falling back to
+    // this script's own "Refresh"/"SetMode" results otherwise.
+    const effectiveLastCommand = singularityLastCommand ?? lastCommand;
+
     const networkMap = {
         title: "Network Navigator",
         subtitle: "Known normal-network routes, access state, and server resources.",
@@ -549,13 +417,14 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
         currentHost,
         playerHacking: hackingLevel,
         canConnect: singularityAvailable,
+        formulasAvailable,
         knownServers: nodes.length,
         rootedServers: nodes.filter((node) => node.hasRoot).length,
         backdooredServers: nodes.filter((node) => node.backdoorInstalled).length,
         networkRam: rootedNetworkRam,
         nodes,
         edges: graph.edges,
-        lastCommand,
+        lastCommand: effectiveLastCommand,
     };
     const maps = { network: networkMap };
     const mapOptions = [{
@@ -575,11 +444,12 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
     for (const city of CITY_NAMES) {
         const id = `city:${city}`;
         const current = player.city === city;
-        // Only the currently-viewed mode gets its full detail built (buildCityMap's per-company
-        // getCompanyProgress() is 2 singularity calls each) - every other city just needs the
-        // lightweight picker metadata below, since the frontend only ever reads maps[activeModeId].
+        // Only the currently-viewed mode gets its full detail built - every other city just needs
+        // the lightweight picker metadata below, since the frontend only ever reads
+        // maps[activeModeId]. This also caps how many cities network-navigator-singularity.js ever
+        // needs to fetch company rep/favor for on a given cycle (see that file).
         if (id === activeModeId) {
-            maps[id] = buildCityMap(ns, city, nodes, player, singularityAvailable, lastCommand);
+            maps[id] = buildCityMap(ns, city, nodes, player, singularityAvailable, effectiveLastCommand, companyProgressByCity);
         }
         mapOptions.push({
             id,
@@ -601,6 +471,7 @@ function buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeI
         ...networkMap,
         currentCity: player.city,
         travelCost: TRAVEL_COST,
+        activeModeId,
         maps,
         mapOptions,
     };
@@ -617,7 +488,15 @@ export async function main(ns) {
     let lastSnapshotSignature = "";
     while (true) {
         const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
-        const singularityAvailable = canUseSingularity(ns);
+        const capabilities = buildCapabilitySnapshot(ns);
+        const singularityAvailable = isCapabilityRequirementMet(SINGULARITY_REQUIREMENT, capabilities);
+        const formulasAvailable = isCapabilityRequirementMet(FORMULAS_REQUIREMENT, capabilities);
+
+        // Launcher duties: start each gated worker once its own capability is cheaply detected.
+        // startHomeScript() no-ops if already running, so a worker that crashed gets relaunched on
+        // the very next cycle here without any extra bookkeeping.
+        if (formulasAvailable) startHomeScript(ns, FORMULAS_WORKER_SCRIPT);
+        if (singularityAvailable) startHomeScript(ns, SINGULARITY_WORKER_SCRIPT);
 
         while (ns.peek(COMMAND_PORT) !== "NULL PORT DATA") {
             const command = String(ns.readPort(COMMAND_PORT));
@@ -626,14 +505,30 @@ export async function main(ns) {
                 if (requestedMode) activeModeId = requestedMode;
                 continue;
             }
-            const result = runNavigationCommand(ns, command, graph, singularityAvailable);
-            if (!result) continue;
-            lastCommand = result;
-            ns.print(`[${result.status.toUpperCase()}] ${result.message}`);
-            if (result.status === "error") ns.toast(result.message, "warning", 5000);
+            if (command === "Refresh") {
+                lastCommand = makeCommandResult("refresh", "", true, "Navigation telemetry refreshed.");
+                continue;
+            }
+            // Anything else (ConnectDirect/ConnectRoute/ConnectHop/OpenLocation/WorkCompany) is
+            // Singularity-gated and sent straight to network-navigator-singularity.js's own port
+            // by the frontend now - nothing else should be arriving here, but an unrecognized
+            // command is just silently ignored rather than erroring.
         }
 
-        const snapshot = buildSnapshot(ns, graph, singularityAvailable, lastCommand, activeModeId);
+        const formulasData = loadFreshWorkerData(ns, DATA_PATHS.networkNavigatorFormulasStatsJson);
+        const singularityData = loadFreshWorkerData(ns, DATA_PATHS.networkNavigatorSingularityStatsJson);
+
+        const snapshot = buildSnapshot(
+            ns,
+            graph,
+            singularityAvailable,
+            formulasAvailable,
+            lastCommand,
+            activeModeId,
+            formulasData?.xpPerSecondByHost ?? null,
+            singularityData?.companyProgressByCity ?? null,
+            singularityData?.lastCommand ?? null
+        );
         // Excludes generatedAt (present at the top level and per city map) from the comparison -
         // it always differs, which would defeat the point. A genuinely new command result still
         // triggers a write, since makeCommandResult's own `timestamp` field isn't excluded.

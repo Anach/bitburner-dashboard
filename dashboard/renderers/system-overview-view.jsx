@@ -217,11 +217,11 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
             </div>
             <div style={getDashboardFrameControlGroupStyle(compactControls ? { gap: "5px" } : null)}>
                 {killAllControl}
+                {minimizeControl}
                 {windowControl}
                 {closeControl ?? <button type="button" title="Close System Overview and return to dashboard controls" style={getDashboardFrameControlStyle("neutral", compactControlStyle)} onMouseDown={(event) => runDashboardFrameControlMouseDown(event, onExit)} onClick={(event) => runDashboardFrameControlClick(event, onExit)}>
                     {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
                 </button>}
-                {minimizeControl}
             </div>
         </div>
         <div style={{ ...styles.homeWidgetGrid, gridTemplateColumns, gap: `${gap}px` }}>{widgets.map(renderWidget)}</div>

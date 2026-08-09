@@ -22,13 +22,13 @@ export const DASHBOARD_PLUGIN_METADATA = {
         {
             "viewId": "system-overview",
             "viewLayout": {
-                "columns": 5,
-                "columnsWithoutPlayerStats": 4
+                "columns": 4,
+                "columnsWithoutPlayerStats": 3
             },
             "id": "player-stats",
             "type": "player-stats",
             "title": "Player Status",
-            "columnStart": 5,
+            "columnStart": 4,
             "columnSpan": 1,
             "rowStart": 2,
             "rowSpan": 3,

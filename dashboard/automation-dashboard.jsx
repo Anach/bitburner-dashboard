@@ -115,6 +115,7 @@ import {
     getPluginIntegrationOverviewGauges,
     getPluginIntegrationGraphs,
     getPluginIntegrationOverviewLines,
+    isIntegrationScriptRunning,
     loadPluginIntegrationStats,
     normalizePluginIntegrationOptions,
     shouldStartPluginIntegrationAfterOptionChange,
@@ -901,7 +902,7 @@ const WIDGET_STYLES = {
     homeGraphGrid: {
         display: "grid",
         gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        gap: "10px",
+        gap: "7px",
         marginTop: "10px"
     },
     networkView: {
@@ -1511,7 +1512,7 @@ function applyQueuedDashboardActions(ns) {
             const integration = getServiceById(command.serviceId)?.pluginMetadata;
             applyPluginIntegrationOptions(ns, integration, command.options, (tone, message) => {
                 logMajorAction(ns, message, tone);
-            }, { running: latestHomeProcessFilenames.has(integration?.scriptPath) });
+            }, { running: isIntegrationScriptRunning(integration, latestHomeProcessFilenames) });
         },
         "plugin-command": (command) => {
             const integration = getServiceById(command.serviceId)?.pluginMetadata;
@@ -1520,7 +1521,7 @@ function applyQueuedDashboardActions(ns) {
                 integration,
                 command.command,
                 (tone, message) => logMajorAction(ns, message, tone),
-                { running: latestHomeProcessFilenames.has(integration?.scriptPath), port: command.port }
+                { running: isIntegrationScriptRunning(integration, latestHomeProcessFilenames), port: command.port }
             );
         },
         dashboard: (command) => {
@@ -1812,7 +1813,17 @@ function logMajorAction(ns, message, toastType = "info") {
 }
 
 function applyPersistedPluginOptions(ns, filename) {
-    const integration = getDashboardServiceRegistry().services.find((service) => service.pluginFile === filename)?.pluginMetadata;
+    // Matches either the integration's own paired script, or one of its managedScripts - a merged
+    // integration's option-carrying siblings (faction-gangs.js, faction-manager-boost.js,
+    // server-buyer-cloud.js, batcher-beginner.js, etc.) that are launched independently by the
+    // paired script rather than exec'd directly by the dashboard. Without this, one of those
+    // siblings restarting on its own (a crash, a RAM-pressure kill, anything short of the paired
+    // script also restarting at the same moment) comes back up holding its in-script defaults with
+    // nothing to re-prime it - confirmed real: faction-gangs.js silently reverting to
+    // equipmentMinFunds=0 after restarting independently of factions/faction-manager.js.
+    const integration = getDashboardServiceRegistry().services.find((service) => {
+        return service.pluginFile === filename || service.pluginMetadata?.managedScripts?.includes(filename);
+    })?.pluginMetadata;
     if (!integration || Object.keys(integration.options ?? {}).length === 0) return;
     applyPluginIntegrationOptions(ns, integration, loadDashboardOptions(ns), (tone, message) => {
         logMajorAction(ns, message, tone);
@@ -3136,13 +3147,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 options: { ...currentOptions },
             });
 
+            const runningFilenames = new Set(homeScripts.filter((script) => script?.running).map((script) => script.filename));
             for (const service of getDashboardServiceRegistry().services) {
                 const integration = service.pluginMetadata;
                 if (!integration || Object.keys(integration.options ?? {}).length === 0) continue;
                 const previousPluginOptions = normalizePluginIntegrationOptions(integration, previousOptions);
                 const currentPluginOptions = normalizePluginIntegrationOptions(integration, currentOptions);
                 const changed = Object.keys(currentPluginOptions).some((key) => previousPluginOptions[key] !== currentPluginOptions[key]);
-                const running = homeScripts.some((script) => script?.filename === integration.scriptPath && script?.running);
+                const running = isIntegrationScriptRunning(integration, runningFilenames);
                 if (!changed) continue;
 
                 if (running) {
@@ -4927,10 +4939,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     view={activeView}
                     telemetry={telemetryByServiceId?.[activeView?.data?.serviceId] ?? null}
                     serviceStatus={serviceRuntimeById[activeView?.data?.serviceId] ?? null}
-                    onCommand={(serviceId, command) => runServiceAction({
+                    onCommand={(serviceId, command, port) => runServiceAction({
                         kind: "plugin-command",
                         serviceId,
                         command,
+                        ...(Number.isFinite(Number(port)) ? { port: Number(port) } : {}),
                     })}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
@@ -4961,7 +4974,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     lastPreviewResult={globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] ?? null}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
-                    headerActions={windowControl}
+                    headerActions={<>{minimizeControl}{windowControl}</>}
                 />
             ) : activeView?.renderer === "script-log" ? (
                 <ScriptLogView
@@ -4972,7 +4985,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onStateChange={(state) => saveDashboardViewInteractionState(activeView.id, state)}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
-                    headerActions={windowControl}
+                    headerActions={<>{minimizeControl}{windowControl}</>}
                 />
             ) : activeView?.renderer === "mailbox" ? (
                 <MailboxView
@@ -4986,7 +4999,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     })}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
-                    headerActions={windowControl}
+                    headerActions={<>{minimizeControl}{windowControl}</>}
                 />
             ) : (
             <>

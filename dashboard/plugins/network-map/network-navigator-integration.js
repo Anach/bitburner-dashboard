@@ -33,6 +33,8 @@ export const DASHBOARD_PLUGIN_METADATA = {
             { "key": "knownServers", "label": "Known Servers", "tone": "neutral", "format": "number", "panelId": "status" },
             { "key": "rootedServers", "label": "Rooted", "tone": "success", "format": "number", "panelId": "status" },
             { "key": "backdooredServers", "label": "Backdoored", "tone": "success", "format": "number", "panelId": "status" },
+            { "key": "formulasAvailable", "label": "Formulas Score (precise XP scoring)", "tone": "info", "panelId": "status" },
+            { "key": "canConnect", "label": "Singularity Access (travel, auto-connect, company work)", "tone": "info", "panelId": "status" },
             { "key": "lastCommand.message", "label": "Last Navigation", "tone": "neutral", "panelId": "status" }
         ]
     },

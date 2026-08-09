@@ -152,7 +152,7 @@ export function DataGraph({ section, index = 0, presentation = "default", offlin
         return <div data-dashboard-theme-role="graph-panel" style={frameStyle}>
             <div data-dashboard-theme-role="data-heading" title={title} style={{ ...styles.strong, ...styles.graphTitle, marginBottom: "5px" }}>{terminalMode ? "> " : ""}{title}</div>
             <div style={styles.muted}>{offline ? "Service is offline." : (section?.emptyText || "Collecting history data...")}</div>
-            {sourceLabel ? <div style={styles.homeMetricSource}>{sourceLabel}</div> : null}
+            {sourceLabel ? <div style={{ ...styles.homeMetricSource, marginTop: "2px" }}>{sourceLabel}</div> : null}
         </div>;
     }
 

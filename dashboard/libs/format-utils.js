@@ -1,3 +1,15 @@
+export function formatDuration(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) return "now";
+
+    const totalMinutes = Math.ceil(ms / 60000);
+    if (totalMinutes < 60) return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (minutes === 0) return `${hours} hour${hours === 1 ? "" : "s"}`;
+    return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 export function formatMoney(value) {
     if (!Number.isFinite(value)) return "$0";
     return `$${Math.floor(value).toLocaleString()}`;
@@ -21,6 +33,33 @@ export function formatRam(value) {
     }
     const rounded = scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
     return `${rounded.toLocaleString()} ${RAM_UNITS[unitIndex]}`;
+}
+
+export function formatShareBoost(sharePower) {
+    if (!Number.isFinite(sharePower)) return "No free RAM";
+    const percent = (sharePower - 1) * 100;
+    if (percent < 0.05) return "No free RAM";
+    return `+${percent.toFixed(1)}% boost`;
+}
+
+const COMPACT_NUMBER_UNITS = [
+    { threshold: 1e15, suffix: "q" },
+    { threshold: 1e12, suffix: "t" },
+    { threshold: 1e9, suffix: "b" },
+    { threshold: 1e6, suffix: "m" },
+    { threshold: 1e3, suffix: "k" },
+];
+
+export function formatCompactNumber(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "0";
+    const absolute = Math.abs(numeric);
+    const unit = COMPACT_NUMBER_UNITS.find((candidate) => absolute >= candidate.threshold);
+    const scaled = unit ? numeric / unit.threshold : numeric;
+    const scaledAbsolute = Math.abs(scaled);
+    const digits = scaledAbsolute >= 100 ? 0 : scaledAbsolute >= 10 ? 1 : 2;
+    const formatted = scaled.toFixed(digits).replace(/\.0+$|(?<=\.[0-9]*?)0+$/g, "");
+    return `${formatted}${unit?.suffix ?? ""}`;
 }
 
 const RELATIVE_AGE_UNITS = [

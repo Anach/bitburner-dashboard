@@ -6,6 +6,7 @@ const API_SOURCE_FILES = {
     sleeve: 10,
     stanek: 13,
     darknet: 15,
+    hacknetServers: 9,
 };
 
 function getMapValue(mapLike, key) {

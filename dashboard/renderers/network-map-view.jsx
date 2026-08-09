@@ -317,11 +317,11 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         centerNode(id, true);
     };
 
-    const sendCommand = (prefix, target = "") => {
+    const sendCommand = (prefix, target = "", port) => {
         const serviceId = String(actionConfig.serviceId ?? dataConfig.serviceId ?? "");
         const command = target ? `${prefix}${encodeURIComponent(target)}` : String(prefix ?? "");
         if (!serviceId || !command) return;
-        onCommand(serviceId, command);
+        onCommand(serviceId, command, port);
     };
 
     const lastSentModeIdRef = React.useRef(null);
@@ -364,7 +364,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         const node = nodeById.get(nodeId);
         if (!node || getDashboardViewValue(node, fields.selectable) === false) return;
         if (showRoutes && stepTargetNode && nodeId === nextStepId && canConnect) {
-            sendCommand(actionConfig.hopPrefix, nodeId);
+            sendCommand(actionConfig.hopPrefix, nodeId, actionConfig.port);
             return;
         }
         setSelectedId(nodeId);
@@ -500,6 +500,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             </div>
 
             <div style={getDashboardFrameControlOverlayStyle()} data-network-control="true">
+                {minimizeControl}
                 {windowControl}
                 {closeControl ?? <button
                     type="button"
@@ -511,7 +512,6 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                 >
                     {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
                 </button>}
-                {minimizeControl}
             </div>
 
             {isOffline ? (
@@ -897,7 +897,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                                             textAlign: "center",
                                             ...(!canConnect || !Boolean(getDashboardViewValue(selectedNode, fields.direct)) ? styles.actionButtonDisabled : {}),
                                         }}
-                                        onClick={() => sendCommand(actionConfig.directPrefix, selectedId)}
+                                        onClick={() => sendCommand(actionConfig.directPrefix, selectedId, actionConfig.port)}
                                     >
                                         {actionConfig.directLabel ?? "Direct connect"}
                                     </button>
@@ -909,7 +909,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                                             textAlign: "center",
                                             ...(!canConnect || selectedRoute.length === 0 ? styles.actionButtonDisabled : {}),
                                         }}
-                                        onClick={() => sendCommand(actionConfig.routePrefix, selectedId)}
+                                        onClick={() => sendCommand(actionConfig.routePrefix, selectedId, actionConfig.port)}
                                     >
                                         {actionConfig.routeLabel ?? "Auto route"}
                                     </button>
@@ -967,7 +967,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                                             }}
                                             onClick={() => actionType === "clipboard"
                                                 ? copyNodeActionValue(target, label)
-                                                : sendCommand(action.prefix, target)}
+                                                : sendCommand(action.prefix, target, action.port)}
                                         >
                                             {displayLabel}
                                         </button>
