@@ -49,7 +49,7 @@ function getHomeTonePalette(tone = "neutral") {
     };
     return palettes[tone] ?? palettes.neutral;
 }
-export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl, closeControl, widgetStyles }) {
+export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl, closeControl, minimizeControl, widgetStyles }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
@@ -511,6 +511,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                 >
                     {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
                 </button>}
+                {minimizeControl}
             </div>
 
             {isOffline ? (

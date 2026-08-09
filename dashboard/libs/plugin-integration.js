@@ -365,7 +365,17 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
         const statsStateValue = typeof action.stateKey === "string"
             ? getTelemetryFieldValue(safeStats, action.stateKey)
             : undefined;
-        const stateValue = statsStateValue ?? safeOptions[action.optionKey] ?? action.defaultValue;
+        // A plain enable/disable toggle that declares optionKey persists its new value to the
+        // options store the instant it's clicked (see optionValue below), while the daemon it
+        // targets only reflects the change once its own loop next drains the command and
+        // publishes telemetry - which can be many seconds later for a slow-cadence daemon like
+        // the reputation-share filler. Preferring the option over telemetry here makes the button
+        // flip immediately on click instead of waiting out that daemon's full cycle; telemetry
+        // still wins for every other action (mode/enum buttons, anything without optionKey).
+        const isPersistedToggle = typeof action.optionKey === "string" && action.optionKey.length > 0 && action.activeValue === undefined;
+        const stateValue = isPersistedToggle
+            ? (safeOptions[action.optionKey] ?? statsStateValue ?? action.defaultValue)
+            : (statsStateValue ?? safeOptions[action.optionKey] ?? action.defaultValue);
         const variant = getObject(action.variants)?.[String(stateValue)];
         const enabled = action.activeValue !== undefined
             ? String(stateValue) === String(action.activeValue)
@@ -384,6 +394,15 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // own independent command-drain loop on their own port - same rationale as
             // optionBindings' port override below in applyPluginIntegrationOptions.
             ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
+            // Opt-in: a plain enable/disable toggle (no activeValue) that declares optionKey also
+            // reports the value it's ABOUT to become, so the click handler can persist it to the
+            // options store alongside sending the live command. Without this, the button only ever
+            // changes the running script's in-memory state - a full relaunch re-primes from the
+            // options file's stored default and silently reverts the toggle (confirmed real for
+            // the Share Home RAM / Train on Home toggles).
+            ...(isPersistedToggle
+                ? { optionKey: action.optionKey, optionValue: !enabled }
+                : {}),
             disabled: Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
             order: startingOrder + (Number(action.order) || index * 10),
         };

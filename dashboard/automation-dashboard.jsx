@@ -186,6 +186,7 @@ let lastRenderedSignature = null;
 const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
 let latestHomeProcessFilenames = new Set();
+let previousHomeProcessFilenames = new Set();
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -1488,6 +1489,17 @@ function applyQueuedDashboardActions(ns) {
             const requestedMode = normalizeDashboardWindowMode(command.mode);
             if (requestedMode !== dashboardTailLayoutState.mode) {
                 dashboardTailLayoutState.requestedMode = requestedMode;
+            }
+        },
+        "minimize-tail": () => {
+            // ns.ui.* is safe to call here (the main loop's own NS context, processed between
+            // ticks) but not directly from inside a React click handler - see the comment above
+            // autostartPaused's own computation for why calling ns.* synchronously from a handler
+            // risks colliding with this loop's own in-flight ns.sleep().
+            try {
+                ns.ui.setTailMinimized(true);
+            } catch (error) {
+                // ns.ui unavailable in whatever context this runs in - nothing to do.
             }
         },
         "save-options": (command) => {
@@ -2866,6 +2878,25 @@ function DashboardWindowModeButton({ layoutSnapshot, controlStyle = null }) {
     );
 }
 
+// Only ever rendered while maximized (see call sites) - minimizing from windowed mode already has
+// the tail's own native chrome close by, uncluttered; maximized mode's hero row is where a
+// same-looking neighboring RESTORE/CLOSE pair made it easy to hit the wrong one reaching for this.
+function DashboardMinimizeButton({ controlStyle = null }) {
+    const minimizeTail = () => enqueueDashboardAction({ kind: "minimize-tail" });
+    return (
+        <button
+            type="button"
+            data-network-control="true"
+            title="Minimize the dashboard"
+            style={getDashboardFrameControlStyle("neutral", controlStyle)}
+            onMouseDown={(event) => runDashboardFrameControlMouseDown(event, minimizeTail)}
+            onClick={(event) => runDashboardFrameControlClick(event, minimizeTail)}
+        >
+            {DASHBOARD_FRAME_CONTROL_LABELS.minimize}
+        </button>
+    );
+}
+
 function getDashboardResponsiveLayout(layoutSnapshot) {
     const tier = String(layoutSnapshot?.layoutTier ?? "compact");
     if (tier === "wide") {
@@ -2911,6 +2942,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         ? { width: "100%", maxWidth: "2800px", alignSelf: "center" }
         : {};
     const windowControl = <DashboardWindowModeButton layoutSnapshot={dashboardLayout} />;
+    // Only offered while maximized - see DashboardMinimizeButton's own comment for why.
+    const minimizeControl = dashboardLayout.maximized ? <DashboardMinimizeButton /> : null;
     const systemOverviewCompactControls = !dashboardLayout.maximized;
     const systemOverviewControlStyle = systemOverviewCompactControls
         ? { height: "20px", minHeight: "20px", padding: "3px 7px", fontSize: "10px" }
@@ -2925,6 +2958,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     >
         {DASHBOARD_FRAME_CONTROL_LABELS.close}
     </button>;
+    const systemOverviewMinimizeControl = dashboardLayout.maximized
+        ? <DashboardMinimizeButton controlStyle={systemOverviewControlStyle} />
+        : null;
     const networkMapControlStyle = systemOverviewControlStyle
         ? { ...systemOverviewControlStyle, position: "static" }
         : { position: "static" };
@@ -2939,6 +2975,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     >
         {DASHBOARD_FRAME_CONTROL_LABELS.close}
     </button>;
+    const networkMapMinimizeControl = dashboardLayout.maximized
+        ? <DashboardMinimizeButton controlStyle={networkMapControlStyle} />
+        : null;
     const [pressedActionButtonId, setPressedActionButtonId] = React.useState("");
     const [killAllPending, setKillAllPending] = React.useState(false);
     const killAllSnapshotRef = React.useRef(null);
@@ -2951,6 +2990,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const optionsInputFocusedRef = React.useRef(false);
     const optionsFocusReleaseTimerRef = React.useRef(null);
     const autoSyncTimerRef = React.useRef(null);
+    const pendingSavedOptionsRef = React.useRef(null);
     const lastAutoSyncedOptionsRef = React.useRef(normalizeDashboardOptionsForCompare(persistedOptions ?? getDefaultOptions()));
     const leftColumnRef = React.useRef(null);
     const centerColumnRef = React.useRef(null);
@@ -3055,7 +3095,23 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const incomingOptions = persistedOptions ?? getDefaultOptions();
         setOptions((currentOptions) => {
             // Avoid clobbering active edits while any option control is focused.
-            if (optionsDirtyRef.current || optionsInputFocusedRef.current) return currentOptions;
+            if (optionsInputFocusedRef.current) return currentOptions;
+            if (optionsDirtyRef.current) {
+                // A save was just enqueued (250ms debounce below) but the action-worker queue
+                // hasn't necessarily written it to disk by the time this fires - persistedOptions
+                // is re-read from disk on every tick, so it can still be reporting the pre-save
+                // content for a few ticks after the debounce timer clears. Only accept this read,
+                // and only then clear dirty, once it actually matches what was saved; otherwise
+                // keep waiting rather than clobbering the just-made change back to its old value.
+                // Confirmed real: a toggle/threshold visibly reverting seconds after being set,
+                // and once, a min-funds gate reading its old value long enough for gang equipment
+                // to be purchased under it.
+                if (!pendingSavedOptionsRef.current || !areDashboardOptionsEqual(incomingOptions, pendingSavedOptionsRef.current)) {
+                    return currentOptions;
+                }
+                optionsDirtyRef.current = false;
+                pendingSavedOptionsRef.current = null;
+            }
             lastAutoSyncedOptionsRef.current = normalizeDashboardOptionsForCompare(incomingOptions);
             return areDashboardOptionsEqual(currentOptions, incomingOptions) ? currentOptions : incomingOptions;
         });
@@ -3108,7 +3164,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             }
 
             lastAutoSyncedOptionsRef.current = currentOptions;
-            optionsDirtyRef.current = false;
+            // Left dirty until the [persistedOptions] effect above confirms this exact snapshot
+            // has actually round-tripped through disk - see that effect for why clearing it here
+            // unconditionally used to let a stale disk read win the race and revert this save.
+            pendingSavedOptionsRef.current = currentOptions;
             autoSyncTimerRef.current = null;
         }, 250);
 
@@ -3473,6 +3532,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }
         if (action.kind === "plugin-command") {
             if (typeof action.command !== "string" || action.command.length === 0) return;
+            if (typeof action.optionKey === "string" && action.optionKey.length > 0) {
+                // Same rationale as the save-options branch above: persist the toggle's new value
+                // to the options store (not just the live port command) so a full relaunch
+                // re-primes the freshly (re)started script with this choice instead of the
+                // options file's stale default.
+                optionsDirtyRef.current = true;
+                setOptions((current) => ({ ...current, [action.optionKey]: action.optionValue }));
+            }
             enqueueDashboardAction({
                 kind: "plugin-command",
                 serviceId: action.serviceId,
@@ -3600,7 +3667,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }
         enqueueDashboardAction({ kind: "save-options", options: { ...normalizedNext } });
         lastAutoSyncedOptionsRef.current = normalizedNext;
-        optionsDirtyRef.current = false;
+        // Same handoff as the debounced auto-save: leave dirty set until the [persistedOptions]
+        // effect confirms this exact snapshot has round-tripped through disk, instead of clearing
+        // it immediately and risking a stale disk read reverting the reorder before the save lands.
+        pendingSavedOptionsRef.current = normalizedNext;
     };
 
     const moveServiceInStartOrder = (serviceId, direction) => {
@@ -4823,6 +4893,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     widgetStyles={WIDGET_STYLES}
                     windowControl={systemOverviewWindowControl}
                     closeControl={systemOverviewCloseControl}
+                    minimizeControl={systemOverviewMinimizeControl}
                     killAllControl={(
                         <button
                             type="button"
@@ -4865,6 +4936,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onExit={() => setActiveView("")}
                     windowControl={networkMapWindowControl}
                     closeControl={networkMapCloseControl}
+                    minimizeControl={networkMapMinimizeControl}
                     widgetStyles={WIDGET_STYLES}
                 />
             ) : activeView?.renderer === "file-manager" ? (
@@ -4953,6 +5025,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         {renderActionLabel(globalKillAction)}
                     </button>
                     {windowControl}
+                    {minimizeControl}
                     </div>
                 </div>
             </div>
@@ -5431,7 +5504,7 @@ export async function main(ns) {
         ns.ui.setTailTitle("Automation Dashboard");
     }
 
-    ns.print(isDaemon
+    ns.tprint(isDaemon
         ? `Starting Automation Dashboard in daemon mode${autoStart ? " with integration auto-start" : ""}...`
         : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
 
@@ -5447,6 +5520,19 @@ export async function main(ns) {
 
         const cycleSnapshot = dashboardSnapshotCoordinator.collectCycle(ns);
         latestHomeProcessFilenames = new Set(cycleSnapshot.homeProcesses.map((process) => process.filename));
+        // Re-apply persisted options to any service that just started running by some means other
+        // than this dashboard's own Start button - autostart (service-supervisor.js), an external
+        // kill-all/relaunch, a crash respawn. Without this, a freshly (re)started script only ever
+        // gets re-primed via completeDashboardWorkerAction's applyOptions flag, which fires solely
+        // for a dashboard-initiated start action; anything else boots with its script-level
+        // hardcoded defaults and silently ignores whatever the user configured until some
+        // unrelated option edit happens to trigger the debounced auto-sync (confirmed real: gang
+        // equipment purchases proceeding under the default $0 min-funds gate after a full relaunch
+        // despite a much higher value already saved in the dashboard's options).
+        for (const filename of latestHomeProcessFilenames) {
+            if (!previousHomeProcessFilenames.has(filename)) applyPersistedPluginOptions(ns, filename);
+        }
+        previousHomeProcessFilenames = latestHomeProcessFilenames;
         const scriptCatalog = dashboardSnapshotCoordinator.getOrCreate(
             "script-catalog",
             cycleSnapshot.now,

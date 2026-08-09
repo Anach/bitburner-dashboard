@@ -2,6 +2,7 @@ export const DASHBOARD_FRAME_CONTROL_LABELS = Object.freeze({
     close: "CLOSE",
     maximize: "MAXIMIZE",
     restore: "RESTORE",
+    minimize: "MINIMIZE",
 });
 
 const FRAME_CONTROL_BASE_STYLE = Object.freeze({
