@@ -181,7 +181,7 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
         // Always re-copy rather than only when missing: a host that still holds an older reader
         // would otherwise keep running stale capture logic forever.
         ns.scp(READER_SCRIPT, host, "home");
-        ns.exec(READER_SCRIPT, host, 1);
+        ns.exec(READER_SCRIPT, host, { threads: 1, temporary: true });
         readerLaunchState.set(host, Date.now());
     }
 }
@@ -234,7 +234,7 @@ function ensureDarknetAgentRunning(ns) {
     if (!ns.fileExists(DARKNET_ACCESS_PROGRAM, "home")) return;
     if (ns.scriptRunning(DARKNET_AGENT_SCRIPT, "home")) return;
     if (!ns.fileExists(DARKNET_AGENT_SCRIPT, "home")) return;
-    ns.exec(DARKNET_AGENT_SCRIPT, "home", 1);
+    ns.exec(DARKNET_AGENT_SCRIPT, "home", { threads: 1, temporary: true });
 }
 
 function drainCommands(ns, messages) {

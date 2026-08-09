@@ -1439,6 +1439,7 @@ function buildDashboardWorkerCommand(ns, command) {
         getDashboardRestartArgs: (workerNs) => getDashboardRestartArgs(workerNs.args),
         resolveScriptActionExecution,
         getScriptLaunchArgs,
+        getManagedProcessPaths,
         getFileActionView: getDashboardFileActionView,
         normalizeFilePath,
         loadFileManagerManifest,
@@ -1836,6 +1837,15 @@ function applyPersistedPluginOptions(ns, filename, replayedIntegrationIds = null
         logMajorAction(ns, message, tone);
     }, { running: true });
     return true;
+}
+
+function getManagedProcessPaths(filename) {
+    const pluginService = getDashboardServiceRegistry().services.find((service) => service.pluginFile === filename);
+    const metadata = pluginService?.pluginMetadata ?? {};
+    return {
+        home: Array.isArray(metadata.managedScripts) ? metadata.managedScripts : [],
+        network: Array.isArray(metadata.managedNetworkScripts) ? metadata.managedNetworkScripts : [],
+    };
 }
 
 function performScriptFileAction(ns, action, filename) {

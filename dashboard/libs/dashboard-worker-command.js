@@ -16,11 +16,14 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
                 actionId: context.restartDashboardActionId,
             }, context);
         }
+        const managedProcesses = context.getManagedProcessPaths?.(command.filename) ?? {};
         return {
             kind: "script",
             actionId: execution.executeType,
             filename: command.filename,
             args: context.getScriptLaunchArgs?.(command.filename),
+            managedScripts: managedProcesses.home ?? [],
+            managedNetworkScripts: managedProcesses.network ?? [],
         };
     }
     if (command?.kind === "file") {

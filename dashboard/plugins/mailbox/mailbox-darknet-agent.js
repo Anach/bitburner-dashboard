@@ -102,7 +102,7 @@ class DarkNet {
     startProcess(file, threads, args) {
         if (!this.ns.scriptRunning(file, this.name)) {
             this.ns.scp(dnetFiles, this.name, "home");
-            const id = this.ns.exec(file, this.name, threads, args);
+            const id = this.ns.exec(file, this.name, { threads, temporary: true }, args);
             if (id == 0) { this.ns.print("Failed to exec " + file + " on " + this.name + " from " + this.host); }
             else { this.ns.print("Running " + file + " on " + this.name); }
             return id;

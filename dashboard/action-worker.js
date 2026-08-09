@@ -12,7 +12,7 @@ import {
     isProtectedFile,
     joinFilePath,
 } from "dashboard/libs/file-utils.js";
-import { restartHomeScript, startHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
+import { startHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": false
@@ -81,13 +81,38 @@ function killMatchingProcesses(ns, hosts, matcher, excludedPids = []) {
     return { killedCount, serverCount };
 }
 
+function stopManagedProcesses(ns, command) {
+    const homeScripts = new Set(command.managedScripts ?? []);
+    const networkScripts = new Set(command.managedNetworkScripts ?? []);
+    if (homeScripts.size === 0 && networkScripts.size === 0) return { killedCount: 0, serverCount: 0 };
+
+    const hosts = networkScripts.size > 0 ? getReachableServers(ns) : ["home"];
+    return killMatchingProcesses(ns, hosts, (filename, host) => {
+        if (filename === DASHBOARD_SCRIPT) return false;
+        return (host === "home" && homeScripts.has(filename)) || networkScripts.has(filename);
+    }, [ns.pid]);
+}
+
 function performScriptAction(ns, command) {
     const { actionId, filename, args } = command;
-    const result = actionId === SCRIPT_ACTION_IDS.START
-        ? startHomeScript(ns, filename, ...args)
-        : actionId === SCRIPT_ACTION_IDS.STOP
-            ? stopHomeScript(ns, filename)
-            : restartHomeScript(ns, filename, ...args);
+    let result;
+    let managedResult = { killedCount: 0, serverCount: 0 };
+    if (actionId === SCRIPT_ACTION_IDS.START) {
+        result = startHomeScript(ns, filename, ...args);
+    } else if (actionId === SCRIPT_ACTION_IDS.STOP) {
+        result = stopHomeScript(ns, filename);
+        managedResult = stopManagedProcesses(ns, command);
+        if (result.status === "not-running" && managedResult.killedCount > 0) result = { status: "stopped" };
+    } else {
+        const parentStop = stopHomeScript(ns, filename);
+        if (parentStop.status === "failed") {
+            result = { status: "failed-to-stop" };
+        } else {
+            managedResult = stopManagedProcesses(ns, command);
+            const parentStart = startHomeScript(ns, filename, ...args);
+            result = parentStart.status === "started" ? { ...parentStart, status: "restarted" } : parentStart;
+        }
+    }
     const labels = {
         missing: `Cannot ${actionId} ${filename} (missing file).`,
         started: `Started ${filename}.`,
@@ -99,14 +124,19 @@ function performScriptAction(ns, command) {
         failed: `Failed to ${actionId} ${filename}.`,
     };
     const ok = ["started", "stopped", "restarted", "already-running", "not-running"].includes(result.status);
+    const managedSuffix = managedResult.killedCount > 0
+        ? ` Stopped ${managedResult.killedCount} managed child process${managedResult.killedCount === 1 ? "" : "es"}.`
+        : "";
     return {
         ok,
         status: result.status,
-        message: labels[result.status] ?? `Failed to ${actionId} ${filename}.`,
+        message: (labels[result.status] ?? `Failed to ${actionId} ${filename}.`) + managedSuffix,
         tone: ["started", "stopped", "restarted"].includes(result.status) ? "success" : ok ? "info" : "warning",
         kind: "script",
         actionId,
         filename,
+        managedKilledCount: managedResult.killedCount,
+        managedServerCount: managedResult.serverCount,
         applyOptions: ["start", "restart"].includes(actionId) && ["started", "restarted", "already-running"].includes(result.status),
     };
 }

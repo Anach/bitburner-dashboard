@@ -9,6 +9,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
         { "type": "api", "id": "darknet", "required": false }
     ],
     "daemon": true,
+    "managedNetworkScripts": ["dashboard/plugins/mailbox/mailbox-reader.js", "dashboard/plugins/mailbox/mailbox-darknet-agent.js"],
     "panels": [
         { "id": "status", "label": "Status", "title": "Mailbox", "accent": "#ffd17a", "subtitle": "Message discovery and read-state tracking" }
     ],

@@ -33,7 +33,7 @@ export function createActionWorkerQueue({
         }
 
         ns.write(resultFile, "", "w");
-        const workerPid = ns.run(workerScript, 1, JSON.stringify(envelope));
+        const workerPid = ns.run(workerScript, { threads: 1, temporary: true }, JSON.stringify(envelope));
         if (!(workerPid > 0)) {
             complete(ns, { command: envelope.command }, {
                 ok: false,
