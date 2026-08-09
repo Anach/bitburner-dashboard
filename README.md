@@ -236,7 +236,7 @@ Options are stored with the dashboard configuration. The dashboard can send thei
     { "id": "notifications", "label": "Notifications", "optionKey": "notifications", "type": "checkbox" }
 ],
 "commands": {
-    "port": 23,
+    "port": 29,
     "optionBindings": [
         { "optionKey": "sampleInterval", "prefix": "SampleInterval:" },
         { "optionKey": "notifications", "trueValue": "Notifications:on", "falseValue": "Notifications:off" }

@@ -1,10 +1,9 @@
 import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
+import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": false
 };
-
-export const MAILBOX_FEED_PORT = 22;
 
 /** @param {NS} ns */
 export async function main(ns) {

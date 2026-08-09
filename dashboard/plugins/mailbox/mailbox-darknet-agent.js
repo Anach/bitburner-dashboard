@@ -1,4 +1,4 @@
-import { MAILBOX_FEED_PORT } from "dashboard/plugins/mailbox/mailbox-reader.js";
+import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {

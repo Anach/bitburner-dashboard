@@ -65,6 +65,7 @@ import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispat
 import { buildDashboardWorkerCommand as buildWorkerCommand } from "dashboard/libs/dashboard-worker-command.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
+import { NEXT_FREE_PORT, PORT_REGISTRY_ENTRIES } from "dashboard/libs/port-registry.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
@@ -188,6 +189,7 @@ const dashboardOptionsCache = { raw: null, services: null, value: null };
 const scriptCatalogEntryCache = new Map();
 let latestHomeProcessFilenames = new Set();
 let previousHomeProcessFilenames = new Set();
+let lastOptionReplayServiceRegistry = null;
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -1812,7 +1814,7 @@ function logMajorAction(ns, message, toastType = "info") {
     ns.toast(message, normalizedToastType, 4500);
 }
 
-function applyPersistedPluginOptions(ns, filename) {
+function applyPersistedPluginOptions(ns, filename, replayedIntegrationIds = null, persistedOptions = null) {
     // Matches either the integration's own paired script, or one of its managedScripts - a merged
     // integration's option-carrying siblings (faction-gangs.js, faction-manager-boost.js,
     // server-buyer-cloud.js, batcher-beginner.js, etc.) that are launched independently by the
@@ -1824,10 +1826,16 @@ function applyPersistedPluginOptions(ns, filename) {
     const integration = getDashboardServiceRegistry().services.find((service) => {
         return service.pluginFile === filename || service.pluginMetadata?.managedScripts?.includes(filename);
     })?.pluginMetadata;
-    if (!integration || Object.keys(integration.options ?? {}).length === 0) return;
-    applyPluginIntegrationOptions(ns, integration, loadDashboardOptions(ns), (tone, message) => {
+    if (!integration || Object.keys(integration.options ?? {}).length === 0) return false;
+
+    const replayId = integration.serviceId ?? integration.scriptPath ?? filename;
+    if (replayedIntegrationIds?.has(replayId)) return false;
+    replayedIntegrationIds?.add(replayId);
+
+    applyPluginIntegrationOptions(ns, integration, persistedOptions ?? loadDashboardOptions(ns), (tone, message) => {
         logMajorAction(ns, message, tone);
     }, { running: true });
+    return true;
 }
 
 function performScriptFileAction(ns, action, filename) {
@@ -1943,17 +1951,17 @@ const DASHBOARD_SERVICES = [
         description: "Controls dashboard-wide presentation and Script List visibility. Plugin discovery is unaffected.",
         alwaysVisible: true,
         defaultPanelId: "options",
-        // Start Order listed first so its button sits just above Options in the center column's
-        // panel selector - the reorderable list itself is too wide for that column, so it only
-        // gets a menu entry there; its actual content renders bespoke in the right column (see
-        // renderStandardServicePanel's start-order special-case) rather than through the generic
-        // getState/getInputs/getActions machinery, which has no concept of a reorderable list.
+        // Start Order and Port Registry are bespoke right-column views: the center column only
+        // supplies their sub-widget menu entries because neither a reorderable list nor a lookup
+        // table fits the generic getState/getInputs/getActions panel contract.
         subviews: [
             { id: "start-order", label: "Start Order" },
+            { id: "port-registry", label: "Port Registry" },
             { id: "options", label: "Options" },
         ],
         panelMeta: {
             "start-order": { title: "Service Start Order", accent: "#6cb4ff", subtitle: "Order the Integration Service Supervisor uses when RAM is scarce" },
+            "port-registry": { title: "Port Registry", accent: "#c084fc", subtitle: "Canonical Netscript IPC assignments" },
             options: { title: "Dashboard Options", accent: "#6cb4ff", subtitle: "Configure dashboard-wide behavior" },
         },
         getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
@@ -3008,6 +3016,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const rightColumnRef = React.useRef(null);
     const playerStatsColumnRef = React.useRef(null);
     const systemOverviewRef = React.useRef(null);
+    const startOrderSelectedRowRef = React.useRef(null);
     const dashboardViews = getDashboardViewRegistry().views;
     const serviceMenuGroups = getMenuGroups(options, pluginRequirements);
     const hideUnqualifiedPluginsMode = normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode);
@@ -4138,6 +4147,29 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         });
     const orderedServiceStartOrderRows = sortByServiceStartOrder(serviceStartOrderRows, options);
 
+    // Ref callbacks run before layout effects. The general column-scroll restoration effect near
+    // the top of this component therefore used to overwrite the selected row's scrollIntoView()
+    // on every render. Run the follow step in a later layout effect so restoration happens first,
+    // then move only the right-column scroller by the minimum amount needed to reveal the row.
+    React.useLayoutEffect(() => {
+        if (selectedItem !== "global.dashboardOptions" || selectedCenterPanel !== "start-order") return;
+        if (!uiState.startOrderSelectedServiceId) return;
+
+        const container = rightColumnRef.current;
+        const row = startOrderSelectedRowRef.current;
+        if (!container || !row || typeof container.getBoundingClientRect !== "function" || typeof row.getBoundingClientRect !== "function") return;
+
+        const containerBounds = container.getBoundingClientRect();
+        const rowBounds = row.getBoundingClientRect();
+        const edgePadding = 8;
+        if (rowBounds.top < containerBounds.top + edgePadding) {
+            container.scrollTop -= (containerBounds.top + edgePadding) - rowBounds.top;
+        } else if (rowBounds.bottom > containerBounds.bottom - edgePadding) {
+            container.scrollTop += rowBounds.bottom - (containerBounds.bottom - edgePadding);
+        }
+        rememberScroll("right", container.scrollTop);
+    }, [selectedItem, selectedCenterPanel, uiState.startOrderSelectedServiceId, options.serviceStartOrder]);
+
     const serviceSupervisorRunning = homeScripts.some((script) => {
         return script?.filename === SERVICE_SUPERVISOR_SCRIPT && script?.running;
     });
@@ -4613,13 +4645,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         {orderedServiceStartOrderRows.map((row, index) => (
                             <li
                                 key={row.serviceId}
-                                // block: "nearest" makes this a no-op once the row is already
-                                // visible, so it's safe to run on every render (including the
-                                // remount every dashboard tick brings) without fighting the user
-                                // if they manually scroll elsewhere - it only actually scrolls
-                                // right after a click/move takes the highlighted row offscreen.
                                 ref={row.serviceId === uiState.startOrderSelectedServiceId
-                                    ? (node) => node?.scrollIntoView({ block: "nearest" })
+                                    ? startOrderSelectedRowRef
                                     : null}
                                 style={{
                                     ...WIDGET_STYLES.item,
@@ -4699,6 +4726,66 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             );
         }
 
+        if (selectedItem === "global.dashboardOptions" && panelId === "port-registry") {
+            const headerCellStyle = {
+                padding: "7px 9px",
+                borderBottom: "1px solid rgba(125, 160, 212, 0.45)",
+                textAlign: "left",
+                fontSize: "11px",
+                fontWeight: 800,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+            };
+            const cellStyle = {
+                padding: "8px 9px",
+                borderBottom: "1px solid rgba(125, 160, 212, 0.18)",
+                verticalAlign: "top",
+            };
+
+            return (
+                <Card title="Port Registry" accent="#c084fc" subtitle="Canonical Netscript IPC assignments" widgetStyles={WIDGET_STYLES}>
+                    <div style={{ ...WIDGET_STYLES.smallMuted, marginBottom: "8px" }}>
+                        {PORT_REGISTRY_ENTRIES.length} assigned ports · Next free: {NEXT_FREE_PORT}
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", minWidth: "760px", borderCollapse: "collapse", tableLayout: "fixed" }}>
+                            <colgroup>
+                                <col style={{ width: "58px" }} />
+                                <col style={{ width: "225px" }} />
+                                <col style={{ width: "105px" }} />
+                                <col style={{ width: "90px" }} />
+                                <col />
+                            </colgroup>
+                            <thead>
+                                <tr data-dashboard-theme-role="data-heading">
+                                    <th style={headerCellStyle}>Port</th>
+                                    <th style={headerCellStyle}>Service / Constant</th>
+                                    <th style={headerCellStyle}>Channel</th>
+                                    <th style={headerCellStyle}>Repo</th>
+                                    <th style={headerCellStyle}>Owner</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {PORT_REGISTRY_ENTRIES.map((entry) => (
+                                    <tr key={entry.constant} data-dashboard-theme-role="data-row">
+                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, color: "#c084fc", fontWeight: 800, fontSize: "15px" }}>{entry.port}</td>
+                                        <td style={cellStyle}>
+                                            <div data-dashboard-theme-role="data-value" style={{ fontWeight: 700 }}>{entry.service}</div>
+                                            <div style={{ ...WIDGET_STYLES.smallMuted, marginTop: "2px", overflowWrap: "anywhere" }}>{entry.constant}</div>
+                                        </td>
+                                        <td data-dashboard-theme-role="data-value" style={cellStyle}>{entry.channel}</td>
+                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, textTransform: "uppercase", fontSize: "11px" }}>{entry.repo}</td>
+                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, overflowWrap: "anywhere" }}>{entry.owner}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Card>
+            );
+        }
+
         const fallbackMeta = {
             title: selectedService?.menuLabel ?? "Overview",
             accent: "#6ee7a8",
@@ -4742,7 +4829,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             actions,
             healthLevel: panelHealthLevel,
             healthSummary: panelHealthSummary,
-            description: isPluginOptionsPanel || isStandalonePanel ? "" : selectedService?.description ?? "",
+            description: isPluginOptionsPanel || isStandalonePanel
+                ? ""
+                : panelMeta?.description ?? selectedService?.description ?? "",
             actionsSectionKey: `${selectedItem}:${panelId}:actions`,
             actionsSectionLabel: "Script Controls",
             collapsibleActions: false,
@@ -5506,6 +5595,12 @@ export async function main(ns) {
         return;
     }
 
+    // These module-level sets support callbacks during a running dashboard, but each new main()
+    // invocation must perform its own initial option replay even if the game reuses module state.
+    latestHomeProcessFilenames = new Set();
+    previousHomeProcessFilenames = new Set();
+    lastOptionReplayServiceRegistry = null;
+
     setDashboardViewDragActiveState(false);
     rememberDashboardFileManagerRender("", "");
     rememberDashboardNetworkMapRender("", "");
@@ -5533,19 +5628,6 @@ export async function main(ns) {
 
         const cycleSnapshot = dashboardSnapshotCoordinator.collectCycle(ns);
         latestHomeProcessFilenames = new Set(cycleSnapshot.homeProcesses.map((process) => process.filename));
-        // Re-apply persisted options to any service that just started running by some means other
-        // than this dashboard's own Start button - autostart (service-supervisor.js), an external
-        // kill-all/relaunch, a crash respawn. Without this, a freshly (re)started script only ever
-        // gets re-primed via completeDashboardWorkerAction's applyOptions flag, which fires solely
-        // for a dashboard-initiated start action; anything else boots with its script-level
-        // hardcoded defaults and silently ignores whatever the user configured until some
-        // unrelated option edit happens to trigger the debounced auto-sync (confirmed real: gang
-        // equipment purchases proceeding under the default $0 min-funds gate after a full relaunch
-        // despite a much higher value already saved in the dashboard's options).
-        for (const filename of latestHomeProcessFilenames) {
-            if (!previousHomeProcessFilenames.has(filename)) applyPersistedPluginOptions(ns, filename);
-        }
-        previousHomeProcessFilenames = latestHomeProcessFilenames;
         const scriptCatalog = dashboardSnapshotCoordinator.getOrCreate(
             "script-catalog",
             cycleSnapshot.now,
@@ -5572,6 +5654,21 @@ export async function main(ns) {
         );
         homeScripts = applyPluginScriptMetadata(homeScripts, dashboardServiceRegistry);
         const persistedOptions = loadDashboardOptions(ns);
+        // Re-apply persisted options only after plugin discovery has populated the service
+        // registry. On a cold dashboard launch getDashboardServiceRegistry() otherwise falls back
+        // to the core-only registry, misses every plugin child, and the old process-set bookkeeping
+        // prevents a later retry. Sweep all running scripts whenever the discovered registry
+        // changes; on ordinary cycles, only prime newly started scripts. A service can match both
+        // its parent and managed children, so de-duplicate each integration within the sweep.
+        const serviceRegistryChanged = dashboardServiceRegistry !== lastOptionReplayServiceRegistry;
+        const replayedIntegrationIds = new Set();
+        for (const filename of latestHomeProcessFilenames) {
+            if (serviceRegistryChanged || !previousHomeProcessFilenames.has(filename)) {
+                applyPersistedPluginOptions(ns, filename, replayedIntegrationIds, persistedOptions);
+            }
+        }
+        previousHomeProcessFilenames = latestHomeProcessFilenames;
+        lastOptionReplayServiceRegistry = dashboardServiceRegistry;
         const layoutSnapshot = React
             ? syncDashboardTailLayout(ns, persistedOptions)
             : buildDashboardLayoutSnapshot({

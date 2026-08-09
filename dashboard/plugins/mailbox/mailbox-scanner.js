@@ -1,13 +1,12 @@
 import { discoverNetwork } from "dashboard/plugins/mailbox/topology.js";
-import { MAILBOX_FEED_PORT } from "dashboard/plugins/mailbox/mailbox-reader.js";
 import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
+import { MAILBOX_COMMAND_PORT, MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
 };
 
 const MAILBOX_STATE_JSON = "data/mailbox_state.json";
-const MAILBOX_COMMAND_PORT = 21;
 const READER_SCRIPT = "dashboard/plugins/mailbox/mailbox-reader.js";
 const DARKNET_AGENT_SCRIPT = "dashboard/plugins/mailbox/mailbox-darknet-agent.js";
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";

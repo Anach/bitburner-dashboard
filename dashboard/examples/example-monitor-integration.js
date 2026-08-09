@@ -83,7 +83,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
         }
     ],
     "commands": {
-        "port": 23,
+        "port": 29,
         "optionBindings": [
             { "optionKey": "sampleInterval", "prefix": "SampleInterval:" },
             { "optionKey": "notifications", "trueValue": "Notifications:on", "falseValue": "Notifications:off" }

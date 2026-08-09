@@ -123,6 +123,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
         }
 
         if (widget.type === "health") {
+            const useWideHealthLayout = effectiveColumnSpan > 1;
             const selectedServices = selectDashboardViewItems(healthServices, widget);
             const counts = selectedServices.reduce((result, service) => {
                 if (service.level === "danger") result.danger += 1;
@@ -134,21 +135,51 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 .filter((service) => service.level === "warn" || service.level === "danger")
                 .sort((left, right) => left.level === right.level ? left.label.localeCompare(right.label) : left.level === "danger" ? -1 : 1);
             const configuredAlertLimit = Math.floor(Number(widget.maxAlerts));
-            const alertLimit = Number.isFinite(configuredAlertLimit) ? Math.max(0, configuredAlertLimit) : 2;
+            const baseAlertLimit = Number.isFinite(configuredAlertLimit) ? Math.max(0, configuredAlertLimit) : 2;
+            const alertLimit = baseAlertLimit * (useWideHealthLayout ? 2 : 1);
             const visibleAlerts = alerts.slice(0, alertLimit);
             const hiddenAlertCount = Math.max(0, alerts.length - visibleAlerts.length);
+            const healthContentStyle = useWideHealthLayout
+                ? {
+                    display: "grid",
+                    gridTemplateColumns: "minmax(220px, 260px) minmax(0, 1fr)",
+                    gap: "12px",
+                    alignItems: "start",
+                }
+                : null;
+            const alertPaneStyle = useWideHealthLayout ? { minWidth: 0 } : null;
+            const alertListStyle = {
+                ...styles.homeAlertList,
+                ...(useWideHealthLayout
+                    ? {
+                        marginTop: 0,
+                        gridTemplateColumns: visibleAlerts.length > 1
+                            ? "repeat(2, minmax(0, 1fr))"
+                            : "minmax(0, 1fr)",
+                        alignContent: "start",
+                    }
+                    : {}),
+            };
+            const alertTextStyle = useWideHealthLayout
+                ? { minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+                : null;
             return <div key={widget.id} style={wrapperStyle}><HomePanel title={title} subtitle={subtitle} widgetStyles={styles}>
-                <HomeHealthRing counts={counts} />
-                <div style={styles.homeAlertList}>
-                    {visibleAlerts.length > 0 ? visibleAlerts.map((alert) => {
-                        const palette = getTonePalette(alert.level);
-                        return <div key={alert.id} style={{ ...styles.homeAlert, borderColor: palette.border }}>
-                            <span style={{ color: palette.accent, fontWeight: 800 }}>{alert.level === "danger" ? "!!" : "!"}</span>
-                            <span><span style={{ color: palette.accent }}>{alert.label}</span>{alert.summary ? ` — ${alert.summary}` : ""}</span>
-                        </div>;
-                    }) : <div style={{ ...styles.homeAlert, borderColor: "rgba(110, 231, 168, 0.2)", color: "#8ef0b5" }}>
-                        <span>✓</span><span>No warnings or danger alerts.</span>
-                    </div>}
+                <div style={healthContentStyle}>
+                    <HomeHealthRing counts={counts} />
+                    <div style={alertPaneStyle}>
+                        <div style={alertListStyle}>
+                            {visibleAlerts.length > 0 ? visibleAlerts.map((alert) => {
+                                const palette = getTonePalette(alert.level);
+                                const alertText = `${alert.label}${alert.summary ? ` — ${alert.summary}` : ""}`;
+                                return <div key={alert.id} title={useWideHealthLayout ? alertText : undefined} style={{ ...styles.homeAlert, borderColor: palette.border }}>
+                                    <span style={{ color: palette.accent, fontWeight: 800 }}>{alert.level === "danger" ? "!!" : "!"}</span>
+                                    <span style={alertTextStyle}><span style={{ color: palette.accent }}>{alert.label}</span>{alert.summary ? ` — ${alert.summary}` : ""}</span>
+                                </div>;
+                            }) : <div style={{ ...styles.homeAlert, borderColor: "rgba(110, 231, 168, 0.2)", color: "#8ef0b5" }}>
+                                <span>✓</span><span style={alertTextStyle}>No warnings or danger alerts.</span>
+                            </div>}
+                        </div>
+                    </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px" }}>
                     <div style={styles.homeMetricSource}>Dashboard</div>

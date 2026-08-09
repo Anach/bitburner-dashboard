@@ -1,5 +1,6 @@
 import { getCityLocations, CITY_NAMES, getLocationCatalogEntry } from "dashboard/plugins/network-map/city-locations.js";
 import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
+import { NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT } from "dashboard/libs/port-registry.js";
 
 // Disposable worker: exec'd by path (never imported) from network-navigator.js only after it
 // confirms Source-File 4 ownership via the cheap ns.getResetInfo() check. Deliberately has no
@@ -9,8 +10,8 @@ import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
 // Owns every ns.singularity.* call in this three-tier split: auto-connect execution, city travel,
 // and company rep/favor lookups. Drains its own command port (separate from the base script's, so
 // the two processes never race for the same port's messages) for the commands the frontend routes
-// here directly - see dashboard/plugins/network-map/network-view.js's "port": 25.
-const COMMAND_PORT = 25;
+// here directly - see dashboard/plugins/network-map/network-view.js's "port": 25 and
+// dashboard/libs/port-registry.js.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const TRAVEL_COST = 200_000;
 const OUTPUT_PATH = "data/network_navigator_singularity_stats.json";
@@ -209,8 +210,8 @@ export async function main(ns) {
     while (true) {
         const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
 
-        while (ns.peek(COMMAND_PORT) !== "NULL PORT DATA") {
-            const command = String(ns.readPort(COMMAND_PORT));
+        while (ns.peek(NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT) !== "NULL PORT DATA") {
+            const command = String(ns.readPort(NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT));
             const result = runNavigationCommand(ns, command, graph);
             if (!result) continue;
             lastCommand = result;

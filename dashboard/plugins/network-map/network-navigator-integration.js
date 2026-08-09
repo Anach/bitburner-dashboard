@@ -39,7 +39,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
         ]
     },
     "commands": {
-        "port": 20,
+        "port": 26,
         "requiresRuntime": true
     }
 };

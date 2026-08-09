@@ -438,8 +438,13 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
 
     const configuredOptions = getObject(options.configuredOptions);
     for (const field of integration?.status?.optionFields ?? []) {
+        if (typeof field?.panelId === "string" && typeof panelId === "string" && field.panelId !== panelId) continue;
         if (typeof field?.key !== "string" || !(field.key in configuredOptions)) continue;
-        lines.push({ label: field.label, value: String(configuredOptions[field.key]), tone: field.tone ?? "neutral" });
+        lines.push({
+            label: field.label,
+            value: formatTelemetryFieldValue(configuredOptions[field.key], field.format),
+            tone: field.tone ?? "neutral",
+        });
     }
 
     if (!stats || typeof stats !== "object") {

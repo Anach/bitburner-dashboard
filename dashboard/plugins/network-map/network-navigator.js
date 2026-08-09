@@ -3,6 +3,7 @@ import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
 import { startHomeScript } from "dashboard/libs/runtime-actions.js";
 import { formatXpSuitability } from "dashboard/plugins/network-map/xp-suitability.js";
 import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
+import { NETWORK_NAVIGATOR_COMMAND_PORT } from "dashboard/libs/port-registry.js";
 
 const SINGULARITY_REQUIREMENT = { type: "api", id: "singularity" };
 const FORMULAS_REQUIREMENT = { type: "program", id: "Formulas.exe" };
@@ -20,7 +21,15 @@ export const DASHBOARD_SCRIPT_METADATA = {
 // three separate processes.
 const FORMULAS_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-formulas.js";
 const SINGULARITY_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-singularity.js";
-const COMMAND_PORT = 20;
+// Was 20 (a local literal, not imported from the registry) - collided with
+// factions/faction-gangs.js's own GANG_COMMAND_PORT, since bitburner-scripts picked its ports
+// independently of this repo. Since ns.readPort() destructively drains whatever it reads
+// regardless of which script it belongs to, that collision meant every "EquipmentMinFunds:" (or
+// any other Faction Manager option) command had a coin-flip chance of being silently eaten by this
+// script's own drain loop instead of ever reaching faction-gangs.js - confirmed as the actual
+// cause of gang equipment purchases repeatedly ignoring a configured spending cap. Now imported
+// from dashboard/libs/port-registry.js, the single cross-repo source of truth this bug is why
+// exists - see docs/PORT_MAP.md (bitburner-scripts repo) for the full table.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const TRAVEL_COST = 200_000;
 // Workers publish on their own ~2s cadence too - anything older than this is treated as "worker
@@ -498,8 +507,8 @@ export async function main(ns) {
         if (formulasAvailable) startHomeScript(ns, FORMULAS_WORKER_SCRIPT);
         if (singularityAvailable) startHomeScript(ns, SINGULARITY_WORKER_SCRIPT);
 
-        while (ns.peek(COMMAND_PORT) !== "NULL PORT DATA") {
-            const command = String(ns.readPort(COMMAND_PORT));
+        while (ns.peek(NETWORK_NAVIGATOR_COMMAND_PORT) !== "NULL PORT DATA") {
+            const command = String(ns.readPort(NETWORK_NAVIGATOR_COMMAND_PORT));
             if (command.startsWith(SET_MODE_PREFIX)) {
                 const requestedMode = decodeTarget(command, SET_MODE_PREFIX);
                 if (requestedMode) activeModeId = requestedMode;
