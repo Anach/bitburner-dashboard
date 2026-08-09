@@ -292,7 +292,9 @@ export function applyPluginIntegrationCommand(ns, integration, command, logActio
         return;
     }
 
-    const port = Number(commandMetadata.port);
+    // Per-action override (see buildPluginIntegrationActions) for an integration whose merged
+    // components each still run their own independent command-drain loop on their own port.
+    const port = Number.isFinite(Number(context.port)) ? Number(context.port) : Number(commandMetadata.port);
     if (!Number.isFinite(port)) return;
     for (const prefixCommand of commandMetadata.beforeAction ?? []) ns.writePort(port, prefixCommand);
     ns.writePort(port, command);
@@ -378,6 +380,10 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
                 : action.inactiveTone ?? action.disabledTone ?? "danger"),
             kind: integration?.commands?.actionKind ?? "plugin-command",
             command: action.command ?? variant?.command ?? (enabled ? action.disableCommand : action.enableCommand),
+            // Per-action override for an integration whose merged components each still run their
+            // own independent command-drain loop on their own port - same rationale as
+            // optionBindings' port override below in applyPluginIntegrationOptions.
+            ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
             disabled: Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
             order: startingOrder + (Number(action.order) || index * 10),
         };

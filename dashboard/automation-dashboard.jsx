@@ -1508,7 +1508,7 @@ function applyQueuedDashboardActions(ns) {
                 integration,
                 command.command,
                 (tone, message) => logMajorAction(ns, message, tone),
-                { running: latestHomeProcessFilenames.has(integration?.scriptPath) }
+                { running: latestHomeProcessFilenames.has(integration?.scriptPath), port: command.port }
             );
         },
         dashboard: (command) => {
@@ -3477,6 +3477,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 kind: "plugin-command",
                 serviceId: action.serviceId,
                 command: action.command,
+                ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
             });
             return;
         }
