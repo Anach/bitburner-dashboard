@@ -85,9 +85,19 @@ function formatTelemetryFieldValue(value, format) {
     return String(value);
 }
 
-function buildTelemetryLine(stats, field, format = field.format) {
+export function buildPluginIntegrationTelemetryLine(stats, field, format) {
+    if (!field || typeof field !== "object" || typeof field.key !== "string" || typeof field.label !== "string") {
+        return null;
+    }
     const value = getTelemetryFieldValue(stats, field.key);
-    if (value === undefined) return null;
+    if (value === undefined) {
+        if (field?.emptyValue === undefined) return null;
+        return {
+            label: field.label,
+            value: String(field.emptyValue),
+            tone: field.emptyTone ?? "neutral",
+        };
+    }
 
     const toneValue = typeof field.toneKey === "string"
         ? getTelemetryFieldValue(stats, field.toneKey)
@@ -99,7 +109,7 @@ function buildTelemetryLine(stats, field, format = field.format) {
             : field.tone ?? "neutral";
     return {
         label: field.label,
-        value: formatTelemetryFieldValue(value, format),
+        value: formatTelemetryFieldValue(value, format ?? field.format),
         tone,
     };
 }
@@ -457,7 +467,7 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
         return typeof field?.panelId !== "string" || typeof panelId !== "string" || field.panelId === panelId;
     });
     for (const field of fields) {
-        const line = buildTelemetryLine(stats, field);
+        const line = buildPluginIntegrationTelemetryLine(stats, field);
         if (!line) continue;
         hasKnownStats = true;
         lines.push(line);
@@ -508,7 +518,7 @@ export function getPluginIntegrationOverviewLines(integration, stats, context = 
             const overviewField = typeof field.overviewValueKey === "string"
                 ? { ...field, key: field.overviewValueKey }
                 : field;
-            const line = buildTelemetryLine(stats, overviewField, field.overviewFormat ?? field.format);
+            const line = buildPluginIntegrationTelemetryLine(stats, overviewField, field.overviewFormat ?? field.format);
             if (!line) return null;
             // A stale tile doesn't show its last-known value at all, same as a graph's history
             // data getting zeroed out when offline (see getPluginIntegrationGraphs) - a plain

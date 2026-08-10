@@ -8,9 +8,8 @@ import { discoverNetwork } from "dashboard/libs/topology.js";
 // owned. network-navigator.js's own launcher loop is the only thing that should ever start this,
 // same pattern as hardware/server-manager/server-manager-cloud.js in the other repo.
 //
-// Publishes raw xpPerSecond numbers only, not the formatted "Selected/Eligible/Blocked" label -
-// network-navigator.js owns that formatting (via xp-suitability.js) since it's the one that knows
-// the live batcher-target selection state; this worker only ever knows the Formulas-precise score.
+// Publishes raw xpPerSecond numbers only. The Network Map descriptor owns presentation, while
+// optional viewTelemetry contributions can provide selection state independently of this worker.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const OUTPUT_PATH = "data/network_navigator_formulas_stats.json";
 

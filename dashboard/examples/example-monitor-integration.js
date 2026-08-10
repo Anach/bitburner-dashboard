@@ -24,6 +24,15 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "subtitle": "Recent values published by the runtime"
         }
     ],
+    "serviceTables": [
+        {
+            "targetServiceId": "global.portRegistry",
+            "tableId": "ports",
+            "rows": [
+                { "port": 29, "constant": "EXAMPLE_MONITOR_COMMAND_PORT", "service": "Example Monitor", "channel": "Example", "repo": "dashboard", "owner": "dashboard/examples/example-monitor-integration.js" }
+            ]
+        }
+    ],
     "options": {
         "sampleInterval": { "default": 5000, "type": "integer", "min": 1000 },
         "notifications": { "default": true, "type": "boolean" }

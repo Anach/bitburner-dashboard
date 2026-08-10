@@ -13,6 +13,16 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "panels": [
         { "id": "status", "label": "Status", "title": "Mail Client", "accent": "#ffd17a", "subtitle": "Message discovery and read-state tracking" }
     ],
+    "serviceTables": [
+        {
+            "targetServiceId": "global.portRegistry",
+            "tableId": "ports",
+            "rows": [
+                { "port": 27, "constant": "MAILBOX_COMMAND_PORT", "service": "Mail Client Scanner", "channel": "Command", "repo": "dashboard", "owner": "dashboard/plugins/mail-client/mail-client-scanner.js" },
+                { "port": 28, "constant": "MAILBOX_FEED_PORT", "service": "Mail Client Reader", "channel": "Internal feed", "repo": "dashboard", "owner": "mail-client-darknet-agent.js / mail-client-scanner.js -> mail-client-reader.js" }
+            ]
+        }
+    ],
     "telemetry": {
         "path": "data/mail_client_state.json",
         "fields": [

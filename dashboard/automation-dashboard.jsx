@@ -68,7 +68,6 @@ import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispat
 import { buildDashboardWorkerCommand as buildWorkerCommand } from "dashboard/libs/dashboard-worker-command.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
-import { NEXT_FREE_PORT, PORT_REGISTRY_ENTRIES } from "dashboard/libs/port-registry.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
     getDashboardFrameControlGroupStyle,
@@ -81,11 +80,15 @@ import {
 import { FileManagerView } from "dashboard/renderers/file-manager-view.jsx";
 import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/renderers/file-manager-snapshot.js";
 import { configureNetworkMapView, NetworkMapView } from "dashboard/renderers/network-map-view.jsx";
+import { applyDashboardViewTelemetry, applyDashboardViewTelemetryContributions } from "dashboard/libs/view-telemetry.js";
+import { applyDashboardServiceTelemetryContributions, getDashboardServiceTelemetryStateLines } from "dashboard/libs/service-telemetry.js";
+import { applyDashboardServiceTableContributions, getDashboardServiceTableSections } from "dashboard/libs/service-tables.js";
 import { configureDashboardShell, DashboardShell } from "dashboard/renderers/dashboard-shell.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import { MailClientView } from "dashboard/renderers/mail-client-view.jsx";
 import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
+import { configureDashboardTable, DashboardDataTable } from "dashboard/renderers/dashboard-table.jsx";
 import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
 import {
     configureSystemOverviewPanels,
@@ -159,9 +162,9 @@ const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
 const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
-const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v5";
-const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v4";
-const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v3";
+const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v7";
+const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v6";
+const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v4";
 const DASHBOARD_MENU_GROUP_REGISTRY_KEY = "__dashboard_menu_group_registry_v2";
 const DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY = "__dashboard_menu_group_registry_source_v2";
 const DASHBOARD_VIEW_INTERACTION_STATE_KEY = "__dashboard_view_interaction_state_v1";
@@ -1146,6 +1149,10 @@ function configureDashboardRenderers() {
         formatPercent: formatUtilizationPercent,
     });
 
+    configureDashboardTable({
+        getTheme: () => activeDashboardTheme,
+    });
+
     configureSystemOverviewPanels({
         getTheme: () => activeDashboardTheme,
         getStyles: () => WIDGET_STYLES,
@@ -1236,23 +1243,17 @@ function loadUiState() {
     const saved = globalThis[DASHBOARD_UI_STATE_KEY];
     if (!saved || typeof saved !== "object") return base;
 
-    const upgradedSelectedItem = (() => {
-        const selected = saved.selectedItem ?? base.selectedItem;
-        if (selected === "progression.actions" || selected === "progression.blocker" || selected === "progression.contracts") return "progression.overview";
-        if (selected === "scripts.control" || selected === "options.config") return "global.options";
-        if (selected === "stock.activity" || selected === "finances.stock") return "automation.stockTrader";
-        if (selected === "infra.capacity") return "hardware.home";
-        return selected;
-    })();
+    // No stale-id rename table needed here: a saved selectedItem/centerPanel that no longer
+    // matches any currently registered service/panel already falls back to the default generically
+    // below (getServiceById(...) check) and in resolveSelectedCenterPanel() (dashboard/libs/
+    // script-list.js) - menu/panel ids are metadata-driven now, so any old id is just "not found"
+    // rather than needing to be individually remembered and remapped.
+    const upgradedSelectedItem = saved.selectedItem ?? base.selectedItem;
 
     const upgradedCenterPanels = {
         ...base.centerPanels,
         ...(saved.centerPanels ?? {})
     };
-
-    if (upgradedCenterPanels["global.options"] === "scripts-list" || upgradedCenterPanels["global.options"] === "batcher") {
-        upgradedCenterPanels["global.options"] = base.centerPanels["global.options"];
-    }
 
     const savedExpandedGroups = saved.expandedGroups ?? {};
     const upgradedExpandedGroups = {
@@ -1986,22 +1987,14 @@ const DASHBOARD_SERVICES = [
                 },
             ];
         },
-        getState: ({ selectedCenterPanel, options, homeRamStatus, telemetryByServiceId }) => {
+        getState: ({ selectedCenterPanel, options, homeRamStatus }) => {
             if (selectedCenterPanel !== "infrastructure") return [];
-            // Cores piggybacks on Server Buyer's own telemetry (data/server_manager_stats.json,
-            // homeCores - already read into telemetryByServiceId once per tick for its own panel)
-            // rather than a direct ns.getServer("home") call here, which would be a flat +2GB tax on
-            // this always-running dashboard process just to read a number that only changes on a rare
-            // manual Singularity core upgrade. Trade-off: shows "-" until Server Buyer has run at
-            // least once (it publishes on every cycle regardless of whether upgrades are affordable).
-            const homeCores = telemetryByServiceId?.["automation.serverBuyer"]?.homeCores;
             return [
                 { label: "Transient Reserve", value: `${options.reservedHomeRam} GB`, tone: "info" },
                 { label: "Service RAM Limit", value: options.serviceStartupRamLimit > 0 ? `${options.serviceStartupRamLimit} GB` : "Unlimited", tone: "info" },
                 { label: "Used RAM", value: formatRam(homeRamStatus.used), tone: getRamHealthLevel(homeRamStatus) },
                 { label: "Total RAM", value: formatRam(homeRamStatus.total), tone: "neutral" },
                 { label: "Utilization", value: formatUtilizationPercent(homeRamStatus.ratio), tone: getRamHealthLevel(homeRamStatus) },
-                { label: "Cores", value: Number.isFinite(homeCores) ? String(homeCores) : "-", tone: "neutral", sourceLabel: "Server Buyer" },
             ];
         },
     },
@@ -2013,17 +2006,14 @@ const DASHBOARD_SERVICES = [
         description: "Controls dashboard-wide presentation and Script List visibility. Plugin discovery is unaffected.",
         alwaysVisible: true,
         defaultPanelId: "options",
-        // Start Order and Port Registry are bespoke right-column views: the center column only
-        // supplies their sub-widget menu entries because neither a reorderable list nor a lookup
-        // table fits the generic getState/getInputs/getActions panel contract.
+        // Start Order is a bespoke right-column view: the center column only supplies its
+        // sub-widget menu entry because a reorderable list doesn't fit the generic panel contract.
         subviews: [
             { id: "start-order", label: "Start Order" },
-            { id: "port-registry", label: "Port Registry" },
             { id: "options", label: "Options" },
         ],
         panelMeta: {
             "start-order": { title: "Service Start Order", accent: "#6cb4ff", subtitle: "Order the Integration Service Supervisor uses when RAM is scarce" },
-            "port-registry": { title: "Port Registry", accent: "#c084fc", subtitle: "Canonical Netscript IPC assignments" },
             options: { title: "Dashboard Options", accent: "#6cb4ff", subtitle: "Configure dashboard-wide behavior" },
         },
         getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
@@ -2391,16 +2381,17 @@ function rebuildDashboardViewRegistry(ns, homeScripts = []) {
         };
     }
 
-    const contributedDefinitions = applyDashboardViewWidgetContributions(
-        definitions,
-        getDashboardServiceRegistry().services
+    const services = getDashboardServiceRegistry().services;
+    const contributedDefinitions = applyDashboardViewTelemetryContributions(
+        applyDashboardViewWidgetContributions(definitions, services),
+        services
     );
     const definitionSignature = JSON.stringify(contributedDefinitions);
-    const previous = globalThis.__dashboard_view_registry_source_v3;
+    const previous = globalThis.__dashboard_view_registry_source_v4;
     if (previous?.signature === definitionSignature && previous.registry) return previous.registry;
     const registry = validateDashboardViews(contributedDefinitions);
     globalThis[DASHBOARD_VIEW_REGISTRY_KEY] = registry;
-    globalThis.__dashboard_view_registry_source_v3 = { signature: definitionSignature, registry };
+    globalThis.__dashboard_view_registry_source_v4 = { signature: definitionSignature, registry };
     return registry;
 }
 
@@ -2479,7 +2470,10 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const pluginIds = new Set(pluginServices.map((service) => service.id));
     const coreServices = DASHBOARD_SERVICES.filter((service) => !pluginIds.has(service.id));
     const mergedServices = [...coreServices, ...pluginServices];
-    const registry = validateDashboardServices(mergedServices);
+    const contributedServices = applyDashboardServiceTableContributions(
+        applyDashboardServiceTelemetryContributions(mergedServices)
+    );
+    const registry = validateDashboardServices(contributedServices);
     setDashboardServiceRegistry(registry);
     globalThis[DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY] = { signature: definitionSignature, registry };
     logServiceRegistryIssues(registry);
@@ -2551,21 +2545,19 @@ function getServiceActions(service, context) {
 }
 
 function getServiceState(service, context) {
-    if (typeof service?.getState !== "function") {
-        return [];
-    }
-
-    const stateLines = service.getState(context);
-    return Array.isArray(stateLines) ? stateLines : [];
+    const stateLines = typeof service?.getState === "function" ? service.getState(context) : [];
+    return [
+        ...(Array.isArray(stateLines) ? stateLines : []),
+        ...getDashboardServiceTelemetryStateLines(service, context),
+    ];
 }
 
 function getServiceSections(service, context) {
-    if (typeof service?.getSections !== "function") {
-        return [];
-    }
-
-    const sections = service.getSections(context);
-    return Array.isArray(sections) ? sections : [];
+    const sections = typeof service?.getSections === "function" ? service.getSections(context) : [];
+    return [
+        ...(Array.isArray(sections) ? sections : []),
+        ...getDashboardServiceTableSections(service, context),
+    ];
 }
 
 function getServiceInputs(service, context) {
@@ -3310,6 +3302,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const selectedItem = uiState.selectedItem;
     const activeView = getDashboardViewRegistry().byId.get(uiState.activeViewId) ?? null;
     const dashboardServiceRegistry = getDashboardServiceRegistry();
+    const activeViewTelemetry = activeView
+        ? applyDashboardViewTelemetry(
+            telemetryByServiceId?.[activeView?.data?.serviceId] ?? null,
+            activeView,
+            telemetryByServiceId
+        )
+        : null;
     const playerHudDefinitions = buildDashboardHudDefinition(dashboardServiceRegistry.services, telemetryByServiceId);
     const playerStatsEnabled = isServiceVisibleInMenu("system.playerStatus", options);
     const pluginDashboardOptionInputs = buildPluginDashboardOptionInputs(dashboardServiceRegistry.services, options);
@@ -4013,6 +4012,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 scriptPath={selectedService?.pluginFile ?? ""}
                             />
                         );
+                    }
+
+                    if (section.type === "table") {
+                        return <DashboardDataTable
+                            key={`table-${section.id ?? index}`}
+                            section={section}
+                            widgetStyles={WIDGET_STYLES}
+                        />;
                     }
 
                     if (section.type === "items") {
@@ -4842,66 +4849,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             );
         }
 
-        if (selectedItem === "global.dashboardOptions" && panelId === "port-registry") {
-            const headerCellStyle = {
-                padding: "7px 9px",
-                borderBottom: "1px solid rgba(125, 160, 212, 0.45)",
-                textAlign: "left",
-                fontSize: "11px",
-                fontWeight: 800,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-            };
-            const cellStyle = {
-                padding: "8px 9px",
-                borderBottom: "1px solid rgba(125, 160, 212, 0.18)",
-                verticalAlign: "top",
-            };
-
-            return (
-                <Card title="Port Registry" accent="#c084fc" subtitle="Canonical Netscript IPC assignments" widgetStyles={WIDGET_STYLES}>
-                    <div style={{ ...WIDGET_STYLES.smallMuted, marginBottom: "8px" }}>
-                        {PORT_REGISTRY_ENTRIES.length} assigned ports · Next free: {NEXT_FREE_PORT}
-                    </div>
-                    <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", minWidth: "760px", borderCollapse: "collapse", tableLayout: "fixed" }}>
-                            <colgroup>
-                                <col style={{ width: "58px" }} />
-                                <col style={{ width: "225px" }} />
-                                <col style={{ width: "105px" }} />
-                                <col style={{ width: "90px" }} />
-                                <col />
-                            </colgroup>
-                            <thead>
-                                <tr data-dashboard-theme-role="data-heading">
-                                    <th style={headerCellStyle}>Port</th>
-                                    <th style={headerCellStyle}>Service / Constant</th>
-                                    <th style={headerCellStyle}>Channel</th>
-                                    <th style={headerCellStyle}>Repo</th>
-                                    <th style={headerCellStyle}>Owner</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {PORT_REGISTRY_ENTRIES.map((entry) => (
-                                    <tr key={entry.constant} data-dashboard-theme-role="data-row">
-                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, color: "#c084fc", fontWeight: 800, fontSize: "15px" }}>{entry.port}</td>
-                                        <td style={cellStyle}>
-                                            <div data-dashboard-theme-role="data-value" style={{ fontWeight: 700 }}>{entry.service}</div>
-                                            <div style={{ ...WIDGET_STYLES.smallMuted, marginTop: "2px", overflowWrap: "anywhere" }}>{entry.constant}</div>
-                                        </td>
-                                        <td data-dashboard-theme-role="data-value" style={cellStyle}>{entry.channel}</td>
-                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, textTransform: "uppercase", fontSize: "11px" }}>{entry.repo}</td>
-                                        <td data-dashboard-theme-role="data-value" style={{ ...cellStyle, overflowWrap: "anywhere" }}>{entry.owner}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </Card>
-            );
-        }
-
         const fallbackMeta = {
             title: selectedService?.menuLabel ?? "Overview",
             accent: "#6ee7a8",
@@ -5142,7 +5089,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ) : activeView?.renderer === "network-map" ? (
                 <NetworkMapView
                     view={activeView}
-                    telemetry={telemetryByServiceId?.[activeView?.data?.serviceId] ?? null}
+                    telemetry={activeViewTelemetry}
                     serviceStatus={serviceRuntimeById[activeView?.data?.serviceId] ?? null}
                     onCommand={(serviceId, command, port) => runServiceAction({
                         kind: "plugin-command",
@@ -5195,7 +5142,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ) : activeView?.renderer === "mail-client" ? (
                 <MailClientView
                     view={activeView}
-                    telemetry={telemetryByServiceId?.[activeView?.data?.serviceId] ?? null}
+                    telemetry={activeViewTelemetry}
                     dashboardTheme={dashboardTheme}
                     onCommand={(serviceId, command) => runServiceAction({
                         kind: "plugin-command",
@@ -5927,10 +5874,17 @@ export async function main(ns) {
                     || homeScripts.some((script) => script?.filename === activeNetworkMapService.pluginFile && script?.running),
             }
             : null;
+        const activeNetworkMapTelemetry = activeNetworkMapServiceId
+            ? applyDashboardViewTelemetry(
+                telemetryByServiceId?.[activeNetworkMapServiceId] ?? null,
+                activeDashboardView,
+                telemetryByServiceId
+            )
+            : null;
         const networkMapRenderSignature = activeNetworkMapServiceId
             ? getDashboardServiceScopedViewRenderSignature(
                 activeDashboardView.id,
-                telemetryByServiceId?.[activeNetworkMapServiceId] ?? null,
+                activeNetworkMapTelemetry,
                 activeNetworkMapServiceStatus,
                 activeDashboardTheme.signature,
                 `${layoutSnapshot.mode}:${layoutSnapshot.tailWidth}x${layoutSnapshot.tailHeight}`

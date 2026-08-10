@@ -67,8 +67,7 @@ export const DASHBOARD_VIEW_METADATA = {
             { "key": "growth", "label": "Current growth", "format": "number" },
             { "key": "currentlyBeingHacked", "label": "Currently being hacked?", "format": "boolean" },
             { "key": "contractCount", "label": "Number of contracts", "format": "number" },
-            { "key": "batchAssignment", "label": "Batch assignment" },
-            { "key": "xpSuitability", "label": "XP suitability" }
+            { "key": "xpPerSecondPerThread", "label": "XP suitability", "format": "xpSuitability", "rootKey": "hasRoot", "eligibleKey": "withinHackLevel", "selectedKey": "xpTarget", "requiredSkillKey": "requiredHackingSkill", "estimateKey": "xpScoreIsEstimate" }
         ],
         "city": [
             { "key": "locationTypes", "label": "Location type", "visibleKey": "isLocation" },
@@ -91,8 +90,6 @@ export const DASHBOARD_VIEW_METADATA = {
         "nodeFilters": [
             { "id": "rooted", "label": "Rooted", "key": "hasRoot", "accent": "#8ef0b5" },
             { "id": "backdoored", "label": "Backdoored", "key": "backdoorInstalled", "accent": "#6cb4ff" },
-            { "id": "money-targets", "label": "Money targets", "key": "moneyTarget", "accent": "#ffd17a" },
-            { "id": "xp-targets", "label": "XP targets", "key": "xpTarget", "accent": "#c084fc" },
             { "id": "contracts", "label": "Contracts", "key": "hasContract", "accent": "#ff7bd0" },
             { "id": "story", "label": "Story", "key": "story", "accent": "#f0a65a" }
         ]

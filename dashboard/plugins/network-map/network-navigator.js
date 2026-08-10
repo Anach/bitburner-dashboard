@@ -1,7 +1,6 @@
 import { CITY_NAMES, getCityLocations } from "dashboard/plugins/network-map/city-locations.js";
 import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
 import { startHomeScript } from "dashboard/libs/runtime-actions.js";
-import { formatXpSuitability } from "dashboard/plugins/network-map/xp-suitability.js";
 import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
 import { NETWORK_NAVIGATOR_COMMAND_PORT } from "dashboard/libs/port-registry.js";
 
@@ -38,10 +37,6 @@ const TRAVEL_COST = 200_000;
 // affiliations/faction-manager/faction-manager-boost.js's CORE_STATUS_STALE_AFTER_MS.
 const WORKER_STALE_AFTER_MS = 15000;
 const DATA_PATHS = {
-    batcherStatsJson: "data/hacking_ops_stats.json",
-    batcherMoneyStatsJson: "data/hacking_ops_money_stats.json",
-    batcherXpStatsJson: "data/hacking_ops_xp_stats.json",
-    batcherBalancedStatsJson: "data/hacking_ops_balanced_stats.json",
     networkNavigatorStatsJson: "data/network_navigator_stats.json",
     networkNavigatorFormulasStatsJson: "data/network_navigator_formulas_stats.json",
     networkNavigatorSingularityStatsJson: "data/network_navigator_singularity_stats.json",
@@ -76,18 +71,6 @@ function loadFreshWorkerData(ns, path) {
     return age <= WORKER_STALE_AFTER_MS ? data : null;
 }
 
-function collectTargetNames(snapshot, keys) {
-    const targets = new Set();
-    for (const key of keys) {
-        const values = snapshot?.[key];
-        if (!Array.isArray(values)) continue;
-        for (const value of values) {
-            if (typeof value === "string" && value) targets.add(value);
-        }
-    }
-    return targets;
-}
-
 function collectActiveHackTargets(ns, servers) {
     const targets = new Set();
     for (const host of servers) {
@@ -106,20 +89,10 @@ function collectActiveHackTargets(ns, servers) {
     return targets;
 }
 
-function getBatchAssignment(hostname, activeProfile, profitTargets, frontierTargets, xpTargets) {
-    const assignments = [];
-    const profitActive = activeProfile === "money" || activeProfile === "balanced";
-    const xpActive = activeProfile === "xp" || activeProfile === "balanced";
-    if (profitTargets.has(hostname)) assignments.push(profitActive ? "Profit (active)" : "Profit");
-    if (frontierTargets.has(hostname)) assignments.push(profitActive ? "Frontier (active)" : "Frontier");
-    if (xpTargets.has(hostname)) assignments.push(xpActive ? "XP (active)" : "XP");
-    return assignments.join(" / ") || "Unassigned";
-}
-
 // Cheap, no-Formulas estimate of the same quantity network-navigator-formulas.js computes
-// precisely via ns.formulas.hacking.* - used as the always-available baseline. Whichever number is
-// available gets run through the shared formatXpSuitability() so "Selected/Eligible/Blocked" stays
-// driven by this script's own live batcher-target/root/skill knowledge either way.
+// precisely via ns.formulas.hacking.* - used as the always-available baseline. The script
+// publishes the raw score and whether it is estimated; the Network Map descriptor owns display
+// formatting, and optional viewTelemetry contributions may add independent selection state.
 function estimateXpPerSecond(ns, server, player) {
     let weakenTime = Infinity;
     try {
@@ -311,17 +284,6 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
 function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastCommand, activeModeId, xpPerSecondByHost, companyProgressByCity, singularityLastCommand) {
     const player = ns.getPlayer();
     const hackingLevel = Number(player?.skills?.hacking) || 0;
-    const batcherStats = loadJsonFile(ns, DATA_PATHS.batcherStatsJson);
-    const moneyStats = loadJsonFile(ns, DATA_PATHS.batcherMoneyStatsJson);
-    const xpStats = loadJsonFile(ns, DATA_PATHS.batcherXpStatsJson);
-    const balancedStats = loadJsonFile(ns, DATA_PATHS.batcherBalancedStatsJson);
-    const activeProfile = String(batcherStats?.activeProfile ?? "");
-    const activeMoneyStats = activeProfile === "balanced" ? balancedStats : moneyStats;
-    const activeXpStats = activeProfile === "balanced" ? balancedStats : xpStats;
-    const profitTargets = collectTargetNames(activeMoneyStats, ["profitTargets", "overflowTargets"]);
-    const frontierTargets = collectTargetNames(activeMoneyStats, ["frontierTargets"]);
-    const moneyTargets = new Set([...profitTargets, ...frontierTargets]);
-    const xpTargets = collectTargetNames(activeXpStats, activeProfile === "balanced" ? ["xpTargets"] : ["targets"]);
     const activelyHackedTargets = collectActiveHackTargets(ns, graph.servers);
     let cloudServers = new Set();
     try {
@@ -354,7 +316,12 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
         const moneyAvailable = Number(server.moneyAvailable) || 0;
         const minimumSecurity = Number(server.minDifficulty) || 0;
         const currentSecurity = Number(server.hackDifficulty) || 0;
-        const selectedForXp = xpTargets.has(server.hostname);
+        // The formulas worker's precise score wins once it's running and fresh; otherwise fall
+        // back to the cheap non-Formulas estimate. Publish raw ingredients only; descriptor-driven
+        // view telemetry may augment the node without this plugin knowing which service supplied it.
+        const preciseXpPerSecond = xpPerSecondByHost?.[server.hostname];
+        const usingPreciseXpScore = Number.isFinite(preciseXpPerSecond);
+        const xpPerSecondPerThread = usingPreciseXpScore ? preciseXpPerSecond : estimateXpPerSecond(ns, server, player);
         return {
             id: server.hostname,
             hostname: server.hostname,
@@ -369,22 +336,12 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
             backdoorInstalled: Boolean(server.backdoorInstalled),
             purchased: Boolean(server.purchasedByPlayer),
             cloud: cloudServers.has(server.hostname),
-            moneyTarget: moneyTargets.has(server.hostname),
-            xpTarget: selectedForXp,
             hasContract,
             contractCount,
             story: STORY_SERVERS.has(server.hostname) || hasStoryFile,
             currentlyBeingHacked: activelyHackedTargets.has(server.hostname),
-            batchAssignment: getBatchAssignment(server.hostname, activeProfile, profitTargets, frontierTargets, xpTargets),
-            // The formulas worker's precise score wins once it's running and fresh; otherwise
-            // fall back to the cheap non-Formulas estimate. Either way, formatting (Selected vs
-            // Eligible vs Blocked) is decided here, from this script's own live state.
-            xpSuitability: (() => {
-                const preciseScore = xpPerSecondByHost?.[server.hostname];
-                const usingPreciseScore = Number.isFinite(preciseScore);
-                const xpPerSecond = usingPreciseScore ? preciseScore : estimateXpPerSecond(ns, server, player);
-                return formatXpSuitability(server, player, selectedForXp, xpPerSecond, usingPreciseScore ? "" : " (estimate)");
-            })(),
+            xpPerSecondPerThread,
+            xpScoreIsEstimate: !usingPreciseXpScore,
             connected: server.hostname === currentHost,
             withinHackLevel: requiredHackingSkill <= hackingLevel,
             directConnect: server.hostname === "home" || Boolean(server.backdoorInstalled) || Boolean(server.purchasedByPlayer),

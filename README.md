@@ -141,6 +141,10 @@ dashboard/integrations/example-monitor-integration.js
 
 If zero or multiple runtime files share the expected basename, the descriptor is skipped.
 
+A metadata-only service uses `"adapter": "static"` and `"daemon": false`. It does not pair with
+or start a runtime file; its descriptor alone creates the menu entry and panels. Static services
+are intended for reference/lookup surfaces assembled from generic descriptor contributions.
+
 ### Descriptor rules
 
 Every service descriptor must export this exact declaration:
@@ -185,7 +189,80 @@ Two optional fields control presentation without registering the category in das
 
 All descriptors contributing to the same category should declare the same label and optional order. Conflicts are reported in the browser console and resolved deterministically. Entries within each category sort alphabetically by their displayed label. An entry may set numeric `menuOrder`; lower values appear first, so `"menuOrder": -100` provides a simple top pin. Entries sharing an order remain alphabetical. **Software** and **Options** remain framework-pinned at the bottom of the menu; all other categories are metadata-driven.
 
-Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation.
+### Contributing telemetry to a full-window view
+
+An integration can use `viewTelemetry` to merge its own telemetry records into a collection owned by a full-window view. The source script publishes ready-to-display records; the dashboard only performs the descriptor-defined keyed merge and contains no knowledge of the contributing service:
+
+```js
+"viewTelemetry": [
+    {
+        "viewId": "network",
+        "sourcePath": "networkNodes",
+        "targetPath": "maps.network.nodes",
+        "sourceIdKey": "hostname",
+        "targetIdKey": "hostname",
+        "defaultValues": { "customAlert": false },
+        "fields": ["customAlert", { "sourceKey": "summary", "targetKey": "customSummary" }],
+        "metricSets": {
+            "network": [{ "key": "customSummary", "label": "Custom status" }]
+        },
+        "nodeFilters": [
+            { "id": "custom-alerts", "label": "Custom alerts", "key": "customAlert", "accent": "#ff7bd0" }
+        ]
+    }
+]
+```
+
+For that example the integration's normal telemetry JSON would contain `"networkNodes": [{ "hostname": "n00dles", "customAlert": true, "summary": "Investigate" }]`. `fields` may contain a field name copied as-is or an explicit `sourceKey`/`targetKey` mapping. `defaultValues`, `metricSets`, and `nodeFilters` are optional. Contributions disappear with their integration descriptor.
+
+### Contributing telemetry to another service panel
+
+An integration can use `serviceTelemetry` to add rows from its own telemetry snapshot to another service's normal status panel. This keeps the receiving service generic: it does not import the integration or name its service ID.
+
+```js
+"serviceTelemetry": [
+    {
+        "targetServiceId": "hardware.home",
+        "panelId": "infrastructure",
+        "fields": [
+            { "key": "homeCores", "label": "Cores", "format": "number", "tone": "neutral", "emptyValue": "-" }
+        ]
+    }
+]
+```
+
+Each field uses the normal telemetry-field `key`, `label`, `format`, and `tone` contract. `emptyValue` optionally keeps a placeholder row visible before telemetry exists, and `sourceLabel` can override the contributor's menu label used for attribution. Contributions disappear with their integration descriptor.
+
+### Contributing rows to another service table
+
+A target service declares a generic `tables[]` definition (columns, sorting, conflict key, and
+summary aggregates). Any installed integration can contribute rows through `serviceTables[]`
+without the target importing or naming the contributor:
+
+```js
+"serviceTables": [
+    {
+        "targetServiceId": "global.portRegistry",
+        "tableId": "ports",
+        "rows": [
+            {
+                "port": 31,
+                "constant": "MY_SERVICE_COMMAND_PORT",
+                "service": "My Service",
+                "channel": "Command",
+                "repo": "scripts",
+                "owner": "automation/my-service.js"
+            }
+        ]
+    }
+]
+```
+
+The framework merges and sorts rows using only the target's table definition. Repeated values of
+its `conflictKey` are highlighted and counted. Contributions disappear with their descriptor, so
+the table always represents the installed integration set.
+
+Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation. Use the `static` adapter for a menu service with panels but no Netscript process.
 
 ### Publish telemetry
 

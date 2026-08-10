@@ -869,7 +869,14 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                                         {formatNetworkMapMetric(
                                             getDashboardViewValue(selectedNode, metric.key),
                                             metric.secondaryKey ? getDashboardViewValue(selectedNode, metric.secondaryKey) : undefined,
-                                            metric.format
+                                            metric.format,
+                                            {
+                                                rooted: metric.rootKey ? Boolean(getDashboardViewValue(selectedNode, metric.rootKey)) : true,
+                                                eligible: metric.eligibleKey ? Boolean(getDashboardViewValue(selectedNode, metric.eligibleKey)) : true,
+                                                selected: metric.selectedKey ? Boolean(getDashboardViewValue(selectedNode, metric.selectedKey)) : false,
+                                                requiredSkill: metric.requiredSkillKey ? getDashboardViewValue(selectedNode, metric.requiredSkillKey) : 0,
+                                                estimated: metric.estimateKey ? Boolean(getDashboardViewValue(selectedNode, metric.estimateKey)) : false,
+                                            }
                                         )}
                                     </span>
                                 </React.Fragment>

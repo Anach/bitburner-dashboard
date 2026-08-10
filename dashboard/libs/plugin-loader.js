@@ -88,23 +88,28 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         if (!metadata) continue;
         if (metadata.enabled === false) continue;
         if (typeof metadata.adapter !== "string" || metadata.adapter.length === 0) continue;
+        if (metadata.adapter === "static" && metadata.daemon !== false) continue;
         const descriptorFilename = normalized.slice(normalized.lastIndexOf("/") + 1);
         const pluginName = descriptorFilename.slice(0, -DASHBOARD_PLUGIN_INTEGRATION_SUFFIX.length);
         if (!pluginName) continue;
-        const runtimeFilename = `${pluginName}.js`;
-        const runtimeCandidates = pluginDescriptor
-            ? [normalized.slice(0, normalized.lastIndexOf("/") + 1) + runtimeFilename]
-                .filter((filename) => normalizedFilenames.includes(filename))
-            : normalizedFilenames.filter((filename) => {
-                if (filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) return false;
-                if (excludedRuntimeFolders.some((folder) => filename === folder || filename.startsWith(`${folder}/`))) {
-                    return false;
-                }
-                return filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`);
-            });
-        if (runtimeCandidates.length !== 1) continue;
-        const scriptPath = runtimeCandidates[0];
-        if (!ns.fileExists(scriptPath, "home")) continue;
+        const metadataOnly = metadata.adapter === "static";
+        let scriptPath = "";
+        if (!metadataOnly) {
+            const runtimeFilename = `${pluginName}.js`;
+            const runtimeCandidates = pluginDescriptor
+                ? [normalized.slice(0, normalized.lastIndexOf("/") + 1) + runtimeFilename]
+                    .filter((filename) => normalizedFilenames.includes(filename))
+                : normalizedFilenames.filter((filename) => {
+                    if (filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) return false;
+                    if (excludedRuntimeFolders.some((folder) => filename === folder || filename.startsWith(`${folder}/`))) {
+                        return false;
+                    }
+                    return filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`);
+                });
+            if (runtimeCandidates.length !== 1) continue;
+            scriptPath = runtimeCandidates[0];
+            if (!ns.fileExists(scriptPath, "home")) continue;
+        }
         const normalizedMetadata = { ...metadata, scriptPath };
 
         discovered.push({

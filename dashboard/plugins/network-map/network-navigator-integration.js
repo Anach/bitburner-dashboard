@@ -12,6 +12,16 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "panels": [
         { "id": "status", "label": "Status", "title": "Network Telemetry", "accent": "#6ee7a8", "subtitle": "Known server topology, city locations, and navigation capability" }
     ],
+    "serviceTables": [
+        {
+            "targetServiceId": "global.portRegistry",
+            "tableId": "ports",
+            "rows": [
+                { "port": 25, "constant": "NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT", "service": "Network Navigator - Singularity", "channel": "Command", "repo": "dashboard", "owner": "dashboard/plugins/network-map/network-navigator-singularity.js" },
+                { "port": 26, "constant": "NETWORK_NAVIGATOR_COMMAND_PORT", "service": "Network Navigator", "channel": "Command", "repo": "dashboard", "owner": "dashboard/plugins/network-map/network-navigator.js" }
+            ]
+        }
+    ],
     "telemetry": {
         "path": "data/network_navigator_stats.json",
         "overviewGauges": [
