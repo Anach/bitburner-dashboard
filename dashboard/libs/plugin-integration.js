@@ -339,10 +339,26 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
     return (integration?.inputs ?? []).map((rawInput) => {
         const input = getObject(rawInput);
         const optionKey = input.optionKey;
-        const minimum = Math.max(1, Math.floor(Number(input.min) || 1));
-        const fallbackMaximum = Math.max(minimum, Math.floor(Number(safeOptions[optionKey]) || minimum));
-        const statsMaximum = Math.floor(Number(safeStats[input.maximumStatsKey]));
-        const configuredMaximum = Math.floor(Number(input.max));
+        const optionDefinition = getObject(getObject(integration?.options)[optionKey]);
+        const integerInput = optionDefinition.type === "integer";
+        const normalizeNumeric = (value) => integerInput ? Math.floor(value) : value;
+        const configuredMinimum = Number(input.min);
+        const minimum = Number.isFinite(configuredMinimum)
+            ? (integerInput ? Math.ceil(configuredMinimum) : configuredMinimum)
+            : (integerInput ? 1 : 0);
+        const configuredStep = Number(input.step);
+        const step = Number.isFinite(configuredStep) && configuredStep > 0
+            ? configuredStep
+            : integerInput ? 1 : "any";
+        const currentOptionValue = Number(safeOptions[optionKey]);
+        const fallbackMaximum = Math.max(
+            minimum,
+            Number.isFinite(currentOptionValue) ? normalizeNumeric(currentOptionValue) : minimum
+        );
+        const rawStatsMaximum = Number(safeStats[input.maximumStatsKey]);
+        const statsMaximum = Number.isFinite(rawStatsMaximum) ? normalizeNumeric(rawStatsMaximum) : NaN;
+        const rawConfiguredMaximum = Number(input.max);
+        const configuredMaximum = Number.isFinite(rawConfiguredMaximum) ? normalizeNumeric(rawConfiguredMaximum) : NaN;
         const hasDynamicMaximum = typeof input.maximumStatsKey === "string";
         const maximum = Number.isFinite(statsMaximum) && statsMaximum >= minimum
             ? statsMaximum
@@ -352,11 +368,12 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
                     ? fallbackMaximum
                     : null;
         const rawValue = safeOptions[optionKey];
+        const parsedValue = Number(rawValue);
+        const fallbackValue = maximum ?? minimum;
+        const normalizedValue = Number.isFinite(parsedValue) ? normalizeNumeric(parsedValue) : fallbackValue;
         const numericValue = String(rawValue).toLowerCase() === "max"
             ? (maximum ?? fallbackMaximum)
-            : Math.max(minimum, maximum === null
-                ? Math.floor(Number(rawValue) || minimum)
-                : Math.min(maximum, Math.floor(Number(rawValue) || maximum)));
+            : Math.max(minimum, maximum === null ? normalizedValue : Math.min(maximum, normalizedValue));
         const inputLocked = locked && input.lockWhenIntegrationLocked;
         const lockSuffix = inputLocked ? " (LOCKED)" : "";
         const label = input.showRange && context.includeRanges
@@ -370,7 +387,7 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
             type: input.type,
             value: inputLocked ? (input.lockedValue === "maximum" ? maximum : input.lockedValue) : (input.type === "number" ? numericValue : rawValue),
             ...(Array.isArray(input.values) ? { options: input.values } : {}),
-            ...(input.type === "number" ? { min: minimum, ...(maximum === null ? {} : { max: maximum }) } : {}),
+            ...(input.type === "number" ? { min: minimum, step, ...(maximum === null ? {} : { max: maximum }) } : {}),
             disabled: Boolean(inputLocked),
         };
     });

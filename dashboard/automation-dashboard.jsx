@@ -3924,6 +3924,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             value={input.value}
                             min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
                             max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
+                            step={input.type === "number" ? (input.step ?? "any") : undefined}
                             disabled={Boolean(input.disabled)}
                             onFocus={() => setOptionsInputFocus(true)}
                             onBlur={() => setOptionsInputFocus(false)}
