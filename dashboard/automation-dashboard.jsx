@@ -2001,7 +2001,7 @@ const DASHBOARD_SERVICES = [
                 { label: "Used RAM", value: formatRam(homeRamStatus.used), tone: getRamHealthLevel(homeRamStatus) },
                 { label: "Total RAM", value: formatRam(homeRamStatus.total), tone: "neutral" },
                 { label: "Utilization", value: formatUtilizationPercent(homeRamStatus.ratio), tone: getRamHealthLevel(homeRamStatus) },
-                { label: "Cores", value: Number.isFinite(homeCores) ? String(homeCores) : "-", tone: "neutral" },
+                { label: "Cores", value: Number.isFinite(homeCores) ? String(homeCores) : "-", tone: "neutral", sourceLabel: "Server Buyer" },
             ];
         },
     },
@@ -3964,7 +3964,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle} widgetStyles={WIDGET_STYLES}>
             <div style={WIDGET_STYLES.list}>
                 {stateLines.map((line) => (
-                    <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} />
+                    <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} />
                 ))}
             </div>
         </Card>
@@ -4709,7 +4709,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 {hasState ? (
                     <div style={WIDGET_STYLES.list}>
                         {stateLines.map((line) => (
-                            <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} />
+                            <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} />
                         ))}
                     </div>
                 ) : null}

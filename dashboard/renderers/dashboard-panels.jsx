@@ -41,7 +41,7 @@ export function Card({ title, accent, subtitle, children, widgetStyles }) {
     );
 }
 
-export function BadgeLine({ label, value, tone = "neutral" }) {
+export function BadgeLine({ label, value, tone = "neutral", sourceLabel }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
@@ -49,6 +49,7 @@ export function BadgeLine({ label, value, tone = "neutral" }) {
         <div data-dashboard-theme-role="data-row" style={{ ...styles.item, borderColor: tone === "success" ? "rgba(110, 231, 168, 0.25)" : tone === "warn" ? "rgba(255, 198, 92, 0.25)" : tone === "danger" ? "rgba(255, 122, 122, 0.25)" : "rgba(125, 160, 212, 0.12)" }}>
             <div data-dashboard-theme-role="data-heading" style={styles.itemTitle}>{label}</div>
             <div data-dashboard-theme-role="data-value" style={styles.itemDetail}>{value}</div>
+            {sourceLabel ? <div style={styles.homeMetricSource}>via {sourceLabel}</div> : null}
         </div>
     );
 }

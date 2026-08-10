@@ -21,7 +21,7 @@ export const DEFAULT_TAIL_HEIGHT = 900;
 export const DEFAULT_TAIL_TITLE_HEIGHT = 33;
 export const MINIMUM_TAIL_WIDTH = 150;
 export const MINIMUM_TAIL_HEIGHT = 33;
-export const MINIMIZED_TAIL_WIDTH = 190;
+export const MINIMIZED_TAIL_WIDTH = 200;
 export const MINIMIZED_TAIL_MARGIN = 12;
 
 export function normalizeDashboardWindowMode(value) {
