@@ -1,6 +1,114 @@
 import { isServiceVisibleInMenu, normalizeHideUnqualifiedPluginsMode } from "dashboard/libs/dashboard-options.js";
 import { isHiddenByQualificationMode } from "dashboard/libs/plugin-requirements.js";
 
+const DASHBOARD_MENU_GROUP_ID_PATTERN = /^[a-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)*$/;
+const DEFAULT_DYNAMIC_MENU_GROUP_ORDER = 500;
+export const DEFAULT_DASHBOARD_MENU_GROUP_ID = "general";
+
+export function normalizeDashboardMenuGroupId(value) {
+    const id = typeof value === "string" ? value.trim() : "";
+    return DASHBOARD_MENU_GROUP_ID_PATTERN.test(id) ? id : "";
+}
+
+export function resolveDashboardMenuGroupId(value) {
+    if (value == null) return DEFAULT_DASHBOARD_MENU_GROUP_ID;
+    if (typeof value !== "string") return "";
+    const rawId = value.trim();
+    return rawId ? normalizeDashboardMenuGroupId(rawId) : DEFAULT_DASHBOARD_MENU_GROUP_ID;
+}
+
+export function formatDashboardMenuGroupTitle(value) {
+    const id = normalizeDashboardMenuGroupId(value);
+    if (!id) return "";
+    return id
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+        .join(" ");
+}
+
+function finiteMenuGroupOrder(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function buildDashboardMenuGroupRegistry(services = [], views = [], pinnedGroups = []) {
+    const issues = [];
+    const candidatesById = new Map();
+    const ensureCandidate = (id) => {
+        const existing = candidatesById.get(id);
+        if (existing) return existing;
+        const candidate = {
+            id,
+            explicitTitles: new Set(),
+            explicitOrders: new Set(),
+            pinnedTitle: "",
+            pinnedOrder: null,
+        };
+        candidatesById.set(id, candidate);
+        return candidate;
+    };
+
+    for (const rawGroup of Array.isArray(pinnedGroups) ? pinnedGroups : []) {
+        const id = normalizeDashboardMenuGroupId(rawGroup?.id);
+        if (!id) {
+            issues.push(`Pinned menu group has invalid id: ${String(rawGroup?.id ?? "")}`);
+            continue;
+        }
+        const candidate = ensureCandidate(id);
+        candidate.pinnedTitle = typeof rawGroup?.title === "string" && rawGroup.title.trim()
+            ? rawGroup.title.trim()
+            : formatDashboardMenuGroupTitle(id);
+        candidate.pinnedOrder = finiteMenuGroupOrder(rawGroup?.order);
+    }
+
+    const contributions = [
+        ...(Array.isArray(services) ? services : []),
+        ...(Array.isArray(views) ? views : []),
+    ];
+    for (const contribution of contributions) {
+        const id = resolveDashboardMenuGroupId(contribution?.menuGroup);
+        if (!id) continue;
+        const candidate = ensureCandidate(id);
+        if (typeof contribution?.menuGroupLabel === "string" && contribution.menuGroupLabel.trim()) {
+            candidate.explicitTitles.add(contribution.menuGroupLabel.trim());
+        }
+        const order = finiteMenuGroupOrder(contribution?.menuGroupOrder);
+        if (order !== null) candidate.explicitOrders.add(order);
+    }
+
+    const groups = [...candidatesById.values()].map((candidate) => {
+        const titles = [...candidate.explicitTitles].sort((left, right) => left.localeCompare(right));
+        const orders = [...candidate.explicitOrders].sort((left, right) => left - right);
+        const conflictingTitles = candidate.pinnedTitle
+            ? titles.filter((title) => title !== candidate.pinnedTitle)
+            : titles.slice(1);
+        const conflictingOrders = candidate.pinnedOrder === null
+            ? orders.slice(1)
+            : orders.filter((order) => order !== candidate.pinnedOrder);
+        const selectedTitle = candidate.pinnedTitle || titles[0] || formatDashboardMenuGroupTitle(candidate.id);
+        const selectedOrder = candidate.pinnedOrder ?? orders[0] ?? DEFAULT_DYNAMIC_MENU_GROUP_ORDER;
+        if (conflictingTitles.length > 0) {
+            issues.push(`Menu group ${candidate.id} declares conflicting labels: ${titles.join(", ")}. Using ${selectedTitle}.`);
+        }
+        if (conflictingOrders.length > 0) {
+            issues.push(`Menu group ${candidate.id} declares conflicting order values: ${orders.join(", ")}. Using ${selectedOrder}.`);
+        }
+        return {
+            id: candidate.id,
+            title: selectedTitle,
+            order: selectedOrder,
+        };
+    }).sort((left, right) => {
+        if (left.order !== right.order) return left.order - right.order;
+        const titleOrder = left.title.localeCompare(right.title);
+        return titleOrder !== 0 ? titleOrder : left.id.localeCompare(right.id);
+    });
+
+    return { groups, byId: new Map(groups.map((group) => [group.id, group])), issues };
+}
+
 export function validateDashboardServices(services = [], menuGroupIds, strictMode = false) {
     const issues = [];
     const validServices = [];
@@ -20,8 +128,13 @@ export function validateDashboardServices(services = [], menuGroupIds, strictMod
             continue;
         }
         seenIds.add(service.id);
-        if (!(menuGroupIds instanceof Set) || !menuGroupIds.has(service.menuGroup)) {
-            issues.push(`Service ${service.id} references unknown menu group: ${service.menuGroup}`);
+        const menuGroup = resolveDashboardMenuGroupId(service.menuGroup);
+        if (!menuGroup) {
+            issues.push(`Service ${service.id} references invalid menu group: ${String(service.menuGroup ?? "")}`);
+            continue;
+        }
+        if (menuGroupIds instanceof Set && !menuGroupIds.has(menuGroup)) {
+            issues.push(`Service ${service.id} references unknown menu group: ${menuGroup}`);
             continue;
         }
         if (typeof service.menuLabel !== "string" || service.menuLabel.length === 0) {
@@ -46,7 +159,7 @@ export function validateDashboardServices(services = [], menuGroupIds, strictMod
                 if (strictMode) continue;
             }
         }
-        validServices.push(service);
+        validServices.push({ ...service, menuGroup });
     }
 
     return { services: validServices, byId: new Map(validServices.map((service) => [service.id, service])), issues };
@@ -58,7 +171,9 @@ export function validateDashboardViews(views = [], menuGroupIds, viewRenderers, 
     for (const view of views) {
         if (!view || typeof view !== "object") continue;
         if (typeof view.id !== "string" || !view.id || seenIds.has(view.id)) continue;
-        if (!(menuGroupIds instanceof Set) || !menuGroupIds.has(view.menuGroup)) continue;
+        const menuGroup = resolveDashboardMenuGroupId(view.menuGroup);
+        if (!menuGroup) continue;
+        if (menuGroupIds instanceof Set && !menuGroupIds.has(menuGroup)) continue;
         if (!(viewRenderers instanceof Set) || !viewRenderers.has(view.renderer)) continue;
         if (!Array.isArray(view.widgets)) continue;
         const widgetIds = new Set();
@@ -75,7 +190,7 @@ export function validateDashboardViews(views = [], menuGroupIds, viewRenderers, 
             return valid;
         });
         seenIds.add(view.id);
-        validViews.push({ ...view, widgets });
+        validViews.push({ ...view, menuGroup, widgets });
     }
     return { views: validViews, byId: new Map(validViews.map((view) => [view.id, view])) };
 }
@@ -113,16 +228,37 @@ export function getDefaultSelectedServiceId(services = [], menuGroups = []) {
     return services[0]?.id ?? "";
 }
 
+export function sortDashboardMenuItems(items = []) {
+    return [...items].sort((left, right) => {
+        const leftOrder = typeof left?.menuOrder === "number" && Number.isFinite(left.menuOrder)
+            ? left.menuOrder
+            : 0;
+        const rightOrder = typeof right?.menuOrder === "number" && Number.isFinite(right.menuOrder)
+            ? right.menuOrder
+            : 0;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        const labelOrder = String(left?.label ?? "").localeCompare(String(right?.label ?? ""));
+        return labelOrder !== 0
+            ? labelOrder
+            : String(left?.id ?? "").localeCompare(String(right?.id ?? ""));
+    });
+}
+
 export function buildDashboardMenuGroups(services = [], menuGroups = [], options = {}, pluginRequirements = {}) {
     const hideMode = normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode);
     return menuGroups.map((group) => ({
         id: group.id,
         title: group.title,
-        items: services
+        items: sortDashboardMenuItems(services
             .filter((service) => service.menuGroup === group.id && service.menuVisible !== false)
             .filter((service) => isServiceVisibleInMenu(service.id, options))
             .filter((service) => !isHiddenByQualificationMode(pluginRequirements?.[service.id], hideMode))
-            .map((service) => ({ id: service.id, label: service.menuLabel, alwaysVisible: Boolean(service.alwaysVisible) })),
+            .map((service) => ({
+                id: service.id,
+                label: service.menuLabel,
+                menuOrder: service.menuOrder,
+                alwaysVisible: Boolean(service.alwaysVisible),
+            }))),
     }));
 }
 

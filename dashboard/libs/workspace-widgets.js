@@ -1,6 +1,10 @@
 const DASHBOARD_WORKSPACE_WIDGET_TYPES = new Set(["player-stats"]);
 
-export function selectDashboardWorkspaceWidgets(services, selectedService, selectedItem) {
+export function selectDashboardWorkspaceWidgets(services, selectedService, selectedItem, activeView = null) {
+    // Full-window views own the complete dashboard surface. Do not derive workspace-widget
+    // visibility from the service that happened to be selected before the view was opened.
+    if (activeView) return [];
+
     const selectedMenuGroup = String(selectedService?.menuGroup ?? "");
     if (!selectedMenuGroup) return [];
 
@@ -11,6 +15,7 @@ export function selectDashboardWorkspaceWidgets(services, selectedService, selec
             if (!contribution || typeof contribution !== "object" || contribution.enabled === false) return [];
             if (typeof contribution.id !== "string" || !DASHBOARD_WORKSPACE_WIDGET_TYPES.has(contribution.type)) return [];
             if (Array.isArray(contribution.menuGroups) && !contribution.menuGroups.includes(selectedMenuGroup)) return [];
+            if (Array.isArray(contribution.excludeMenuGroups) && contribution.excludeMenuGroups.includes(selectedMenuGroup)) return [];
             if (Array.isArray(contribution.itemIds) && !contribution.itemIds.includes(selectedItem)) return [];
             return [{ ...contribution, contributionServiceId: service.id }];
         });

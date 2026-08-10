@@ -2,8 +2,8 @@ export const DASHBOARD_VIEW_METADATA = {
     "id": "mailbox",
     "renderer": "mailbox",
     "menuGroup": "software",
-    "menuLabel": "Mailbox",
-    "title": "Mailbox",
+    "menuLabel": "Mail Client",
+    "title": "Mail Client",
     "subtitle": "Messages, lore, and text files discovered across the network.",
     "widgets": [],
     "data": {

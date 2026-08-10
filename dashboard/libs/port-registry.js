@@ -26,6 +26,7 @@ export const HACKER_BUYER_COMMAND_PORT = 21; // hacker/hacker-buyer.js
 export const SERVER_BUYER_CORE_COMMAND_PORT = 22; // buyer/server-buyer-core.js
 export const FACTION_BOOST_COMMAND_PORT = 23; // factions/faction-manager-boost.js
 export const BATCHER_BEGINNER_COMMAND_PORT = 24; // batcher/profiles/batcher-beginner.js
+export const STOCK_TRADER_COMMAND_PORT = 30; // automation/stock-trader.js
 
 // bitburner-dashboard/*
 export const NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT = 25; // dashboard/plugins/network-map/network-navigator-singularity.js
@@ -53,6 +54,7 @@ export const PORT_REGISTRY_ENTRIES = Object.freeze([
     { port: MAILBOX_COMMAND_PORT, constant: "MAILBOX_COMMAND_PORT", service: "Mailbox Scanner", channel: "Command", repo: "dashboard", owner: "dashboard/plugins/mailbox/mailbox-scanner.js" },
     { port: MAILBOX_FEED_PORT, constant: "MAILBOX_FEED_PORT", service: "Mailbox Reader", channel: "Internal feed", repo: "dashboard", owner: "mailbox-darknet-agent.js / mailbox-scanner.js → mailbox-reader.js" },
     { port: EXAMPLE_MONITOR_COMMAND_PORT, constant: "EXAMPLE_MONITOR_COMMAND_PORT", service: "Example Monitor", channel: "Example", repo: "dashboard", owner: "dashboard/examples/example-monitor-integration.js" },
+    { port: STOCK_TRADER_COMMAND_PORT, constant: "STOCK_TRADER_COMMAND_PORT", service: "Stock Trader", channel: "Command", repo: "scripts", owner: "automation/stock-trader.js" },
 ]);
 
 export const NEXT_FREE_PORT = Math.max(...PORT_REGISTRY_ENTRIES.map((entry) => entry.port)) + 1;

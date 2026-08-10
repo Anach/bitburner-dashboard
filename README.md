@@ -37,7 +37,7 @@ Static RAM cost of each framework and included-plugin script, measured on Bitbur
 | Component | Static RAM | Notes |
 | --- | ---: | --- |
 | `dashboard/automation-dashboard.jsx` | 4.90 GB | Required. The dashboard itself. |
-| `dashboard/service-supervisor.js` | 4.30 GB | Required if any daemon integration is enabled. Supervises daemon start/restart. |
+| `dashboard/service-supervisor.js` | 4.50 GB | Required if any daemon integration is enabled. Supervises daemon start/restart. |
 | **Combined steady footprint** | **8.60 GB** | Dashboard + supervisor running together, the normal steady state. |
 | `dashboard/action-worker.js` | 8.50 GB | Transient only — a worker instance starts on demand for a script/kill/file action and exits immediately after, never part of the permanent footprint. |
 
@@ -90,7 +90,7 @@ You can substitute a shorter name such as `dash` if preferred:
 alias dash="run dashboard/automation-dashboard.jsx"
 ```
 
-The dashboard opens its own tail and prevents duplicate dashboard instances. By default it starts the integration supervisor automatically. To launch the dashboard process only, without starting the supervisor, use:
+The dashboard opens its own tail and prevents duplicate dashboard instances. Its native title bar includes a dashboard Restart control immediately before Bitburner's Stop button, including while minimized. Restart uses the same transient action-worker handoff as the in-dashboard action and preserves the current startup arguments. By default it starts the integration supervisor automatically. To launch the dashboard process only, without starting the supervisor, use:
 
 ```text
 run dashboard/automation-dashboard.jsx --no-auto-start
@@ -98,7 +98,11 @@ run dashboard/automation-dashboard.jsx --no-auto-start
 
 Dashboard Restart preserves whether `--no-auto-start` was active. Starting without the flag starts (or leaves alone, if already running) the supervisor. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, Player Stats visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
 
+To launch it before saved processes, set **Game Options → System → Autoexec Script + Args** to `dashboard/automation-dashboard.jsx` (or append `--no-auto-start` to suppress integration auto-start). Bitburner marks autoexec processes temporary and launches them before saved scripts. The dashboard treats this as an idempotent, silent launch: a restored duplicate exits without terminal output, the autoexec instance does not print its normal startup line, and stopping the daemon closes its tail so the next launch cannot leave a second window beside a stale stopped dashboard.
+
 The integration supervisor checks the `home` file list periodically and reuses parsed descriptors while that list is unchanged. Each active cycle uses one process snapshot to start or restart eligible integrations declared with `"daemon": true`; integrations declared with `"daemon": false` remain on demand. Every daemon integration has its own **Autostart** toggle (visible next to its Start/Stop/Restart actions), so individual services can be excluded without touching the command line. The supervisor exits when no enabled daemon integration is discovered. Selecting **Start integrations** in the Plugin List starts the supervisor again after it has been stopped or after a daemon integration is installed.
+
+**Home Server → Options** provides two independent supervisor safeguards. **Transient RAM Reserve** is the minimum free `home` RAM that must remain after each service launch, preserving capacity for the action worker and other on-demand processes. **Service Startup RAM Limit** caps the combined RAM of running service entry scripts represented in the Start Order list; already-running listed services count toward the cap, and lowering it does not stop them. Child processes and manually started non-service scripts are outside that aggregate. A value of `0` disables the corresponding safeguard.
 
 Runtime settings are written to:
 
@@ -172,18 +176,14 @@ The object must be valid JSON syntax inside the JavaScript export:
 - Do not add trailing commas or comments inside the object.
 - Keep runtime logic and Netscript calls in the runtime script.
 
-The dashboard currently accepts these `menuGroup` values:
+`menuGroup` dynamically creates the service or view's main-menu category. When omitted or blank it defaults to `general`, displayed as **General**. An explicit value must be a stable identifier beginning with a lowercase letter and may contain letters, numbers, `.`, `_`, or `-`; camel-case identifiers are also supported. For example, `"menuGroup": "reports"` creates **Reports**, and `"menuGroup": "systemReports"` creates **System Reports**. A category is rendered only while it contains at least one visible item.
 
-```text
-overview
-affiliations
-hacking
-finances
-hardware
-software
-automation
-globalOptions
-```
+Two optional fields control presentation without registering the category in dashboard core:
+
+- `menuGroupLabel` overrides the title inferred from `menuGroup`.
+- `menuGroupOrder` is an optional finite number used for ascending category order. Categories without one sort alphabetically by their displayed label.
+
+All descriptors contributing to the same category should declare the same label and optional order. Conflicts are reported in the browser console and resolved deterministically. Entries within each category sort alphabetically by their displayed label. An entry may set numeric `menuOrder`; lower values appear first, so `"menuOrder": -100` provides a simple top pin. Entries sharing an order remain alphabetical. **Software** and **Options** remain framework-pinned at the bottom of the menu; all other categories are metadata-driven.
 
 Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation.
 

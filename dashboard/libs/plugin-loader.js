@@ -34,7 +34,6 @@ export function discoverDashboardViews(ns, scriptFilenames = []) {
         const metadata = parseDashboardMetadataFromSource(sourceText, DASHBOARD_VIEW_METADATA_DECLARATION);
         if (!metadata || metadata.enabled === false) continue;
         if (typeof metadata.id !== "string" || metadata.id.length === 0) continue;
-        if (typeof metadata.menuGroup !== "string" || metadata.menuGroup.length === 0) continue;
         if (typeof metadata.menuLabel !== "string" || metadata.menuLabel.length === 0) continue;
         if (!Array.isArray(metadata.widgets)) continue;
 
@@ -113,7 +112,14 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
             integrationFile: normalized,
             adapter: metadata.adapter,
             serviceId: typeof metadata.serviceId === "string" ? metadata.serviceId : "",
-            menuGroup: typeof metadata.menuGroup === "string" ? metadata.menuGroup : "",
+            menuGroup: metadata.menuGroup,
+            menuGroupLabel: typeof metadata.menuGroupLabel === "string" ? metadata.menuGroupLabel : "",
+            menuGroupOrder: typeof metadata.menuGroupOrder === "number" && Number.isFinite(metadata.menuGroupOrder)
+                ? metadata.menuGroupOrder
+                : undefined,
+            menuOrder: typeof metadata.menuOrder === "number" && Number.isFinite(metadata.menuOrder)
+                ? metadata.menuOrder
+                : undefined,
             menuLabel: typeof metadata.menuLabel === "string" ? metadata.menuLabel : "",
             description: typeof metadata.description === "string" ? metadata.description : "",
             requirements: Array.isArray(metadata.requirements) ? metadata.requirements : [],
@@ -147,7 +153,10 @@ export function buildDashboardPluginServices(pluginDefinitions = [], adapterFact
         const service = {
             ...builtService,
             ...(plugin.serviceId ? { id: plugin.serviceId } : {}),
-            ...(plugin.menuGroup ? { menuGroup: plugin.menuGroup } : {}),
+            ...(plugin.menuGroup != null ? { menuGroup: plugin.menuGroup } : {}),
+            ...(plugin.menuGroupLabel ? { menuGroupLabel: plugin.menuGroupLabel } : {}),
+            ...(Number.isFinite(plugin.menuGroupOrder) ? { menuGroupOrder: plugin.menuGroupOrder } : {}),
+            ...(Number.isFinite(plugin.menuOrder) ? { menuOrder: plugin.menuOrder } : {}),
             ...(plugin.menuLabel ? { menuLabel: plugin.menuLabel } : {}),
             ...(plugin.description ? { description: plugin.description } : {}),
             requirements: plugin.requirements,

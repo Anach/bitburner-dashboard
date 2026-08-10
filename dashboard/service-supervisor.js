@@ -1,6 +1,10 @@
 import { areCapabilityRequirementsMet, buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
-import { isServiceAutostartEnabled, sortByServiceStartOrder } from "dashboard/libs/dashboard-options.js";
+import {
+    isServiceAutostartEnabled,
+    normalizeDashboardRamSetting,
+    sortByServiceStartOrder,
+} from "dashboard/libs/dashboard-options.js";
 import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -11,6 +15,7 @@ const SUPERVISOR_INTERVAL_MS = 30000;
 const EXCLUDED_RUNTIME_FOLDERS = ["dashboard", "libs", "trashbin"];
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
+const RAM_COMPARISON_EPSILON_GB = 1e-9;
 let cachedFileSignature = "";
 let cachedManagedServices = [];
 
@@ -25,13 +30,18 @@ function readDashboardOptions(ns) {
 }
 
 function reportLaunchIssue(ns, script, status, previousIssues) {
-    if (status === "reserved") {
-        // Not an error - a deliberate skip to protect the Reserved Home RAM headroom (see
-        // startManagedService). Quiet ns.print only (not tprint): this resolves itself once RAM
-        // frees up or the user reorders/disables something, so it shouldn't read as alarming as
-        // a real launch failure. Logged once per transition into this state, not every cycle.
+    const protectedSkipMessage = status === "reserved"
+        ? `starting it would use the Transient RAM Reserve`
+        : status === "service-limit"
+            ? `starting it would exceed the Service Startup RAM Limit`
+            : "";
+    if (protectedSkipMessage) {
+        // Not an error - a deliberate skip to enforce a configured Home RAM safeguard. Quiet
+        // ns.print only (not tprint): this resolves itself once RAM frees up or the user changes
+        // the order/settings, so it shouldn't read as alarming as a real launch failure. Logged
+        // once per transition into this state, not every cycle.
         if (previousIssues.get(script) !== status) {
-            ns.print(`[LIFECYCLE] Skipped ${script}: starting it would drop free home RAM below the Reserved Home RAM setting.`);
+            ns.print(`[LIFECYCLE] Skipped ${script}: ${protectedSkipMessage}.`);
             previousIssues.set(script, status);
         }
         return;
@@ -101,19 +111,71 @@ function discoverBareDaemonScripts(ns, normalizedFiles, managedFilenames) {
     return candidates;
 }
 
-function startManagedService(ns, service, runningFiles, reservedHomeRamGb) {
+export function calculateRunningManagedServiceRam(services, processes, getScriptRam) {
+    const managedFilenames = new Set(
+        (Array.isArray(services) ? services : [])
+            .map((service) => service?.filename)
+            .filter((filename) => typeof filename === "string" && filename.length > 0)
+    );
+    if (managedFilenames.size === 0 || typeof getScriptRam !== "function") return 0;
+
+    let totalRamGb = 0;
+    for (const process of Array.isArray(processes) ? processes : []) {
+        if (!managedFilenames.has(process?.filename)) continue;
+        const threads = Number(process?.threads);
+        const scriptRamGb = Number(getScriptRam(process.filename));
+        if (!(threads > 0) || !(scriptRamGb > 0)) continue;
+        totalRamGb += threads * scriptRamGb;
+    }
+    return totalRamGb;
+}
+
+export function getServiceLaunchRamStatus({
+    scriptRamGb,
+    freeHomeRamGb,
+    reservedHomeRamGb,
+    runningManagedServiceRamGb,
+    serviceStartupRamLimitGb,
+}) {
+    if (!(scriptRamGb > 0)) return "allowed";
+    if (
+        serviceStartupRamLimitGb > 0
+        && runningManagedServiceRamGb + scriptRamGb - serviceStartupRamLimitGb > RAM_COMPARISON_EPSILON_GB
+    ) {
+        return "service-limit";
+    }
+    if (
+        reservedHomeRamGb > 0
+        && reservedHomeRamGb - (freeHomeRamGb - scriptRamGb) > RAM_COMPARISON_EPSILON_GB
+    ) {
+        return "reserved";
+    }
+    return "allowed";
+}
+
+function startManagedService(ns, service, runningFiles, ramLimits) {
     const script = service.filename;
     if (runningFiles.has(script)) return { status: "already-running" };
 
-    // Checked fresh (not pre-computed once per cycle) so each successive start in the same pass
-    // sees the real, already-reduced headroom left by every service started earlier in this same
-    // cycle - starting service #1 changes what's actually safe to start for service #2.
-    if (reservedHomeRamGb > 0) {
-        const scriptRam = ns.getScriptRam(script, "home");
-        const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-        if (scriptRam > 0 && freeRam - scriptRam < reservedHomeRamGb) {
-            return { status: "reserved" };
-        }
+    const reservedHomeRamGb = ramLimits?.reservedHomeRamGb ?? 0;
+    const serviceStartupRamLimitGb = ramLimits?.serviceStartupRamLimitGb ?? 0;
+    const ramLimitsEnabled = reservedHomeRamGb > 0 || serviceStartupRamLimitGb > 0;
+    const scriptRamGb = ramLimitsEnabled ? ramLimits.getScriptRam(script) : 0;
+    // Free RAM is checked fresh so each successive start sees the headroom consumed by services
+    // started earlier in this pass. The aggregate service total is maintained separately because
+    // it must also include listed services that were already running when this cycle began.
+    const freeHomeRamGb = reservedHomeRamGb > 0
+        ? ns.getServerMaxRam("home") - ns.getServerUsedRam("home")
+        : Number.POSITIVE_INFINITY;
+    const ramStatus = getServiceLaunchRamStatus({
+        scriptRamGb,
+        freeHomeRamGb,
+        reservedHomeRamGb,
+        runningManagedServiceRamGb: ramLimits?.runningManagedServiceRamGb ?? 0,
+        serviceStartupRamLimitGb,
+    });
+    if (ramStatus !== "allowed") {
+        return { status: ramStatus, scriptRamGb };
     }
 
     const args = Array.isArray(service.metadata?.launchArgs) ? service.metadata.launchArgs : [];
@@ -122,7 +184,7 @@ function startManagedService(ns, service, runningFiles, reservedHomeRamGb) {
 
     runningFiles.add(script);
     ns.print(`[LIFECYCLE] Started ${script}.`);
-    return { status: "started", pid };
+    return { status: "started", pid, scriptRamGb };
 }
 
 /** @param {NS} ns */
@@ -153,21 +215,30 @@ export async function main(ns) {
             continue;
         }
 
-        const runningFiles = new Set((ns.ps("home") ?? []).map((process) => process.filename));
+        const runningProcesses = ns.ps("home") ?? [];
+        const runningFiles = new Set(runningProcesses.map((process) => process.filename));
         const capabilities = buildCapabilitySnapshot(ns);
         const options = readDashboardOptions(ns);
-        // A service that fails ns.run() (out of RAM, exec error, etc.) just gets logged and
-        // retried next cycle in the same order - no RAM-awareness beyond that. Letting the user
-        // set an explicit order (persisted via the dashboard's Service Start Order UI) is how a
-        // cheap/important daemon can be made to win the RAM race ahead of an expensive one when
-        // free RAM is scarce.
+        // The persisted order is the admission order for every eligible autostart service. This
+        // lets cheap or important daemons win limited Home capacity ahead of expensive ones; any
+        // launch blocked by a configured RAM safeguard is retried in the same order next cycle.
         const orderedServices = sortByServiceStartOrder(services, options);
-        // Reserved Home RAM (same option the Dashboard Options UI already exposes) additionally
-        // stops the supervisor from greedily consuming every last GB: on-demand, transient work
-        // like dashboard/action-worker.js (~8.5GB) has nowhere to run if autostart daemons have
-        // already claimed the entire home server between them. Defaults to 0 (today's prior
-        // behavior - no reservation) unless the user opts in with a higher value.
-        const reservedHomeRamGb = Number(options.reservedHomeRam) || 0;
+        // The transient reserve protects free Home capacity, while the service limit bounds the
+        // aggregate RAM of service entry scripts represented in the Start Order list. Both are
+        // disabled at 0 for backward compatibility. Existing services count toward the aggregate
+        // limit so the 30-second supervisor loop cannot bypass the cap one launch at a time.
+        const reservedHomeRamGb = normalizeDashboardRamSetting(options.reservedHomeRam);
+        const serviceStartupRamLimitGb = normalizeDashboardRamSetting(options.serviceStartupRamLimit);
+        const scriptRamByFilename = new Map();
+        const getScriptRam = (script) => {
+            if (!scriptRamByFilename.has(script)) {
+                scriptRamByFilename.set(script, ns.getScriptRam(script, "home"));
+            }
+            return scriptRamByFilename.get(script) ?? 0;
+        };
+        let runningManagedServiceRamGb = serviceStartupRamLimitGb > 0
+            ? calculateRunningManagedServiceRam(services, runningProcesses, getScriptRam)
+            : 0;
 
         for (const service of orderedServices) {
             const requirements = Array.isArray(service.requirements) ? service.requirements : [];
@@ -175,7 +246,15 @@ export async function main(ns) {
             if (!isServiceAutostartEnabled(service.serviceId, options)) continue;
 
             const script = service.filename;
-            const result = startManagedService(ns, service, runningFiles, reservedHomeRamGb);
+            const result = startManagedService(ns, service, runningFiles, {
+                reservedHomeRamGb,
+                serviceStartupRamLimitGb,
+                runningManagedServiceRamGb,
+                getScriptRam,
+            });
+            if (result.status === "started" && serviceStartupRamLimitGb > 0) {
+                runningManagedServiceRamGb += result.scriptRamGb;
+            }
             reportLaunchIssue(ns, script, result.status, previousIssues);
         }
 

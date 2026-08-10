@@ -14,10 +14,12 @@ import {
 } from "dashboard/libs/dashboard-options.js";
 import {
     applyDashboardViewWidgetContributions as applyDashboardViewWidgetContributionsDefinition,
+    buildDashboardMenuGroupRegistry as buildDashboardMenuGroupRegistryDefinition,
     buildDashboardMenuGroups,
     getDefaultSelectedServiceId as getDefaultSelectedServiceIdDefinition,
     getViewOnlyPluginEntries,
     isViewQualified,
+    sortDashboardMenuItems,
     validateDashboardServices as validateDashboardServicesDefinition,
     validateDashboardViews as validateDashboardViewsDefinition,
 } from "dashboard/libs/dashboard-registry.js";
@@ -52,6 +54,7 @@ import {
     resolveDashboardStartupWindowMode,
     tailGeometryDiffers,
 } from "dashboard/libs/tail-layout.js";
+import { buildDashboardTailTitle } from "dashboard/libs/tail-title.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
 import {
@@ -154,10 +157,13 @@ let activeDashboardTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_GAME);
 
 const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
+const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
-const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v3";
-const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v2";
-const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v1";
+const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v5";
+const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v4";
+const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v3";
+const DASHBOARD_MENU_GROUP_REGISTRY_KEY = "__dashboard_menu_group_registry_v2";
+const DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY = "__dashboard_menu_group_registry_source_v2";
 const DASHBOARD_VIEW_INTERACTION_STATE_KEY = "__dashboard_view_interaction_state_v1";
 const DASHBOARD_VIEW_DRAG_ACTIVE_KEY = "__dashboard_view_drag_active_v1";
 const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
@@ -1291,6 +1297,22 @@ function enqueueDashboardAction(command) {
     globalThis[DASHBOARD_ACTION_QUEUE_KEY] = existingQueue;
 }
 
+export function requestDashboardRestartFromTitle(now = Date.now()) {
+    const lastRequestedAt = Number(globalThis[DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY] ?? 0);
+    if (Number.isFinite(lastRequestedAt) && now - lastRequestedAt < 1000) return false;
+    globalThis[DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY] = now;
+    enqueueDashboardAction({
+        kind: "dashboard",
+        actionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
+    });
+    return true;
+}
+
+function setDashboardTailTitle(ns, title) {
+    ns.ui.setTailTitle(buildDashboardTailTitle(rawReact, title, requestDashboardRestartFromTitle));
+    dashboardTailLayoutState.lastTitle = title;
+}
+
 function flushDashboardActionQueue() {
     const queue = Array.isArray(globalThis[DASHBOARD_ACTION_QUEUE_KEY]) ? globalThis[DASHBOARD_ACTION_QUEUE_KEY] : [];
     globalThis[DASHBOARD_ACTION_QUEUE_KEY] = [];
@@ -1888,22 +1910,18 @@ function performScriptFileAction(ns, action, filename) {
     logMajorAction(ns, `Unsupported execution type for action ${action}: ${execution.executeType}`, "warning");
 }
 
-const DASHBOARD_MENU_GROUPS = [
-    { id: "overview", title: "Overview" },
-    { id: "affiliations", title: "Affiliations" },
-    { id: "automation", title: "Automation" },
-    { id: "finances", title: "Finances" },
-    { id: "hacking", title: "Hacking" },
-    { id: "hardware", title: "Hardware" },
-    { id: "software", title: "Software" },
-    { id: "globalOptions", title: "Options" },
+const DASHBOARD_PINNED_MENU_GROUPS = [
+    { id: "software", title: "Software", order: 900 },
+    { id: "globalOptions", title: "Options", order: 1000 },
 ];
 
 const DASHBOARD_SERVICES = [
     {
         id: "hardware.home",
         menuGroup: "hardware",
+        menuGroupLabel: "Hardware",
         menuLabel: "Home Server",
+        description: "Home RAM capacity and safeguards for dashboard-managed service startup.",
         rendererKey: "hardware.home",
         defaultPanelId: "infrastructure",
         subviews: [
@@ -1916,7 +1934,12 @@ const DASHBOARD_SERVICES = [
         ],
         panelMeta: {
             infrastructure: { title: "Home Infrastructure", accent: "#6ee7a8", subtitle: "Home resource snapshot" },
-            options: { title: "Home Options", accent: "#6ee7a8", subtitle: "Configure Home settings" },
+            options: {
+                title: "Home Options",
+                accent: "#6ee7a8",
+                subtitle: "Protect transient capacity and bound service autostart RAM",
+                description: "The Transient RAM Reserve keeps capacity free for transient and on-demand processes. The Service Startup RAM Limit separately caps the combined RAM of service entry scripts in the Start Order list.",
+            },
         },
         getHealth: ({ homeRamStatus }) => {
             const level = getRamHealthLevel(homeRamStatus);
@@ -1941,22 +1964,51 @@ const DASHBOARD_SERVICES = [
         getInputs: ({ selectedCenterPanel, options }) => {
             if (selectedCenterPanel !== "options") return [];
             return [
-                { id: "reserved-home-ram", label: "Reserved Home RAM (GB)", optionKey: "reservedHomeRam", value: options.reservedHomeRam, min: 0 },
+                {
+                    id: "reserved-home-ram",
+                    label: "Transient RAM Reserve (GB)",
+                    description: "Home RAM the supervisor must leave free for dashboard actions and other on-demand processes.",
+                    tooltip: "Minimum free Home RAM remaining after each dashboard-managed service launch. This does not reserve RAM from manually started scripts. Set to 0 to disable.",
+                    optionKey: "reservedHomeRam",
+                    type: "number",
+                    value: options.reservedHomeRam,
+                    min: 0,
+                },
+                {
+                    id: "service-startup-ram-limit",
+                    label: "Service Startup RAM Limit (GB)",
+                    description: "Maximum combined RAM for running service entry scripts represented in the Start Order list.",
+                    tooltip: "The supervisor counts already-running listed services, then starts more in order only while their combined entry-script RAM stays within this limit. Running services are not stopped, and child processes are not included. Set to 0 for unlimited.",
+                    optionKey: "serviceStartupRamLimit",
+                    type: "number",
+                    value: options.serviceStartupRamLimit,
+                    min: 0,
+                },
             ];
         },
-        getState: ({ selectedCenterPanel, options, homeRamStatus }) => {
+        getState: ({ selectedCenterPanel, options, homeRamStatus, telemetryByServiceId }) => {
             if (selectedCenterPanel !== "infrastructure") return [];
+            // Cores piggybacks on Server Buyer's own telemetry (data/server_buyer_core_stats.json,
+            // homeCores - already read into telemetryByServiceId once per tick for its own panel)
+            // rather than a direct ns.getServer("home") call here, which would be a flat +2GB tax on
+            // this always-running dashboard process just to read a number that only changes on a rare
+            // manual Singularity core upgrade. Trade-off: shows "-" until Server Buyer has run at
+            // least once (it publishes on every cycle regardless of whether upgrades are affordable).
+            const homeCores = telemetryByServiceId?.["automation.serverBuyer"]?.homeCores;
             return [
-                { label: "Reserved RAM", value: `${options.reservedHomeRam} GB`, tone: "info" },
+                { label: "Transient Reserve", value: `${options.reservedHomeRam} GB`, tone: "info" },
+                { label: "Service RAM Limit", value: options.serviceStartupRamLimit > 0 ? `${options.serviceStartupRamLimit} GB` : "Unlimited", tone: "info" },
                 { label: "Used RAM", value: formatRam(homeRamStatus.used), tone: getRamHealthLevel(homeRamStatus) },
                 { label: "Total RAM", value: formatRam(homeRamStatus.total), tone: "neutral" },
                 { label: "Utilization", value: formatUtilizationPercent(homeRamStatus.ratio), tone: getRamHealthLevel(homeRamStatus) },
+                { label: "Cores", value: Number.isFinite(homeCores) ? String(homeCores) : "-", tone: "neutral" },
             ];
         },
     },
     {
         id: "global.dashboardOptions",
         menuGroup: "globalOptions",
+        menuOrder: -100,
         menuLabel: "Dashboard Options",
         description: "Controls dashboard-wide presentation and Script List visibility. Plugin discovery is unaffected.",
         alwaysVisible: true,
@@ -2086,7 +2138,7 @@ const DASHBOARD_SERVICES = [
     {
         id: "global.integrations",
         menuGroup: "globalOptions",
-        menuLabel: "Integrations",
+        menuLabel: "Integration Manager",
         alwaysVisible: true,
         rendererKey: "global.integrations",
         defaultPanelId: "",
@@ -2125,7 +2177,7 @@ const DASHBOARD_SERVICES = [
     {
         id: "global.plugins",
         menuGroup: "globalOptions",
-        menuLabel: "Plugins",
+        menuLabel: "Plugin Manager",
         alwaysVisible: true,
         rendererKey: "global.plugins",
         defaultPanelId: "",
@@ -2173,7 +2225,7 @@ const DASHBOARD_SERVICES = [
     {
         id: "global.options",
         menuGroup: "globalOptions",
-        menuLabel: "Scripts",
+        menuLabel: "Script Manager",
         alwaysVisible: true,
         rendererKey: "global.options",
         defaultPanelId: "",
@@ -2211,7 +2263,6 @@ const DASHBOARD_SERVICES = [
     },
 ];
 
-const DASHBOARD_MENU_GROUP_IDS = new Set(DASHBOARD_MENU_GROUPS.map((group) => group.id));
 const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log", "mailbox"]);
 const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health", "gauges", "service-health", "graphs"]);
 const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command"]);
@@ -2252,7 +2303,7 @@ function getRamHealthLevel(ramStatus) {
 }
 
 function validateDashboardServices(services) {
-    return validateDashboardServicesDefinition(services, DASHBOARD_MENU_GROUP_IDS, SERVICE_CONTRACT_STRICT_MODE);
+    return validateDashboardServicesDefinition(services, null, SERVICE_CONTRACT_STRICT_MODE);
 }
 
 function getDashboardServiceRegistry() {
@@ -2274,7 +2325,7 @@ function setDashboardServiceRegistry(registry) {
 function validateDashboardViews(views = []) {
     return validateDashboardViewsDefinition(
         views,
-        DASHBOARD_MENU_GROUP_IDS,
+        null,
         DASHBOARD_VIEW_RENDERERS,
         DASHBOARD_HOME_WIDGET_TYPES
     );
@@ -2292,11 +2343,38 @@ function applyDashboardViewWidgetContributions(views, services) {
     return applyDashboardViewWidgetContributionsDefinition(views, services);
 }
 
+function buildDashboardMenuGroupRegistry(services = [], views = []) {
+    return buildDashboardMenuGroupRegistryDefinition(services, views, DASHBOARD_PINNED_MENU_GROUPS);
+}
+
+function getDashboardMenuGroupRegistry() {
+    const registry = globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY];
+    if (registry && Array.isArray(registry.groups) && registry.byId instanceof Map) return registry;
+    const fallback = buildDashboardMenuGroupRegistry(
+        getDashboardServiceRegistry().services,
+        getDashboardViewRegistry().views
+    );
+    globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = fallback;
+    return fallback;
+}
+
+function rebuildDashboardMenuGroupRegistry(services = [], views = []) {
+    const previous = globalThis[DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY];
+    if (previous?.services === services && previous?.views === views && previous.registry) {
+        globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = previous.registry;
+        return previous.registry;
+    }
+    const registry = buildDashboardMenuGroupRegistry(services, views);
+    globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = registry;
+    globalThis[DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY] = { services, views, registry };
+    return registry;
+}
+
 function rebuildDashboardViewRegistry(ns, homeScripts = []) {
     const filenames = homeScripts.map((script) => script.filename).sort(compareScriptPathsByName);
     const cacheKey = filenames.join("|");
     const now = Date.now();
-    const cache = globalThis.__dashboard_view_scan_cache_v1;
+    const cache = globalThis.__dashboard_view_scan_cache_v2;
     const canUseCache = cache
         && typeof cache === "object"
         && cache.key === cacheKey
@@ -2306,7 +2384,7 @@ function rebuildDashboardViewRegistry(ns, homeScripts = []) {
     const definitions = canUseCache ? cache.definitions : discoverDashboardViews(ns, filenames);
 
     if (!canUseCache) {
-        globalThis.__dashboard_view_scan_cache_v1 = {
+        globalThis.__dashboard_view_scan_cache_v2 = {
             key: cacheKey,
             definitions,
             scannedAt: now,
@@ -2318,11 +2396,11 @@ function rebuildDashboardViewRegistry(ns, homeScripts = []) {
         getDashboardServiceRegistry().services
     );
     const definitionSignature = JSON.stringify(contributedDefinitions);
-    const previous = globalThis.__dashboard_view_registry_source_v1;
+    const previous = globalThis.__dashboard_view_registry_source_v3;
     if (previous?.signature === definitionSignature && previous.registry) return previous.registry;
     const registry = validateDashboardViews(contributedDefinitions);
     globalThis[DASHBOARD_VIEW_REGISTRY_KEY] = registry;
-    globalThis.__dashboard_view_registry_source_v1 = { signature: definitionSignature, registry };
+    globalThis.__dashboard_view_registry_source_v3 = { signature: definitionSignature, registry };
     return registry;
 }
 
@@ -2334,6 +2412,16 @@ function logServiceRegistryIssues(registry) {
     console.warn(`[dashboard service contract] strict mode: ${SERVICE_CONTRACT_STRICT_MODE ? "on" : "off"}`);
     for (const issue of registry.issues) {
         console.warn(`[dashboard service contract] ${issue}`);
+    }
+}
+
+function logMenuGroupRegistryIssues(registry) {
+    if (!registry || !Array.isArray(registry.issues) || registry.issues.length === 0) return;
+    const issueHash = registry.issues.join("\n");
+    if (globalThis.__dashboard_menu_group_registry_issue_hash_v1 === issueHash) return;
+    globalThis.__dashboard_menu_group_registry_issue_hash_v1 = issueHash;
+    for (const issue of registry.issues) {
+        console.warn(`[dashboard menu group contract] ${issue}`);
     }
 }
 
@@ -2357,7 +2445,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const filenames = homeScripts.map((script) => script.filename).sort(compareScriptPathsByName);
     const pluginCacheKey = `${filenames.join("|")}::${PLUGIN_RUNTIME_EXCLUDED_FOLDERS.join("|")}::${buildDescriptorContentSignature(ns, filenames)}`;
     const now = Date.now();
-    const cache = globalThis.__dashboard_plugin_scan_cache_v2;
+    const cache = globalThis.__dashboard_plugin_scan_cache_v4;
     const canUseCache = cache
         && typeof cache === "object"
         && cache.key === pluginCacheKey
@@ -2372,7 +2460,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
         });
 
     if (!canUseCache) {
-        globalThis.__dashboard_plugin_scan_cache_v2 = {
+        globalThis.__dashboard_plugin_scan_cache_v4 = {
             key: pluginCacheKey,
             definitions: pluginDefinitions,
             scannedAt: now,
@@ -2403,11 +2491,19 @@ function getServiceById(serviceId) {
 }
 
 function getDefaultSelectedServiceId() {
-    return getDefaultSelectedServiceIdDefinition(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS);
+    return getDefaultSelectedServiceIdDefinition(
+        getDashboardServiceRegistry().services,
+        getDashboardMenuGroupRegistry().groups
+    );
 }
 
 function getMenuGroups(options = {}, pluginRequirements = {}) {
-    return buildDashboardMenuGroups(getDashboardServiceRegistry().services, DASHBOARD_MENU_GROUPS, options, pluginRequirements);
+    return buildDashboardMenuGroups(
+        getDashboardServiceRegistry().services,
+        getDashboardMenuGroupRegistry().groups,
+        options,
+        pluginRequirements
+    );
 }
 
 function getCenterPanelsForItem(selectedItem, homeScripts = []) {
@@ -3032,7 +3128,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const hideUnqualifiedPluginsMode = normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode);
     const menuGroups = serviceMenuGroups.map((group) => ({
         ...group,
-        items: [
+        items: sortDashboardMenuItems([
             ...dashboardViews
                 .filter((view) => view.menuGroup === group.id)
                 .filter((view) => isServiceVisibleInMenu(view.id, options))
@@ -3040,11 +3136,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 .map((view) => ({
                     id: `${DASHBOARD_VIEW_ITEM_PREFIX}${view.id}`,
                     label: view.menuLabel,
+                    menuOrder: view.menuOrder,
                     alwaysVisible: true,
                     dashboardViewId: view.id,
                 })),
             ...group.items,
-        ],
+        ]),
     }));
     const scriptBuckets = React.useMemo(
         () => buildScriptBuckets(homeScripts, options.hiddenScriptFolders, options.hiddenScriptFiles, dashboardViews),
@@ -3319,7 +3416,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const workspaceWidgets = selectDashboardWorkspaceWidgets(
         dashboardServiceRegistry.services,
         selectedService,
-        selectedItem
+        selectedItem,
+        activeView
     );
     const visibleWorkspaceWidgets = workspaceWidgets.filter((widget) => widget.type !== "player-stats" || playerStatsEnabled);
     const selectedServiceHealth = serviceHealthById[selectedItem] ?? { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
@@ -3751,53 +3849,61 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ...(isWrappingLayout ? { marginTop: "auto", width: "100%" } : {}),
         };
 
-        const renderInput = (input) => (
-            <label key={input.id} style={fieldStyle}>
-                <span data-dashboard-theme-role="data-heading">{input.label}</span>
-                {input.type === "select" && Array.isArray(input.options) ? (
-                    <select
-                        data-dashboard-theme-role="data-value"
-                        title={`Adjust ${input.label}`}
-                        style={controlStyle}
-                        value={String(input.value ?? "")}
-                        disabled={Boolean(input.disabled)}
-                        onFocus={() => setOptionsInputFocus(true)}
-                        onBlur={() => setOptionsInputFocus(false)}
-                        onChange={(e) => updateOptionInput(input, e.target.value)}
-                    >
-                        {input.options.map((optionValue) => (
-                            <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
-                        ))}
-                    </select>
-                ) : input.type === "checkbox" ? (
-                    <input
-                        data-dashboard-theme-role="data-value"
-                        title={`Toggle ${input.label}`}
-                        style={WIDGET_STYLES.input}
-                        type="checkbox"
-                        checked={Boolean(input.value)}
-                        disabled={Boolean(input.disabled)}
-                        onFocus={() => setOptionsInputFocus(true)}
-                        onBlur={() => setOptionsInputFocus(false)}
-                        onChange={(e) => updateOptionInput(input, e.target.checked)}
-                    />
-                ) : (
-                    <input
-                        data-dashboard-theme-role="data-value"
-                        title={`Adjust ${input.label}`}
-                        style={controlStyle}
-                        type={input.type ?? "number"}
-                        value={input.value}
-                        min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
-                        max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
-                        disabled={Boolean(input.disabled)}
-                        onFocus={() => setOptionsInputFocus(true)}
-                        onBlur={() => setOptionsInputFocus(false)}
-                        onChange={(e) => updateOptionInput(input, e.target.value)}
-                    />
-                )}
-            </label>
-        );
+        const renderInput = (input) => {
+            const tooltip = typeof input.tooltip === "string" && input.tooltip.length > 0
+                ? input.tooltip
+                : `${input.type === "checkbox" ? "Toggle" : "Adjust"} ${input.label}`;
+            return (
+                <label key={input.id} title={tooltip} style={fieldStyle}>
+                    <span data-dashboard-theme-role="data-heading">{input.label}</span>
+                    {typeof input.description === "string" && input.description.length > 0 ? (
+                        <span style={{ ...WIDGET_STYLES.smallMuted, lineHeight: 1.35 }}>{input.description}</span>
+                    ) : null}
+                    {input.type === "select" && Array.isArray(input.options) ? (
+                        <select
+                            data-dashboard-theme-role="data-value"
+                            title={tooltip}
+                            style={controlStyle}
+                            value={String(input.value ?? "")}
+                            disabled={Boolean(input.disabled)}
+                            onFocus={() => setOptionsInputFocus(true)}
+                            onBlur={() => setOptionsInputFocus(false)}
+                            onChange={(e) => updateOptionInput(input, e.target.value)}
+                        >
+                            {input.options.map((optionValue) => (
+                                <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
+                            ))}
+                        </select>
+                    ) : input.type === "checkbox" ? (
+                        <input
+                            data-dashboard-theme-role="data-value"
+                            title={tooltip}
+                            style={WIDGET_STYLES.input}
+                            type="checkbox"
+                            checked={Boolean(input.value)}
+                            disabled={Boolean(input.disabled)}
+                            onFocus={() => setOptionsInputFocus(true)}
+                            onBlur={() => setOptionsInputFocus(false)}
+                            onChange={(e) => updateOptionInput(input, e.target.checked)}
+                        />
+                    ) : (
+                        <input
+                            data-dashboard-theme-role="data-value"
+                            title={tooltip}
+                            style={controlStyle}
+                            type={input.type ?? "number"}
+                            value={input.value}
+                            min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
+                            max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
+                            disabled={Boolean(input.disabled)}
+                            onFocus={() => setOptionsInputFocus(true)}
+                            onBlur={() => setOptionsInputFocus(false)}
+                            onChange={(e) => updateOptionInput(input, e.target.value)}
+                        />
+                    )}
+                </label>
+            );
+        };
 
         // Grouped metadata gets a real layout boundary rather than just a heading in one shared
         // flex row. This keeps each component's fields together and lets Home (two fields) and
@@ -4058,7 +4164,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             level: serviceHealthById[service.id]?.level ?? "neutral",
             summary: serviceHealthById[service.id]?.summary ?? "",
         }));
-    const homeServiceGroups = DASHBOARD_MENU_GROUPS
+    const homeServiceGroups = getDashboardMenuGroupRegistry().groups
         .map((group) => ({
             ...group,
             services: dashboardServiceRegistry.services.filter((service) => service.menuGroup === group.id),
@@ -5552,8 +5658,7 @@ function syncDashboardTailLayout(ns, options = getDefaultOptions()) {
     const nextTitle = minimized ? "Dashboard" : "Automation Dashboard";
     if (dashboardTailLayoutState.lastTitle !== nextTitle) {
         try {
-            ns.ui.setTailTitle(nextTitle);
-            dashboardTailLayoutState.lastTitle = nextTitle;
+            setDashboardTailTitle(ns, nextTitle);
         } catch (error) {
             // Title updates are cosmetic; continue with the current native title.
         }
@@ -5588,11 +5693,33 @@ function ensureSingleDashboardInstance(ns) {
 
     const primaryPid = instances[0]?.pid ?? ns.pid;
     if (ns.pid !== primaryPid) {
-        ns.tprint(`[DASHBOARD] Another instance is already running (pid ${primaryPid}). Exiting pid ${ns.pid}.`);
         return false;
     }
 
     return true;
+}
+
+function isTemporaryDashboardRun(ns) {
+    try {
+        return ns.self()?.temporary === true;
+    } catch (error) {
+        return false;
+    }
+}
+
+function registerDashboardTailCleanup(ns, isDaemon) {
+    if (!isDaemon) return;
+    const dashboardPid = ns.pid;
+    ns.atExit(() => {
+        try {
+            // Bitburner keeps an ordinary tail open after its process stops. Closing it while
+            // the process is still addressable (atExit runs before process removal) prevents a
+            // later autoexec launch from opening a second dashboard beside a stale dead tail.
+            ns.ui.closeTail(dashboardPid);
+        } catch (error) {
+            // The tail may already have been closed manually.
+        }
+    }, "dashboard-tail-cleanup");
 }
 
 /** @param {NS} ns */
@@ -5604,6 +5731,8 @@ export async function main(ns) {
     if (!ensureSingleDashboardInstance(ns)) {
         return;
     }
+    const temporaryRun = isTemporaryDashboardRun(ns);
+    registerDashboardTailCleanup(ns, isDaemon);
 
     // These module-level sets support callbacks during a running dashboard, but each new main()
     // invocation must perform its own initial option replay even if the game reuses module state.
@@ -5619,12 +5748,14 @@ export async function main(ns) {
 
     if (React) {
         ns.ui.openTail();
-        ns.ui.setTailTitle("Automation Dashboard");
+        setDashboardTailTitle(ns, "Automation Dashboard");
     }
 
-    ns.tprint(isDaemon
-        ? `Starting Automation Dashboard in daemon mode${autoStart ? " with integration auto-start" : ""}...`
-        : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
+    if (!temporaryRun) {
+        ns.tprint(isDaemon
+            ? `Starting Automation Dashboard in daemon mode${autoStart ? " with integration auto-start" : ""}...`
+            : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
+    }
 
     if (autoStart) {
         queueDashboardWorkerAction(ns, {
@@ -5662,6 +5793,11 @@ export async function main(ns) {
             cycleSnapshot.fileSignature,
             () => rebuildDashboardViewRegistry(ns, homeScripts)
         );
+        const dashboardMenuGroupRegistry = rebuildDashboardMenuGroupRegistry(
+            dashboardServiceRegistry.services,
+            dashboardViewRegistry.views
+        );
+        logMenuGroupRegistryIssues(dashboardMenuGroupRegistry);
         homeScripts = applyPluginScriptMetadata(homeScripts, dashboardServiceRegistry);
         const persistedOptions = loadDashboardOptions(ns);
         // Re-apply persisted options only after plugin discovery has populated the service
@@ -5825,6 +5961,7 @@ export async function main(ns) {
             const renderSignature = [
                 persistedOptions,
                 homeScripts,
+                dashboardMenuGroupRegistry,
                 homeRamStatus,
                 runningProcessSnapshot,
                 telemetryByServiceId,

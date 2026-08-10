@@ -96,6 +96,13 @@ export function sortByServiceStartOrder(items, options) {
         .map((entry) => entry.item);
 }
 
+export function normalizeDashboardRamSetting(value, fallback = 0) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric);
+    const fallbackNumeric = Number(fallback);
+    return Number.isFinite(fallbackNumeric) && fallbackNumeric >= 0 ? Math.floor(fallbackNumeric) : 0;
+}
+
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_NONE = "None";
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY = "Singularity";
 export const HIDE_UNQUALIFIED_PLUGINS_MODES = [HIDE_UNQUALIFIED_PLUGINS_MODE_NONE, HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY];
@@ -126,6 +133,9 @@ export function getDefaultDashboardOptions(services = []) {
         // user opts in with a higher value, consistent with this project's autostart-is-opt-in
         // convention elsewhere.
         reservedHomeRam: 0,
+        // Aggregate RAM ceiling for service entry scripts managed by the supervisor. Zero keeps
+        // the historical unlimited behavior until the user deliberately sets a budget.
+        serviceStartupRamLimit: 0,
         dashboardThemeMode: DASHBOARD_THEME_MODE_GAME,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
@@ -169,7 +179,8 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         // menu-visibility flags, per-bare-script autostart flags keyed by filename, etc.) -
         // otherwise every save silently drops anything not enumerated below.
         ...rawOptions,
-        reservedHomeRam: Number(rawOptions.reservedHomeRam) >= 0 ? Math.floor(Number(rawOptions.reservedHomeRam)) : defaults.reservedHomeRam,
+        reservedHomeRam: normalizeDashboardRamSetting(rawOptions.reservedHomeRam, defaults.reservedHomeRam),
+        serviceStartupRamLimit: normalizeDashboardRamSetting(rawOptions.serviceStartupRamLimit, defaults.serviceStartupRamLimit),
         dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
         dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),

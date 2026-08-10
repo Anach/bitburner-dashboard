@@ -44,7 +44,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "type": "player-stats",
             "title": "Player Status",
             "subtitle": "Live player telemetry",
-            "menuGroups": ["overview", "affiliations", "hacking", "finances", "hardware", "automation"],
+            "excludeMenuGroups": ["globalOptions"],
             "serviceIds": ["system.playerStatus"],
             "groupIds": ["core", "location", "work", "history"],
             "orientation": "vertical",
