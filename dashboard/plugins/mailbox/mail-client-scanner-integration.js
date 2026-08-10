@@ -2,16 +2,16 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "script",
     "serviceId": "mail.mailbox",
     "menuGroup": "software",
-    "menuLabel": "Mailbox Scanner",
+    "menuLabel": "Mail Client Scanner",
     "menuVisible": false,
     "description": "Scans home, the normal network, and the darknet for message, lore, and text files, and tracks their read/unread state.",
     "requirements": [
         { "type": "api", "id": "darknet", "required": false }
     ],
     "daemon": true,
-    "managedNetworkScripts": ["dashboard/plugins/mailbox/mailbox-reader.js", "dashboard/plugins/mailbox/mailbox-darknet-agent.js"],
+    "managedNetworkScripts": ["dashboard/plugins/mailbox/mail-client-reader.js", "dashboard/plugins/mailbox/mail-client-darknet-agent.js"],
     "panels": [
-        { "id": "status", "label": "Status", "title": "Mailbox", "accent": "#ffd17a", "subtitle": "Message discovery and read-state tracking" }
+        { "id": "status", "label": "Status", "title": "Mail Client", "accent": "#ffd17a", "subtitle": "Message discovery and read-state tracking" }
     ],
     "telemetry": {
         "path": "data/mailbox_state.json",

@@ -50,7 +50,7 @@ const BUILTIN_SCRIPT_ACTIONS = [
 // tone ("neutral"|"success"|"info"|"warn"|"danger"),
 // includeOnDashboardScript, showWhen ("always"|"running"|"stopped"), disableWhen ("running"|"stopped"), id.
 export const SCRIPT_CUSTOM_ACTIONS_BY_FILE = {
-    // "automation/infiltrate.js": [
+    // "hacking/infiltration-assist/infiltration-assist.js": [
     //     {
     //         actionId: "open-infiltration-log",
     //         label: "Open infiltration log",

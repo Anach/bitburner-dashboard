@@ -1,5 +1,5 @@
 // ns.read() returns lore (.lit) content as HTML markup (Bitburner renders it via
-// renderToStaticMarkup internally) - strip it down to readable plain text for the mailbox.
+// renderToStaticMarkup internally) - strip it down to readable plain text for Mail Client.
 export function stripLitMarkup(text) {
     if (typeof text !== "string" || !text.includes("<")) return text;
     return text

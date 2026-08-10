@@ -1,6 +1,6 @@
 export const DASHBOARD_VIEW_METADATA = {
-    "id": "mailbox",
-    "renderer": "mailbox",
+    "id": "mail-client",
+    "renderer": "mail-client",
     "menuGroup": "software",
     "menuLabel": "Mail Client",
     "title": "Mail Client",

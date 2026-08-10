@@ -19,7 +19,7 @@ import {
 
 let React = null;
 let rawReact = null;
-let activeMailboxTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_DASHBOARD);
+let activeMailClientTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_DASHBOARD);
 
 const COLORS = {
     background: "#020403",
@@ -343,13 +343,13 @@ function capitalize(value) {
     return text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
-export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInputFocusChange, onExit, headerActions }) {
+export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onInputFocusChange, onExit, headerActions }) {
     const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
         rawReact = nextRawReact;
-        React = createDashboardThemedReact(rawReact, () => activeMailboxTheme);
+        React = createDashboardThemedReact(rawReact, () => activeMailClientTheme);
     }
-    activeMailboxTheme = dashboardTheme ?? activeMailboxTheme;
+    activeMailClientTheme = dashboardTheme ?? activeMailClientTheme;
     if (!React) return null;
 
     const dataConfig = view?.data ?? {};
@@ -652,7 +652,7 @@ export function MailboxView({ view, telemetry, dashboardTheme, onCommand, onInpu
         >
             <header style={STYLES.header}>
                 <div>
-                    <div style={STYLES.title}>{view?.title ?? "Mailbox"}</div>
+                    <div style={STYLES.title}>{view?.title ?? "Mail Client"}</div>
                     <div style={STYLES.subtitle}>{view?.subtitle ?? "In-game messages, lore, and text files"}</div>
                 </div>
                 <div style={getDashboardFrameControlGroupStyle()}>

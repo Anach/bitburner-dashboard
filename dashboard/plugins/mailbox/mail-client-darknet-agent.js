@@ -1,19 +1,19 @@
 import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
-import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
+import { stripLitMarkup } from "dashboard/plugins/mailbox/mail-client-lit-text.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": false
 };
 
-const dnetFiles = ["dashboard/plugins/mailbox/mailbox-darknet-agent.js"];
+const dnetFiles = ["dashboard/plugins/mailbox/mail-client-darknet-agent.js"];
 const dnetFile = 0;
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
-const SCANNER_SCRIPT = "dashboard/plugins/mailbox/mailbox-scanner.js";
+const SCANNER_SCRIPT = "dashboard/plugins/mailbox/mail-client-scanner.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
-    // ns.dnet.* throws outright without this program; mailbox-scanner.js already checks before
+    // ns.dnet.* throws outright without this program; mail-client-scanner.js already checks before
     // launching us, but guard here too in case this ever runs standalone.
     if (!ns.fileExists(DARKNET_ACCESS_PROGRAM, "home")) {
         ns.print(`Darknet API unavailable: purchase "${DARKNET_ACCESS_PROGRAM}" through your TOR router first.`);
@@ -24,11 +24,11 @@ export async function main(ns) {
     host.checkFiles();
     var dnets = [];
     while (true) {
-        // Stopping the Mailbox Scanner (home) should stop this agent too, wherever it's
+        // Stopping the Mail Client Scanner (home) should stop this agent too, wherever it's
         // currently running (home or a propagated darknet server) - there's no "on kill"
         // hook in Netscript, so each instance checks and self-exits instead.
         if (!ns.scriptRunning(SCANNER_SCRIPT, "home")) {
-            ns.print("Mailbox Scanner is no longer running on home; stopping darknet agent.");
+            ns.print("Mail Client Scanner is no longer running on home; stopping darknet agent.");
             return;
         }
         ns.print("Beginning new loop \n");

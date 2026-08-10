@@ -22,19 +22,20 @@ export const DASHBOARD_SCRIPT_METADATA = {
 const FORMULAS_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-formulas.js";
 const SINGULARITY_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigator-singularity.js";
 // Was 20 (a local literal, not imported from the registry) - collided with
-// factions/faction-gangs.js's own GANG_COMMAND_PORT, since bitburner-scripts picked its ports
-// independently of this repo. Since ns.readPort() destructively drains whatever it reads
-// regardless of which script it belongs to, that collision meant every "EquipmentMinFunds:" (or
-// any other Faction Manager option) command had a coin-flip chance of being silently eaten by this
-// script's own drain loop instead of ever reaching faction-gangs.js - confirmed as the actual
-// cause of gang equipment purchases repeatedly ignoring a configured spending cap. Now imported
-// from dashboard/libs/port-registry.js, the single cross-repo source of truth this bug is why
-// exists - see docs/PORT_MAP.md (bitburner-scripts repo) for the full table.
+// affiliations/faction-manager/faction-manager-gangs.js's own GANG_COMMAND_PORT, since
+// bitburner-scripts picked its ports independently of this repo. Since ns.readPort() destructively
+// drains whatever it reads regardless of which script it belongs to, that collision meant every
+// "EquipmentMinFunds:" (or any other Faction Manager option) command had a coin-flip chance of
+// being silently eaten by this script's own drain loop instead of ever reaching
+// faction-manager-gangs.js - confirmed as the actual cause of gang equipment purchases repeatedly
+// ignoring a configured spending cap. Now imported from dashboard/libs/port-registry.js, the single
+// cross-repo source of truth this bug is why exists - see docs/PORT_MAP.md (bitburner-scripts repo)
+// for the full table.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const TRAVEL_COST = 200_000;
 // Workers publish on their own ~2s cadence too - anything older than this is treated as "worker
 // isn't actually running/keeping up" rather than trusted stale data, same rationale as
-// factions/faction-manager-boost.js's CORE_STATUS_STALE_AFTER_MS.
+// affiliations/faction-manager/faction-manager-boost.js's CORE_STATUS_STALE_AFTER_MS.
 const WORKER_STALE_AFTER_MS = 15000;
 const DATA_PATHS = {
     batcherStatsJson: "data/batcher_stats.json",

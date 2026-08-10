@@ -6,7 +6,7 @@ import { discoverNetwork } from "dashboard/libs/topology.js";
 // up by service-supervisor.js's own autostart scan, since that has no capability gate at all and
 // would start this (paying its Formulas RAM cost) regardless of whether Formulas.exe is actually
 // owned. network-navigator.js's own launcher loop is the only thing that should ever start this,
-// same pattern as buyer/server-buyer-cloud.js in the other repo.
+// same pattern as hardware/server-manager/server-manager-cloud.js in the other repo.
 //
 // Publishes raw xpPerSecond numbers only, not the formatted "Selected/Eligible/Blocked" label -
 // network-navigator.js owns that formatting (via xp-suitability.js) since it's the one that knows

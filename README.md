@@ -15,7 +15,7 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 - Generic start, stop, restart, edit, option, action, and requirement controls.
 - A metadata-driven supervisor for integrated daemon services.
 - JSON telemetry fields, quick statistics, gauges, history graphs, lists, and resource cards.
-- Metadata-driven full-window overview, network-map, file-manager, script-log, and mailbox views.
+- Metadata-driven full-window overview, network-map, file-manager, script-log, and mail client views.
 - Health filtering and daemon/on-demand lifecycle presentation.
 - Persistent dashboard options stored on `home`.
 - Safe metadata parsing with `JSON.parse`; integration source is never evaluated.
@@ -47,10 +47,10 @@ Included plugins (each independently removable; only pay for what you keep insta
 | --- | ---: | --- |
 | Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.1 GB | |
 | Network Navigator (`dashboard/plugins/network-map/network-navigator.js`) | 234.9 GB | Dominated by six pre-SF4-penalized `ns.singularity.*` calls used for city/company details. Drops sharply once Source-File 4 is unlocked — this is expected, not a bug. |
-| Mailbox Scanner (`dashboard/plugins/mailbox/mailbox-scanner.js`) | 5.25 GB | |
-| Mailbox Darknet Agent (`dashboard/plugins/mailbox/mailbox-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
-| Mailbox Reader (`dashboard/plugins/mailbox/mailbox-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
-| File Manager / Script Log / Mailbox views (`file-manager-view.js`, `script-log-view.js`, `mailbox-view.js`) | 1.6 GB each | Pure metadata descriptors with no `main()` — base script cost only. |
+| Mail Client Scanner (`dashboard/plugins/mailbox/mail-client-scanner.js`) | 5.25 GB | |
+| Mail Client Darknet Agent (`dashboard/plugins/mailbox/mail-client-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
+| Mail Client Reader (`dashboard/plugins/mailbox/mail-client-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
+| File Manager / Script Log / Mail Client views (`file-manager-view.js`, `script-log-view.js`, `mail-client-view.js`) | 1.6 GB each | Pure metadata descriptors with no `main()` — base script cost only. |
 
 These figures are static per-script costs, not a live-usage snapshot — measure your own installation after syncing if you need an exact number, since it depends on exactly which plugins you keep and whether Source-File 4 is unlocked.
 
@@ -300,7 +300,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `network-map`
 - `file-manager`
 - `script-log`
-- `mailbox`
+- `mail-client`
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 

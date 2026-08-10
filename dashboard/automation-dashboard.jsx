@@ -84,7 +84,7 @@ import { configureNetworkMapView, NetworkMapView } from "dashboard/renderers/net
 import { configureDashboardShell, DashboardShell } from "dashboard/renderers/dashboard-shell.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
-import { MailboxView } from "dashboard/renderers/mailbox-view.jsx";
+import { MailClientView } from "dashboard/renderers/mail-client-view.jsx";
 import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
 import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
 import {
@@ -1839,13 +1839,13 @@ function logMajorAction(ns, message, toastType = "info") {
 
 function applyPersistedPluginOptions(ns, filename, replayedIntegrationIds = null, persistedOptions = null) {
     // Matches either the integration's own paired script, or one of its managedScripts - a merged
-    // integration's option-carrying siblings (faction-gangs.js, faction-manager-boost.js,
-    // server-buyer-cloud.js, batcher-beginner.js, etc.) that are launched independently by the
+    // integration's option-carrying siblings (faction-manager-gangs.js, faction-manager-boost.js,
+    // server-manager-cloud.js, hacking-ops-beginner.js, etc.) that are launched independently by the
     // paired script rather than exec'd directly by the dashboard. Without this, one of those
     // siblings restarting on its own (a crash, a RAM-pressure kill, anything short of the paired
     // script also restarting at the same moment) comes back up holding its in-script defaults with
-    // nothing to re-prime it - confirmed real: faction-gangs.js silently reverting to
-    // equipmentMinFunds=0 after restarting independently of factions/faction-manager.js.
+    // nothing to re-prime it - confirmed real: faction-manager-gangs.js silently reverting to
+    // equipmentMinFunds=0 after restarting independently of faction-manager.js.
     const integration = getDashboardServiceRegistry().services.find((service) => {
         return service.pluginFile === filename || service.pluginMetadata?.managedScripts?.includes(filename);
     })?.pluginMetadata;
@@ -2263,7 +2263,7 @@ const DASHBOARD_SERVICES = [
     },
 ];
 
-const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log", "mailbox"]);
+const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log", "mail-client"]);
 const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health", "gauges", "service-health", "graphs"]);
 const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command"]);
 const SERVICE_HEALTH_LEVELS = new Set(["neutral", "info", "warn", "danger"]);
@@ -4243,7 +4243,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // (dashboard/, libs/, trashbin/) here - that's the right exclusion for service-supervisor.js's
     // OWN plugin-descriptor discovery (finding NEW -integration.js files under dashboard/, see
     // discoverDashboardPlugins's non-co-located branch), but a blanket "dashboard/" prefix match
-    // also wrongly excludes every real plugin runtime script under dashboard/plugins/*/ (mailbox
+    // also wrongly excludes every real plugin runtime script under dashboard/plugins/*/ (mail client
     // scanner, player stats, network navigator, etc.) - those ARE co-located with their own
     // descriptor and were never excluded from discovery in the first place, so excluding them
     // here just hid them from this list for no reason. isDashboardCoreScript's exact match is
@@ -5192,8 +5192,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onExit={() => setActiveView("")}
                     headerActions={<>{minimizeControl}{windowControl}</>}
                 />
-            ) : activeView?.renderer === "mailbox" ? (
-                <MailboxView
+            ) : activeView?.renderer === "mail-client" ? (
+                <MailClientView
                     view={activeView}
                     telemetry={telemetryByServiceId?.[activeView?.data?.serviceId] ?? null}
                     dashboardTheme={dashboardTheme}

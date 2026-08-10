@@ -1,5 +1,5 @@
-import { discoverNetwork } from "dashboard/plugins/mailbox/topology.js";
-import { stripLitMarkup } from "dashboard/plugins/mailbox/lit-text.js";
+import { discoverNetwork } from "dashboard/plugins/mailbox/mail-client-topology.js";
+import { stripLitMarkup } from "dashboard/plugins/mailbox/mail-client-lit-text.js";
 import { MAILBOX_COMMAND_PORT, MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -7,8 +7,8 @@ export const DASHBOARD_SCRIPT_METADATA = {
 };
 
 const MAILBOX_STATE_JSON = "data/mailbox_state.json";
-const READER_SCRIPT = "dashboard/plugins/mailbox/mailbox-reader.js";
-const DARKNET_AGENT_SCRIPT = "dashboard/plugins/mailbox/mailbox-darknet-agent.js";
+const READER_SCRIPT = "dashboard/plugins/mailbox/mail-client-reader.js";
+const DARKNET_AGENT_SCRIPT = "dashboard/plugins/mailbox/mail-client-darknet-agent.js";
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
 const SCAN_INTERVAL_MS = 5000;
 const READER_RETRY_MS = 30000;
@@ -334,7 +334,7 @@ function buildSnapshot(messages, lastCommand) {
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
-    ns.tprint("[MAILBOX] Mailbox Scanner started.");
+    ns.tprint("[MAIL CLIENT] Mail Client Scanner started.");
 
     const messages = loadState(ns);
     migrateStoredMessages(messages);

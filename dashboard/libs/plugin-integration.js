@@ -15,8 +15,8 @@ function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
 }
 
-// A merged integration's option-carrying siblings (faction-gangs.js, faction-manager-boost.js,
-// server-buyer-cloud.js, batcher-beginner.js, etc.) can be autostarted and running entirely on
+// A merged integration's option-carrying siblings (faction-manager-gangs.js, faction-manager-boost.js,
+// server-manager-cloud.js, hacking-ops-beginner.js, etc.) can be autostarted and running entirely on
 // their own, independent of whether the integration's own paired script (scriptPath) is running -
 // confirmed real: with "progression.factions" autostart disabled but faction-gangs.js's own
 // autostart left on, every option send for this integration silently no-op'd forever (checks that
