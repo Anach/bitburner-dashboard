@@ -2,6 +2,7 @@ export const DASHBOARD_VIEW_METADATA = {
     "id": "system-overview",
     "renderer": "system-overview",
     "menuGroup": "overview",
+    "menuOrder": -100,
     "menuLabel": "System Overview",
     "title": "System Overview",
     "subtitle": "Core dashboard status, capacity, and available service health.",

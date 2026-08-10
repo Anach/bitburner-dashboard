@@ -1,7 +1,7 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "metadata",
     "serviceId": "system.playerStatus",
-    "menuGroup": "globalOptions",
+    "menuGroup": "services",
     "menuLabel": "Player Status",
     "menuVisible": false,
     "description": "Publishes player state for metadata-driven dashboard HUD surfaces.",
@@ -44,7 +44,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "type": "player-stats",
             "title": "Player Status",
             "subtitle": "Live player telemetry",
-            "excludeMenuGroups": ["globalOptions"],
+            "excludeMenuGroups": ["configuration", "services"],
             "serviceIds": ["system.playerStatus"],
             "groupIds": ["core", "location", "work", "history"],
             "orientation": "vertical",

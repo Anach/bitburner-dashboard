@@ -82,7 +82,11 @@ import { buildFileManagerSnapshots, loadFileManagerManifest } from "dashboard/re
 import { configureNetworkMapView, NetworkMapView } from "dashboard/renderers/network-map-view.jsx";
 import { applyDashboardViewTelemetry, applyDashboardViewTelemetryContributions } from "dashboard/libs/view-telemetry.js";
 import { applyDashboardServiceTelemetryContributions, getDashboardServiceTelemetryStateLines } from "dashboard/libs/service-telemetry.js";
-import { applyDashboardServiceTableContributions, getDashboardServiceTableSections } from "dashboard/libs/service-tables.js";
+import {
+    applyDashboardServiceTableContributions,
+    getDashboardServiceTableSections,
+    getDashboardServiceTableStateLines,
+} from "dashboard/libs/service-tables.js";
 import { configureDashboardShell, DashboardShell } from "dashboard/renderers/dashboard-shell.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
@@ -1218,14 +1222,16 @@ function getDefaultUiState() {
             hardware: false,
             software: false,
             automation: false,
-            globalOptions: false
+            configuration: false,
+            services: false
         },
         activeViewId: "",
         healthFilter: "all",
         selectedItem: getDefaultSelectedServiceId(),
         centerPanels: {
             "hardware.home": "infrastructure",
-            "global.dashboardOptions": "options",
+            "global.dashboardOptions": "status",
+            "global.startOrder": "order",
             "global.options": "",
             "global.coreModules": "",
             "global.integrations": "",
@@ -1243,12 +1249,13 @@ function loadUiState() {
     const saved = globalThis[DASHBOARD_UI_STATE_KEY];
     if (!saved || typeof saved !== "object") return base;
 
-    // No stale-id rename table needed here: a saved selectedItem/centerPanel that no longer
-    // matches any currently registered service/panel already falls back to the default generically
-    // below (getServiceById(...) check) and in resolveSelectedCenterPanel() (dashboard/libs/
-    // script-list.js) - menu/panel ids are metadata-driven now, so any old id is just "not found"
-    // rather than needing to be individually remembered and remapped.
-    const upgradedSelectedItem = saved.selectedItem ?? base.selectedItem;
+    // Start Order used to be a Dashboard Options subview. Preserve an actively selected old view
+    // across a hot dashboard restart now that it is its own Services entry.
+    const savedStartOrderSelected = saved.selectedItem === "global.dashboardOptions"
+        && saved.centerPanels?.["global.dashboardOptions"] === "start-order";
+    const upgradedSelectedItem = savedStartOrderSelected
+        ? "global.startOrder"
+        : saved.selectedItem ?? base.selectedItem;
 
     const upgradedCenterPanels = {
         ...base.centerPanels,
@@ -1267,6 +1274,15 @@ function loadUiState() {
         upgradedExpandedGroups.affiliations = savedExpandedGroups.progression;
     }
     delete upgradedExpandedGroups.progression;
+    if (typeof savedExpandedGroups.globalOptions === "boolean") {
+        if (typeof savedExpandedGroups.configuration !== "boolean") {
+            upgradedExpandedGroups.configuration = savedExpandedGroups.globalOptions;
+        }
+        if (typeof savedExpandedGroups.services !== "boolean") {
+            upgradedExpandedGroups.services = savedExpandedGroups.globalOptions;
+        }
+    }
+    delete upgradedExpandedGroups.globalOptions;
     const savedActiveViewId = typeof saved.activeViewId === "string"
         ? saved.activeViewId
         : saved.homeMode ? "system-overview" : "";
@@ -1913,7 +1929,8 @@ function performScriptFileAction(ns, action, filename) {
 
 const DASHBOARD_PINNED_MENU_GROUPS = [
     { id: "software", title: "Software", order: 900 },
-    { id: "globalOptions", title: "Options", order: 1000 },
+    { id: "configuration", title: "Configuration", order: 1000 },
+    { id: "services", title: "Services", order: 1100 },
 ];
 
 const DASHBOARD_SERVICES = [
@@ -2000,20 +2017,18 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.dashboardOptions",
-        menuGroup: "globalOptions",
+        menuGroup: "configuration",
         menuOrder: -100,
         menuLabel: "Dashboard Options",
         description: "Controls dashboard-wide presentation and Script List visibility. Plugin discovery is unaffected.",
         alwaysVisible: true,
-        defaultPanelId: "options",
-        // Start Order is a bespoke right-column view: the center column only supplies its
-        // sub-widget menu entry because a reorderable list doesn't fit the generic panel contract.
+        defaultPanelId: "status",
         subviews: [
-            { id: "start-order", label: "Start Order" },
+            { id: "status", label: "Status" },
             { id: "options", label: "Options" },
         ],
         panelMeta: {
-            "start-order": { title: "Service Start Order", accent: "#6cb4ff", subtitle: "Order the Integration Service Supervisor uses when RAM is scarce" },
+            status: { title: "Dashboard Status", accent: "#6cb4ff", subtitle: "Current presentation and visibility configuration" },
             options: { title: "Dashboard Options", accent: "#6cb4ff", subtitle: "Configure dashboard-wide behavior" },
         },
         getInputs: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
@@ -2060,8 +2075,8 @@ const DASHBOARD_SERVICES = [
                 },
             ];
         },
-        getState: ({ selectedCenterPanel, options, pluginDashboardOptionInputs }) => {
-            if (selectedCenterPanel !== "options") return [];
+        getState: ({ selectedCenterPanel, options }) => {
+            if (selectedCenterPanel !== "status") return [];
             const configuredFolders = parseScriptFolders(options.hiddenScriptFolders);
             const configuredFiles = parseScriptFiles(options.hiddenScriptFiles);
             return [
@@ -2076,8 +2091,22 @@ const DASHBOARD_SERVICES = [
         },
     },
     {
+        id: "global.startOrder",
+        menuGroup: "services",
+        menuLabel: "Start Order",
+        description: "Controls the order the Integration Service Supervisor uses when available RAM cannot start every eligible service.",
+        alwaysVisible: true,
+        defaultPanelId: "order",
+        subviews: [
+            { id: "order", label: "Order" },
+        ],
+        panelMeta: {
+            order: { title: "Service Start Order", accent: "#6cb4ff", subtitle: "Order the Integration Service Supervisor uses when RAM is scarce" },
+        },
+    },
+    {
         id: "global.coreModules",
-        menuGroup: "globalOptions",
+        menuGroup: "services",
         menuLabel: "Core Modules",
         alwaysVisible: true,
         rendererKey: "global.coreModules",
@@ -2127,7 +2156,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.integrations",
-        menuGroup: "globalOptions",
+        menuGroup: "services",
         menuLabel: "Integration Manager",
         alwaysVisible: true,
         rendererKey: "global.integrations",
@@ -2166,7 +2195,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.plugins",
-        menuGroup: "globalOptions",
+        menuGroup: "services",
         menuLabel: "Plugin Manager",
         alwaysVisible: true,
         rendererKey: "global.plugins",
@@ -2214,7 +2243,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.options",
-        menuGroup: "globalOptions",
+        menuGroup: "services",
         menuLabel: "Script Manager",
         alwaysVisible: true,
         rendererKey: "global.options",
@@ -2549,6 +2578,7 @@ function getServiceState(service, context) {
     return [
         ...(Array.isArray(stateLines) ? stateLines : []),
         ...getDashboardServiceTelemetryStateLines(service, context),
+        ...getDashboardServiceTableStateLines(service, context),
     ];
 }
 
@@ -4275,7 +4305,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // on every render. Run the follow step in a later layout effect so restoration happens first,
     // then move only the right-column scroller by the minimum amount needed to reveal the row.
     React.useLayoutEffect(() => {
-        if (selectedItem !== "global.dashboardOptions" || selectedCenterPanel !== "start-order") return;
+        if (selectedItem !== "global.startOrder" || selectedCenterPanel !== "order") return;
         if (!uiState.startOrderSelectedServiceId) return;
 
         const container = rightColumnRef.current;
@@ -4757,8 +4787,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         // for every other panel, so it's rendered directly here instead of through
         // renderContractPanel. Lives in the right column (not the center column, where it was
         // first placed) because the list itself is too wide for that column - the center column
-        // only gets a menu entry (the "Start Order" subview button) for it.
-        if (selectedItem === "global.dashboardOptions" && panelId === "start-order") {
+        // only gets a menu entry (the "Order" subview button) for it.
+        if (selectedItem === "global.startOrder" && panelId === "order") {
             return (
                 <Card title="Service Start Order" accent="#6cb4ff" subtitle="Order the Integration Service Supervisor uses when RAM is scarce" widgetStyles={WIDGET_STYLES}>
                     {getServiceStartOrder(options).length === 0 ? (
@@ -5377,7 +5407,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     style={WIDGET_STYLES.column}
                     onScroll={(e) => rememberScroll("center", e.currentTarget.scrollTop)}
                 >
-                    {selectedItem === "global.dashboardOptions" ? (
+                    {selectedItem === "global.startOrder" ? (
                         <>
                             <Card title="Kill Controls" accent="#ff9a9a" subtitle="Kill scripts across home and remote hosts" widgetStyles={WIDGET_STYLES}>
                                 {renderServiceActions(globalScriptControlActions)}

@@ -19,6 +19,27 @@ function compareValues(left, right) {
     return String(left ?? "").localeCompare(String(right ?? ""), undefined, { sensitivity: "base" });
 }
 
+function getAggregateValue(definition, rows, conflictCount) {
+    if (definition?.aggregate === "count") return rows.length;
+    if (definition?.aggregate === "distinctCount") {
+        return new Set(rows
+            .map((row) => getValue(row, definition.key))
+            .filter((value) => value !== undefined && value !== null && value !== "")
+            .map(String)).size;
+    }
+    if (definition?.aggregate === "maxPlusOne") {
+        const values = rows.map((row) => Number(getValue(row, definition.key))).filter(Number.isFinite);
+        return values.length > 0 ? Math.max(...values) + 1 : "-";
+    }
+    if (definition?.aggregate === "conflictCount") return conflictCount;
+    return undefined;
+}
+
+function getAggregateTone(definition, value) {
+    if (definition?.tone === "dangerWhenPositive") return Number(value) > 0 ? "danger" : "success";
+    return typeof definition?.tone === "string" ? definition.tone : "neutral";
+}
+
 function buildTableSection(definition, contributions) {
     const rows = contributions.flatMap(({ rows, sourceServiceId, sourceLabel }) => (
         rows.map((row) => ({
@@ -109,4 +130,24 @@ export function getDashboardServiceTableSections(service, context = {}) {
     const panelId = context?.selectedCenterPanel;
     return (Array.isArray(service?.tableSections) ? service.tableSections : [])
         .filter((section) => typeof section?.panelId !== "string" || section.panelId === panelId);
+}
+
+export function getDashboardServiceTableStateLines(service, context = {}) {
+    const panelId = context?.selectedCenterPanel;
+    const lines = [];
+    for (const section of Array.isArray(service?.tableSections) ? service.tableSections : []) {
+        if (section?.statusPanelId !== panelId || !Array.isArray(section?.statusFields)) continue;
+        const rows = Array.isArray(section.rows) ? section.rows : [];
+        for (const field of section.statusFields) {
+            if (typeof field?.label !== "string" || field.label.length === 0) continue;
+            const value = getAggregateValue(field, rows, Number(section.conflictCount) || 0);
+            if (value === undefined) continue;
+            lines.push({
+                label: field.label,
+                value: String(value),
+                tone: getAggregateTone(field, value),
+            });
+        }
+    }
+    return lines;
 }

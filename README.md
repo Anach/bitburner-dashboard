@@ -187,7 +187,7 @@ Two optional fields control presentation without registering the category in das
 - `menuGroupLabel` overrides the title inferred from `menuGroup`.
 - `menuGroupOrder` is an optional finite number used for ascending category order. Categories without one sort alphabetically by their displayed label.
 
-All descriptors contributing to the same category should declare the same label and optional order. Conflicts are reported in the browser console and resolved deterministically. Entries within each category sort alphabetically by their displayed label. An entry may set numeric `menuOrder`; lower values appear first, so `"menuOrder": -100` provides a simple top pin. Entries sharing an order remain alphabetical. **Software** and **Options** remain framework-pinned at the bottom of the menu; all other categories are metadata-driven.
+All descriptors contributing to the same category should declare the same label and optional order. Conflicts are reported in the browser console and resolved deterministically. Entries within each category sort alphabetically by their displayed label. An entry may set numeric `menuOrder`; lower values appear first, so `"menuOrder": -100` provides a simple top pin. Entries sharing an order remain alphabetical. **Software**, **Configuration**, and **Services** remain framework-pinned at the bottom of the menu; all other categories are metadata-driven.
 
 ### Contributing telemetry to a full-window view
 
@@ -259,7 +259,9 @@ without the target importing or naming the contributor:
 ```
 
 The framework merges and sorts rows using only the target's table definition. Repeated values of
-its `conflictKey` are highlighted and counted. Contributions disappear with their descriptor, so
+its `conflictKey` are highlighted and counted. A table may also declare `statusPanelId` and generic
+`statusFields` aggregates (`count`, `distinctCount`, `maxPlusOne`, or `conflictCount`) to expose a
+compact status panel from the same merged rows. Contributions disappear with their descriptor, so
 the table always represents the installed integration set.
 
 Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation. Use the `static` adapter for a menu service with panels but no Netscript process.

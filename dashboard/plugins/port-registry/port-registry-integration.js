@@ -1,13 +1,20 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "static",
     "serviceId": "global.portRegistry",
-    "menuGroup": "globalOptions",
+    "menuGroup": "configuration",
     "menuLabel": "Port Registry",
     "description": "Lists the Netscript ports declared by installed dashboard and script integrations.",
     "daemon": false,
     "alwaysVisible": true,
-    "defaultPanelId": "registry",
+    "defaultPanelId": "status",
     "panels": [
+        {
+            "id": "status",
+            "label": "Status",
+            "title": "Port Registry Status",
+            "accent": "#c084fc",
+            "subtitle": "Installed assignment coverage and collision health"
+        },
         {
             "id": "registry",
             "label": "Registry",
@@ -24,8 +31,15 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "rowKey": "constant",
             "sortKey": "port",
             "conflictKey": "port",
+            "statusPanelId": "status",
             "minWidth": "760px",
             "emptyText": "No installed integration has declared a port assignment.",
+            "statusFields": [
+                { "label": "Assigned Ports", "aggregate": "count", "tone": "info" },
+                { "label": "Contributors", "aggregate": "distinctCount", "key": "_contributionServiceId", "tone": "info" },
+                { "label": "Next Free Port", "aggregate": "maxPlusOne", "key": "port", "tone": "success" },
+                { "label": "Conflicts", "aggregate": "conflictCount", "tone": "dangerWhenPositive" }
+            ],
             "summaries": [
                 { "label": "assigned ports", "aggregate": "count", "format": "suffix" },
                 { "label": "Next free", "aggregate": "maxPlusOne", "key": "port" },

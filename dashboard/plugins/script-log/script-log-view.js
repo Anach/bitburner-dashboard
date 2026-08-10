@@ -1,7 +1,7 @@
 export const DASHBOARD_VIEW_METADATA = {
     "id": "script-logs",
     "renderer": "script-log",
-    "menuGroup": "software",
+    "menuGroup": "configuration",
     "menuLabel": "Script Logs",
     "title": "Script Log Viewer",
     "subtitle": "Live output from running home scripts and recently stopped processes.",
