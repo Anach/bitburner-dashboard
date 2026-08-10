@@ -31,8 +31,8 @@ export const STOCK_TRADER_COMMAND_PORT = 30; // finances/trading-engine/trading-
 // bitburner-dashboard/*
 export const NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT = 25; // dashboard/plugins/network-map/network-navigator-singularity.js
 export const NETWORK_NAVIGATOR_COMMAND_PORT = 26; // dashboard/plugins/network-map/network-navigator.js
-export const MAILBOX_COMMAND_PORT = 27; // dashboard/plugins/mailbox/mail-client-scanner.js (moved from 21 - collided with hacking-engine-buyer.js)
-export const MAILBOX_FEED_PORT = 28; // dashboard/plugins/mailbox/mail-client-reader.js (moved from 22 - collided with server-manager.js)
+export const MAILBOX_COMMAND_PORT = 27; // dashboard/plugins/mail-client/mail-client-scanner.js (moved from 21 - collided with hacking-engine-buyer.js)
+export const MAILBOX_FEED_PORT = 28; // dashboard/plugins/mail-client/mail-client-reader.js (moved from 22 - collided with server-manager.js)
 export const EXAMPLE_MONITOR_COMMAND_PORT = 29; // dashboard/examples/example-monitor-integration.js (documentation only, never deployed - moved from 23 for consistency)
 
 // UI-facing metadata for the dashboard's Port Registry table. Port values deliberately reference
@@ -51,7 +51,7 @@ export const PORT_REGISTRY_ENTRIES = Object.freeze([
     { port: BATCHER_BEGINNER_COMMAND_PORT, constant: "BATCHER_BEGINNER_COMMAND_PORT", service: "Hacking Operations — Beginner", channel: "Command", repo: "scripts", owner: "hacking/hacking-ops/profiles/hacking-ops-beginner.js" },
     { port: NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT, constant: "NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT", service: "Network Navigator — Singularity", channel: "Command", repo: "dashboard", owner: "dashboard/plugins/network-map/network-navigator-singularity.js" },
     { port: NETWORK_NAVIGATOR_COMMAND_PORT, constant: "NETWORK_NAVIGATOR_COMMAND_PORT", service: "Network Navigator", channel: "Command", repo: "dashboard", owner: "dashboard/plugins/network-map/network-navigator.js" },
-    { port: MAILBOX_COMMAND_PORT, constant: "MAILBOX_COMMAND_PORT", service: "Mail Client Scanner", channel: "Command", repo: "dashboard", owner: "dashboard/plugins/mailbox/mail-client-scanner.js" },
+    { port: MAILBOX_COMMAND_PORT, constant: "MAILBOX_COMMAND_PORT", service: "Mail Client Scanner", channel: "Command", repo: "dashboard", owner: "dashboard/plugins/mail-client/mail-client-scanner.js" },
     { port: MAILBOX_FEED_PORT, constant: "MAILBOX_FEED_PORT", service: "Mail Client Reader", channel: "Internal feed", repo: "dashboard", owner: "mail-client-darknet-agent.js / mail-client-scanner.js → mail-client-reader.js" },
     { port: EXAMPLE_MONITOR_COMMAND_PORT, constant: "EXAMPLE_MONITOR_COMMAND_PORT", service: "Example Monitor", channel: "Example", repo: "dashboard", owner: "dashboard/examples/example-monitor-integration.js" },
     { port: STOCK_TRADER_COMMAND_PORT, constant: "STOCK_TRADER_COMMAND_PORT", service: "Trading Engine", channel: "Command", repo: "scripts", owner: "finances/trading-engine/trading-engine.js" },

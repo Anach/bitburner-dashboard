@@ -9,12 +9,12 @@ export const DASHBOARD_PLUGIN_METADATA = {
         { "type": "api", "id": "darknet", "required": false }
     ],
     "daemon": true,
-    "managedNetworkScripts": ["dashboard/plugins/mailbox/mail-client-reader.js", "dashboard/plugins/mailbox/mail-client-darknet-agent.js"],
+    "managedNetworkScripts": ["dashboard/plugins/mail-client/mail-client-reader.js", "dashboard/plugins/mail-client/mail-client-darknet-agent.js"],
     "panels": [
         { "id": "status", "label": "Status", "title": "Mail Client", "accent": "#ffd17a", "subtitle": "Message discovery and read-state tracking" }
     ],
     "telemetry": {
-        "path": "data/mailbox_state.json",
+        "path": "data/mail_client_state.json",
         "fields": [
             { "key": "generatedAt", "label": "Last Updated", "tone": "neutral", "format": "time", "panelId": "status" },
             { "key": "totalUnread", "label": "Unread", "tone": "warnWhenPositive", "format": "number", "panelId": "status" },

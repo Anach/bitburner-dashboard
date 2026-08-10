@@ -38,10 +38,10 @@ const TRAVEL_COST = 200_000;
 // affiliations/faction-manager/faction-manager-boost.js's CORE_STATUS_STALE_AFTER_MS.
 const WORKER_STALE_AFTER_MS = 15000;
 const DATA_PATHS = {
-    batcherStatsJson: "data/batcher_stats.json",
-    batcherMoneyStatsJson: "data/batcher_money_stats.json",
-    batcherXpStatsJson: "data/batcher_xp_stats.json",
-    batcherBalancedStatsJson: "data/batcher_balanced_stats.json",
+    batcherStatsJson: "data/hacking_ops_stats.json",
+    batcherMoneyStatsJson: "data/hacking_ops_money_stats.json",
+    batcherXpStatsJson: "data/hacking_ops_xp_stats.json",
+    batcherBalancedStatsJson: "data/hacking_ops_balanced_stats.json",
     networkNavigatorStatsJson: "data/network_navigator_stats.json",
     networkNavigatorFormulasStatsJson: "data/network_navigator_formulas_stats.json",
     networkNavigatorSingularityStatsJson: "data/network_navigator_singularity_stats.json",

@@ -47,9 +47,9 @@ Included plugins (each independently removable; only pay for what you keep insta
 | --- | ---: | --- |
 | Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.1 GB | |
 | Network Navigator (`dashboard/plugins/network-map/network-navigator.js`) | 234.9 GB | Dominated by six pre-SF4-penalized `ns.singularity.*` calls used for city/company details. Drops sharply once Source-File 4 is unlocked — this is expected, not a bug. |
-| Mail Client Scanner (`dashboard/plugins/mailbox/mail-client-scanner.js`) | 5.25 GB | |
-| Mail Client Darknet Agent (`dashboard/plugins/mailbox/mail-client-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
-| Mail Client Reader (`dashboard/plugins/mailbox/mail-client-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
+| Mail Client Scanner (`dashboard/plugins/mail-client/mail-client-scanner.js`) | 5.25 GB | |
+| Mail Client Darknet Agent (`dashboard/plugins/mail-client/mail-client-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
+| Mail Client Reader (`dashboard/plugins/mail-client/mail-client-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
 | File Manager / Script Log / Mail Client views (`file-manager-view.js`, `script-log-view.js`, `mail-client-view.js`) | 1.6 GB each | Pure metadata descriptors with no `main()` — base script cost only. |
 
 These figures are static per-script costs, not a live-usage snapshot — measure your own installation after syncing if you need an exact number, since it depends on exactly which plugins you keep and whether Source-File 4 is unlocked.

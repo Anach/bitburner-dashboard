@@ -1,14 +1,14 @@
 import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
-import { stripLitMarkup } from "dashboard/plugins/mailbox/mail-client-lit-text.js";
+import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": false
 };
 
-const dnetFiles = ["dashboard/plugins/mailbox/mail-client-darknet-agent.js"];
+const dnetFiles = ["dashboard/plugins/mail-client/mail-client-darknet-agent.js"];
 const dnetFile = 0;
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
-const SCANNER_SCRIPT = "dashboard/plugins/mailbox/mail-client-scanner.js";
+const SCANNER_SCRIPT = "dashboard/plugins/mail-client/mail-client-scanner.js";
 
 /** @param {NS} ns */
 export async function main(ns) {

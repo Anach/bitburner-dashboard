@@ -1988,7 +1988,7 @@ const DASHBOARD_SERVICES = [
         },
         getState: ({ selectedCenterPanel, options, homeRamStatus, telemetryByServiceId }) => {
             if (selectedCenterPanel !== "infrastructure") return [];
-            // Cores piggybacks on Server Buyer's own telemetry (data/server_buyer_core_stats.json,
+            // Cores piggybacks on Server Buyer's own telemetry (data/server_manager_stats.json,
             // homeCores - already read into telemetryByServiceId once per tick for its own panel)
             // rather than a direct ns.getServer("home") call here, which would be a flat +2GB tax on
             // this always-running dashboard process just to read a number that only changes on a rare
