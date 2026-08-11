@@ -384,6 +384,8 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
             label,
             optionKey,
             ...(typeof input.group === "string" && input.group.length > 0 ? { group: input.group } : {}),
+            ...(typeof input.description === "string" && input.description.length > 0 ? { description: input.description } : {}),
+            ...(typeof input.tooltip === "string" && input.tooltip.length > 0 ? { tooltip: input.tooltip } : {}),
             type: input.type,
             value: inputLocked ? (input.lockedValue === "maximum" ? maximum : input.lockedValue) : (input.type === "number" ? numericValue : rawValue),
             ...(Array.isArray(input.values) ? { options: input.values } : {}),
@@ -651,6 +653,21 @@ export function getPluginIntegrationSections(integration, stats, panelId, contex
                 return {
                     ...section,
                     data: sectionOffline ? [] : (Array.isArray(source) ? source : []),
+                    offline: sectionOffline,
+                    sourceLabel: sourceFreshness?.sourceLabel,
+                    sourceAgeText: sourceFreshness?.ageText,
+                };
+            }
+            // DashboardDataTable (dashboard/renderers/dashboard-table.jsx) reads section.rows, not
+            // section.items - every other non-graph section type reads items instead, so a table
+            // section needs its own branch rather than falling into the generic one below (which
+            // would resolve sourceKey into a field the renderer never looks at, leaving the table
+            // permanently empty regardless of live data). Same stale-data behavior as the generic
+            // branch: keep last-known rows rather than zeroing them like a graph does.
+            if (section.type === "table") {
+                return {
+                    ...section,
+                    rows: Array.isArray(source) ? source : [],
                     offline: sectionOffline,
                     sourceLabel: sourceFreshness?.sourceLabel,
                     sourceAgeText: sourceFreshness?.ageText,

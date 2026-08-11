@@ -9,8 +9,14 @@ import {
     HIDE_UNQUALIFIED_PLUGINS_MODES,
     isServiceAutostartEnabled,
     isServiceVisibleInMenu,
+    MENU_UNLOCK_GLYPH_SCOPE_MAIN,
+    MENU_UNLOCK_GLYPH_SCOPE_SUBMENUS,
+    MENU_UNLOCK_GLYPH_SCOPES,
     normalizeDashboardOptions,
     normalizeHideUnqualifiedPluginsMode,
+    normalizeMenuUnlockGlyphMaxCount,
+    normalizeMenuUnlockGlyphOpacity,
+    normalizeMenuUnlockGlyphScope,
     sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
 import {
@@ -133,8 +139,11 @@ import {
     shouldStartPluginIntegrationAfterOptionChange,
 } from "dashboard/libs/plugin-integration.js";
 import {
+    buildPluginMenuRequirementBadges,
     buildPluginRequirementSection,
     buildPluginRequirementsSnapshot,
+    compactPluginMenuRequirementBadges,
+    getPluginMenuRequirementBadgeBudget,
     getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
@@ -308,6 +317,9 @@ const WIDGET_STYLES = {
     },
     menuItemButton: {
         width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
         textAlign: "left",
         background: "rgba(10, 12, 10, 0.95)",
         border: "none",
@@ -1035,12 +1047,16 @@ const WIDGET_STYLES = {
         gridTemplateColumns: "16px minmax(0, 1fr)",
         alignItems: "center",
         gap: "7px",
+        width: "100%",
+        boxSizing: "border-box",
         padding: "5px 6px",
         border: "1px solid rgba(125, 160, 212, 0.14)",
         borderRadius: "5px",
         background: "rgba(7, 12, 10, 0.8)",
         color: "#b9d3c1",
         fontSize: "10px",
+        fontFamily: "inherit",
+        textAlign: "left",
         cursor: "pointer"
     },
     networkNode: {
@@ -2086,6 +2102,56 @@ const DASHBOARD_SERVICES = [
                     options: HIDE_UNQUALIFIED_PLUGINS_MODES,
                     value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode),
                 },
+                {
+                    id: "menu-unlock-glyphs-enabled",
+                    label: "Show unlock glyphs",
+                    description: "Show feature and unlock markers beside service and panel menu entries.",
+                    tooltip: "Disables only unlock glyphs. Health warnings and runtime-status dots remain visible.",
+                    optionKey: "menuUnlockGlyphsEnabled",
+                    type: "boolean-select",
+                    value: options.menuUnlockGlyphsEnabled,
+                    group: "Unlock Glyphs",
+                },
+                {
+                    id: "menu-unlock-glyph-max-count",
+                    label: "Maximum glyph count",
+                    description: "Maximum visible glyph slots per row before excess unlocks collapse into +N.",
+                    tooltip: "Each health exclamation mark and the runtime-status dot consume slots and are never hidden. Range: 3-12.",
+                    optionKey: "menuUnlockGlyphMaxCount",
+                    type: "number",
+                    value: normalizeMenuUnlockGlyphMaxCount(options.menuUnlockGlyphMaxCount),
+                    min: 3,
+                    max: 12,
+                    step: 1,
+                    disabled: options.menuUnlockGlyphsEnabled === false,
+                    group: "Unlock Glyphs",
+                },
+                {
+                    id: "menu-unlock-glyph-opacity",
+                    label: "Unlock glyph opacity",
+                    description: "Controls the prominence of unlock and +N markers without dimming health or runtime status.",
+                    tooltip: "Choose an opacity from 0.10 to 1.00.",
+                    optionKey: "menuUnlockGlyphOpacity",
+                    type: "number",
+                    value: normalizeMenuUnlockGlyphOpacity(options.menuUnlockGlyphOpacity),
+                    min: 0.1,
+                    max: 1,
+                    step: 0.05,
+                    disabled: options.menuUnlockGlyphsEnabled === false,
+                    group: "Unlock Glyphs",
+                },
+                {
+                    id: "menu-unlock-glyph-scope",
+                    label: "Unlock glyph placement",
+                    description: "Choose which navigation level receives unlock markers.",
+                    tooltip: "Health warnings and runtime-status dots are unaffected by this placement setting.",
+                    optionKey: "menuUnlockGlyphScope",
+                    type: "select",
+                    options: MENU_UNLOCK_GLYPH_SCOPES,
+                    value: normalizeMenuUnlockGlyphScope(options.menuUnlockGlyphScope),
+                    disabled: options.menuUnlockGlyphsEnabled === false,
+                    group: "Unlock Glyphs",
+                },
                 ...(Array.isArray(pluginDashboardOptionInputs) ? pluginDashboardOptionInputs : []),
                 {
                     id: "hidden-script-folders",
@@ -2111,6 +2177,9 @@ const DASHBOARD_SERVICES = [
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
                 { label: "Hide unqualified plugins", value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode), tone: "info" },
+                { label: "Unlock glyphs", value: options.menuUnlockGlyphsEnabled === false ? "Hidden" : normalizeMenuUnlockGlyphScope(options.menuUnlockGlyphScope), tone: "info" },
+                { label: "Glyph limit", value: `${normalizeMenuUnlockGlyphMaxCount(options.menuUnlockGlyphMaxCount)}`, tone: "neutral" },
+                { label: "Glyph opacity", value: `${Math.round(normalizeMenuUnlockGlyphOpacity(options.menuUnlockGlyphOpacity) * 100)}%`, tone: "neutral" },
                 { label: "Last window mode", value: normalizeDashboardWindowMode(options.dashboardLastWindowMode), tone: "neutral" },
                 { label: "Hidden folders", value: configuredFolders.join(", ") || "None", tone: "info" },
                 { label: "Hidden scripts", value: configuredFiles.join(", ") || "None", tone: "info" },
@@ -2667,9 +2736,12 @@ function getServiceInputs(service, context) {
     return inputs
         .filter((input) => input && typeof input.id === "string" && typeof input.label === "string" && typeof input.optionKey === "string")
         .map((input) => {
-            if (typeof input.group === "string" && input.group.length > 0) return input;
-            const metadataGroup = metadataGroupByOptionKey.get(input.optionKey);
-            return metadataGroup ? { ...input, group: metadataGroup } : input;
+            const normalizedInput = input.type === "checkbox"
+                ? { ...input, type: "boolean-select" }
+                : input;
+            if (typeof normalizedInput.group === "string" && normalizedInput.group.length > 0) return normalizedInput;
+            const metadataGroup = metadataGroupByOptionKey.get(normalizedInput.optionKey);
+            return metadataGroup ? { ...normalizedInput, group: metadataGroup } : normalizedInput;
         });
 }
 
@@ -3566,6 +3638,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const visibleWorkspaceWidgets = workspaceWidgets.filter((widget) => widget.type !== "player-stats" || playerStatsEnabled);
     const selectedServiceHealth = serviceHealthById[selectedItem] ?? { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
     const healthFilter = HEALTH_FILTER_MODES.has(uiState.healthFilter) ? uiState.healthFilter : "all";
+    const menuUnlockGlyphsEnabled = options.menuUnlockGlyphsEnabled !== false;
+    const menuUnlockGlyphMaxCount = normalizeMenuUnlockGlyphMaxCount(options.menuUnlockGlyphMaxCount);
+    const menuUnlockGlyphOpacity = normalizeMenuUnlockGlyphOpacity(options.menuUnlockGlyphOpacity);
+    const menuUnlockGlyphScope = normalizeMenuUnlockGlyphScope(options.menuUnlockGlyphScope);
+    const showMainMenuUnlockGlyphs = menuUnlockGlyphsEnabled
+        && menuUnlockGlyphScope !== MENU_UNLOCK_GLYPH_SCOPE_SUBMENUS;
+    const showSubmenuUnlockGlyphs = menuUnlockGlyphsEnabled
+        && menuUnlockGlyphScope !== MENU_UNLOCK_GLYPH_SCOPE_MAIN;
     const healthCounts = dashboardServiceRegistry.services.reduce((counts, service) => {
         const level = serviceHealthById[service.id]?.level ?? "neutral";
         if (level === "danger") counts.danger += 1;
@@ -3668,11 +3748,32 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const renderHealthBadge = (level) => {
         if (level !== "warn" && level !== "danger") return null;
         return (
-            <span style={{ marginLeft: "6px", color: level === "danger" ? "#ff9a9a" : "#ffd88a" }}>
+            <span style={{ flex: "0 0 auto", marginLeft: "6px", color: level === "danger" ? "#ff9a9a" : "#ffd88a" }}>
                 {level === "danger" ? "!!" : "!"}
             </span>
         );
     };
+
+    const renderMenuRequirementBadges = (badges) => (
+        (Array.isArray(badges) ? badges : []).map((badge) => (
+            <span
+                key={badge.id}
+                title={badge.title}
+                aria-label={badge.title}
+                style={{
+                    minWidth: "8px",
+                    color: badge.color,
+                    fontSize: "10px",
+                    fontWeight: 900,
+                    lineHeight: 1,
+                    opacity: menuUnlockGlyphOpacity,
+                    textAlign: "center",
+                }}
+            >
+                {badge.symbol}
+            </span>
+        ))
+    );
 
     const getHealthSummaryTone = (level) => {
         if (level === "danger") return "#ffb0b0";
@@ -3901,8 +4002,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         setOptions((current) => {
             const next = { ...current };
 
-            if (input.type === "checkbox") {
-                next[input.optionKey] = Boolean(rawValue);
+            if (input.type === "boolean-select" || input.type === "checkbox") {
+                const normalizedValue = String(rawValue ?? "").trim().toLowerCase();
+                next[input.optionKey] = rawValue === true || normalizedValue === "on" || normalizedValue === "true";
                 return next;
             }
 
@@ -3999,42 +4101,35 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         };
 
         const renderInput = (input) => {
+            const booleanSelect = input.type === "boolean-select";
+            const booleanValue = input.value === true
+                || String(input.value ?? "").trim().toLowerCase() === "true"
+                || String(input.value ?? "").trim().toLowerCase() === "on";
+            const selectOptions = booleanSelect ? ["On", "Off"] : input.options;
             const tooltip = typeof input.tooltip === "string" && input.tooltip.length > 0
                 ? input.tooltip
-                : `${input.type === "checkbox" ? "Toggle" : "Adjust"} ${input.label}`;
+                : `${booleanSelect ? "Toggle" : "Adjust"} ${input.label}`;
             return (
                 <label key={input.id} title={tooltip} style={fieldStyle}>
                     <span data-dashboard-theme-role="data-heading">{input.label}</span>
                     {typeof input.description === "string" && input.description.length > 0 ? (
                         <span style={{ ...WIDGET_STYLES.smallMuted, lineHeight: 1.35 }}>{input.description}</span>
                     ) : null}
-                    {input.type === "select" && Array.isArray(input.options) ? (
+                    {(input.type === "select" || booleanSelect) && Array.isArray(selectOptions) ? (
                         <select
                             data-dashboard-theme-role="data-value"
                             title={tooltip}
                             style={controlStyle}
-                            value={String(input.value ?? "")}
+                            value={booleanSelect ? (booleanValue ? "On" : "Off") : String(input.value ?? "")}
                             disabled={Boolean(input.disabled)}
                             onFocus={() => setOptionsInputFocus(true)}
                             onBlur={() => setOptionsInputFocus(false)}
                             onChange={(e) => updateOptionInput(input, e.target.value)}
                         >
-                            {input.options.map((optionValue) => (
+                            {selectOptions.map((optionValue) => (
                                 <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
                             ))}
                         </select>
-                    ) : input.type === "checkbox" ? (
-                        <input
-                            data-dashboard-theme-role="data-value"
-                            title={tooltip}
-                            style={WIDGET_STYLES.input}
-                            type="checkbox"
-                            checked={Boolean(input.value)}
-                            disabled={Boolean(input.disabled)}
-                            onFocus={() => setOptionsInputFocus(true)}
-                            onBlur={() => setOptionsInputFocus(false)}
-                            onChange={(e) => updateOptionInput(input, e.target.checked)}
-                        />
                     ) : (
                         <input
                             data-dashboard-theme-role="data-value"
@@ -4708,6 +4803,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 <div style={WIDGET_STYLES.actionGrid}>
                     {centerPanels.map((panel) => {
                         const panelLevel = selectedServiceHealth?.panels?.[panel.id] ?? "neutral";
+                        const panelMeta = getPanelMeta(panel.id, {});
+                        const panelRequirementBadges = isGlobalListMenuItem(selectedItem) || !showSubmenuUnlockGlyphs
+                            ? []
+                            : compactPluginMenuRequirementBadges(
+                                buildPluginMenuRequirementBadges([
+                                    ...(Array.isArray(panelMeta?.menuUnlocks) ? panelMeta.menuUnlocks : []),
+                                    ...(Array.isArray(panelMeta?.requirements) ? panelMeta.requirements : []),
+                                ]),
+                                getPluginMenuRequirementBadgeBudget(menuUnlockGlyphMaxCount, panelLevel, false),
+                            );
                         const isSelected = selectedCenterPanel === panel.id;
                         const hasInlineScriptActions = panel.id === "options" && standardScriptActions.length > 0;
                         const inlineActionsExpandKey = `${selectedItem}:${panel.id}:inline-script-actions`;
@@ -4731,6 +4836,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                     style={{
                                         ...WIDGET_STYLES.actionButton,
                                         width: "100%",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "6px",
                                         ...(isGlobalListMenuItem(selectedItem) ? {
                                             borderColor: panel.running ? "rgba(110, 231, 168, 0.45)" : "rgba(255, 122, 122, 0.45)",
                                             color: panel.running ? "#baf6d2" : "#ffb0b0",
@@ -4763,8 +4871,33 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                         }
                                     }}
                                 >
-                                    {panel.label}{hasInlineScriptActions && isSelected ? (isInlineActionsExpanded ? " -" : " +") : ""}
-                                    {isGlobalListMenuItem(selectedItem) ? null : renderHealthBadge(panelLevel)}
+                                    <span style={{
+                                        flex: "1 1 auto",
+                                        minWidth: 0,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                    }}>
+                                        <span style={{
+                                            minWidth: 0,
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                        }}>
+                                            {panel.label}{hasInlineScriptActions && isSelected ? (isInlineActionsExpanded ? " -" : " +") : ""}
+                                        </span>
+                                        {isGlobalListMenuItem(selectedItem) ? null : renderHealthBadge(panelLevel)}
+                                    </span>
+                                    {panelRequirementBadges.length > 0 ? (
+                                        <span style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            flex: "0 0 auto",
+                                            gap: "5px",
+                                            marginLeft: "auto",
+                                        }}>
+                                            {renderMenuRequirementBadges(panelRequirementBadges)}
+                                        </span>
+                                    ) : null}
                                 </button>
 
                                 {shouldShowInlineScriptActions ? (
@@ -5512,6 +5645,24 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                     : itemService?.pluginMetadata?.daemon === true
                                                         ? "#ff8080"
                                                         : "#ffd88a";
+                                            const allItemRequirementBadges = showMainMenuUnlockGlyphs && itemService
+                                                ? buildPluginMenuRequirementBadges([
+                                                    ...(Array.isArray(itemService.pluginMetadata?.menuUnlocks)
+                                                        ? itemService.pluginMetadata.menuUnlocks
+                                                        : []),
+                                                    ...(Array.isArray(itemService.requirements)
+                                                        ? itemService.requirements
+                                                        : []),
+                                                ])
+                                                : [];
+                                            const itemRequirementBadges = compactPluginMenuRequirementBadges(
+                                                allItemRequirementBadges,
+                                                getPluginMenuRequirementBadgeBudget(
+                                                    menuUnlockGlyphMaxCount,
+                                                    itemLevel,
+                                                    Boolean(itemStatusDotColor),
+                                                ),
+                                            );
                                             return (
                                             <button
                                                 type="button"
@@ -5525,10 +5676,35 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                 onMouseDown={(event) => selectMenuItem(event, item.id)}
                                                 onClick={(event) => selectMenuItemFromKeyboard(event, item.id)}
                                             >
-                                                {item.label}
-                                                {renderHealthBadge(itemLevel)}
-                                                {itemStatusDotColor ? (
-                                                    <span style={{ marginLeft: "6px", color: itemStatusDotColor }}>●</span>
+                                                <span style={{
+                                                    flex: "1 1 auto",
+                                                    minWidth: 0,
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                }}>
+                                                    <span style={{
+                                                        minWidth: 0,
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        whiteSpace: "nowrap",
+                                                    }}>
+                                                        {item.label}
+                                                    </span>
+                                                    {renderHealthBadge(itemLevel)}
+                                                </span>
+                                                {itemRequirementBadges.length > 0 || itemStatusDotColor ? (
+                                                    <span style={{
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        flex: "0 0 auto",
+                                                        gap: "5px",
+                                                        marginLeft: "auto",
+                                                    }}>
+                                                        {renderMenuRequirementBadges(itemRequirementBadges)}
+                                                        {itemStatusDotColor ? (
+                                                            <span style={{ color: itemStatusDotColor }}>●</span>
+                                                        ) : null}
+                                                    </span>
                                                 ) : null}
                                             </button>
                                             );

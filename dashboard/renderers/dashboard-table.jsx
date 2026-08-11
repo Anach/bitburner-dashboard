@@ -3,6 +3,7 @@ import {
     buildDashboardTheme,
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
+import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
 
 let React = null;
 let rawReact = null;
@@ -119,10 +120,32 @@ export function DashboardDataTable({ section, widgetStyles }) {
                                         const conflictStyle = row?._conflict && column.key === section?.conflictKey
                                             ? { color: "#ff5f5f" }
                                             : {};
+                                        // toneKey looks up a per-row tone value (e.g. row.backdoorTone) rather
+                                        // than coloring the whole column one fixed color like `accent` does -
+                                        // the script that owns the data decides what's "important" per row
+                                        // (same toneKey convention buildPluginIntegrationTelemetryLine already
+                                        // uses for state lines), the table just maps that tone to a color via
+                                        // the same shared palette action buttons use (dashboard/libs/action-tones.js).
+                                        const toneStyle = typeof column.toneKey === "string"
+                                            ? { color: ACTION_TONE_STYLES[normalizeActionTone(getValue(row, column.toneKey))].color }
+                                            : {};
+                                        // The dashboard's own theme adapter (adaptStyleValue in theme-adapter.js)
+                                        // treats every "data-value"-tagged element as plain data and forces its
+                                        // color back to the theme's default secondary color unless the color
+                                        // classifies as warning/error - by design, so components can't pick
+                                        // arbitrary colors that clash with the user's chosen theme. That's the
+                                        // right default for an unstyled cell, but it silently flattened this
+                                        // column's own deliberately-chosen accent/toneKey color right back to
+                                        // gray (confirmed: only the "warn"-toned Backdoor column kept its color,
+                                        // every accent-colored column and the "success"-toned Ports column did
+                                        // not). A column that explicitly opts into a color is trusted exactly as
+                                        // given, so it skips the role tag entirely rather than fighting the
+                                        // adapter over it.
+                                        const hasCustomColor = Boolean(column.accent) || typeof column.toneKey === "string";
                                         return (
                                             <td
                                                 key={column.key}
-                                                data-dashboard-theme-role="data-value"
+                                                data-dashboard-theme-role={hasCustomColor ? undefined : "data-value"}
                                                 style={{
                                                     ...cellStyle,
                                                     textAlign: column.align ?? "left",
@@ -131,6 +154,7 @@ export function DashboardDataTable({ section, widgetStyles }) {
                                                     fontWeight: column.emphasis ? 800 : undefined,
                                                     fontSize: column.emphasis ? "15px" : column.uppercase ? "11px" : undefined,
                                                     color: column.accent,
+                                                    ...toneStyle,
                                                     ...conflictStyle,
                                                 }}
                                             >

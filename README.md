@@ -96,7 +96,7 @@ The dashboard opens its own tail and prevents duplicate dashboard instances. Its
 run dashboard/automation-dashboard.jsx --no-auto-start
 ```
 
-Dashboard Restart preserves whether `--no-auto-start` was active. Starting without the flag starts (or leaves alone, if already running) the supervisor. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, Player Stats visibility, and Script List exclusions can be changed under **Global Options → Dashboard Options**.
+Dashboard Restart preserves whether `--no-auto-start` was active. Starting without the flag starts (or leaves alone, if already running) the supervisor. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, unlock-glyph presentation, Player Stats visibility, and Script List exclusions can be changed under **Configuration → Dashboard Options**.
 
 To launch it before saved processes, set **Game Options → System → Autoexec Script + Args** to `dashboard/automation-dashboard.jsx` (or append `--no-auto-start` to suppress integration auto-start). Bitburner marks autoexec processes temporary and launches them before saved scripts. The dashboard treats this as an idempotent, silent launch: a restored duplicate exits without terminal output, the autoexec instance does not print its normal startup line, and stopping the daemon closes its tail so the next launch cannot leave a second window beside a stale stopped dashboard.
 
@@ -175,6 +175,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "menuLabel": "Example Monitor",
     "description": "A short user-facing description.",
     "requirements": [],
+    "menuUnlocks": [],
     "daemon": true,
     "panels": [
         { "id": "status", "label": "Status", "title": "Example Monitor" }
@@ -330,7 +331,7 @@ Options are stored with the dashboard configuration. The dashboard can send thei
 },
 "inputs": [
     { "id": "sample-interval", "label": "Sample Interval (ms)", "optionKey": "sampleInterval", "type": "number", "min": 1000 },
-    { "id": "notifications", "label": "Notifications", "optionKey": "notifications", "type": "checkbox" }
+    { "id": "notifications", "label": "Notifications", "optionKey": "notifications", "type": "boolean-select" }
 ],
 "commands": {
     "port": 29,
@@ -356,6 +357,20 @@ Requirements inform health and availability displays without putting capability 
 
 Set `"required": false` to display a capability as optional.
 
+Service requirements with a recognized API, program, or stock type also appear as compact,
+color-coded unlock markers beside the service's main-menu entry. Use the optional `"menuUnlocks"`
+array for informative markers that should not qualify, gate, or appear in the Requirements panel.
+It accepts the same `{ "type", "id" }` vocabulary as `"requirements"`; repeated unlock families,
+such as several stock-access levels, Source Files, or augmentations, collapse into one marker.
+For descriptive coverage of all Source Files or augmentations, `"menuUnlocks"` may use `"id": "*"`.
+Keep lifecycle requirements in `"requirements"` and descriptive feature coverage in
+`"menuUnlocks"`. By default, each row displays no more than five glyphs; each health exclamation
+mark and the runtime-status dot consume slots before excess unlock markers collapse into a `+N`
+marker whose tooltip contains the remaining key. Dashboard Options can disable unlock glyphs,
+change the limit and opacity, or restrict them to main-menu or submenu rows. Panels may also
+declare `"menuUnlocks"` or ordinary `"requirements"`; their markers appear at the right of the
+corresponding submenu button.
+
 Requirements declared on the descriptor gate and describe the whole service. A panel may instead
 declare its own `"requirements"` array; those requirements appear only in that panel and do not
 prevent the parent service from starting. When a panel represents a separately running child,
@@ -370,7 +385,7 @@ The example intentionally demonstrates the most common integration path. The fra
 - Quick-stat fields with `overview`, `overviewLabel`, and `overviewOrder`.
 - Circular quick gauges with `telemetry.overviewGauges`.
 - `graph`, `string-list`, `items`, `message`, and `resource-cards` sections.
-- Numeric, checkbox, and select inputs.
+- Numeric, On/Off dropdown, and general select inputs.
 - Telemetry-driven action variants and lock states.
 - On-demand runtimes with `"daemon": false`.
 - Starting an on-demand runtime when a configured limit increases.

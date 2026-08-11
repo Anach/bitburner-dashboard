@@ -107,6 +107,32 @@ export const HIDE_UNQUALIFIED_PLUGINS_MODE_NONE = "None";
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY = "Singularity";
 export const HIDE_UNQUALIFIED_PLUGINS_MODES = [HIDE_UNQUALIFIED_PLUGINS_MODE_NONE, HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY];
 
+export const MENU_UNLOCK_GLYPH_SCOPE_BOTH = "Both";
+export const MENU_UNLOCK_GLYPH_SCOPE_MAIN = "Main menu only";
+export const MENU_UNLOCK_GLYPH_SCOPE_SUBMENUS = "Sub-menus only";
+export const MENU_UNLOCK_GLYPH_SCOPES = [
+    MENU_UNLOCK_GLYPH_SCOPE_BOTH,
+    MENU_UNLOCK_GLYPH_SCOPE_MAIN,
+    MENU_UNLOCK_GLYPH_SCOPE_SUBMENUS,
+];
+
+export function normalizeMenuUnlockGlyphScope(value) {
+    return MENU_UNLOCK_GLYPH_SCOPES.includes(value) ? value : MENU_UNLOCK_GLYPH_SCOPE_BOTH;
+}
+
+export function normalizeMenuUnlockGlyphMaxCount(value, fallback = 5) {
+    const fallbackValue = Number.isFinite(Number(fallback)) ? Math.floor(Number(fallback)) : 5;
+    const numericValue = Number.isFinite(Number(value)) ? Math.floor(Number(value)) : fallbackValue;
+    // Three slots preserve the widest mandatory combination: danger (!!) plus runtime status.
+    return Math.min(12, Math.max(3, numericValue));
+}
+
+export function normalizeMenuUnlockGlyphOpacity(value, fallback = 0.58) {
+    const fallbackValue = Number.isFinite(Number(fallback)) ? Number(fallback) : 0.58;
+    const numericValue = Number.isFinite(Number(value)) ? Number(value) : fallbackValue;
+    return Math.round(Math.min(1, Math.max(0.1, numericValue)) * 100) / 100;
+}
+
 // Global switch: which capability gate, if any, should hide plugins/integrations with an unmet
 // *required* requirement from the left-nav menu entirely, on top of the per-service hide/show
 // flag above. Scoped to a single named capability rather than "any unmet requirement" because
@@ -140,6 +166,10 @@ export function getDefaultDashboardOptions(services = []) {
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
         hideUnqualifiedPluginsMode: HIDE_UNQUALIFIED_PLUGINS_MODE_NONE,
+        menuUnlockGlyphsEnabled: true,
+        menuUnlockGlyphMaxCount: 5,
+        menuUnlockGlyphOpacity: 0.58,
+        menuUnlockGlyphScope: MENU_UNLOCK_GLYPH_SCOPE_BOTH,
         dashboardLastWindowMode: DASHBOARD_WINDOW_MODE_WINDOWED,
         dashboardWindowedX: -1,
         dashboardWindowedY: -1,
@@ -185,6 +215,10 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
         dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),
         hideUnqualifiedPluginsMode: normalizeHideUnqualifiedPluginsMode(rawOptions.hideUnqualifiedPluginsMode ?? defaults.hideUnqualifiedPluginsMode),
+        menuUnlockGlyphsEnabled: rawOptions.menuUnlockGlyphsEnabled !== false,
+        menuUnlockGlyphMaxCount: normalizeMenuUnlockGlyphMaxCount(rawOptions.menuUnlockGlyphMaxCount, defaults.menuUnlockGlyphMaxCount),
+        menuUnlockGlyphOpacity: normalizeMenuUnlockGlyphOpacity(rawOptions.menuUnlockGlyphOpacity, defaults.menuUnlockGlyphOpacity),
+        menuUnlockGlyphScope: normalizeMenuUnlockGlyphScope(rawOptions.menuUnlockGlyphScope ?? defaults.menuUnlockGlyphScope),
         dashboardLastWindowMode: normalizeDashboardWindowMode(rawOptions.dashboardLastWindowMode ?? defaults.dashboardLastWindowMode),
         dashboardWindowedX: normalizeGeometryNumber(rawOptions.dashboardWindowedX, defaults.dashboardWindowedX, -1),
         dashboardWindowedY: normalizeGeometryNumber(rawOptions.dashboardWindowedY, defaults.dashboardWindowedY, -1),

@@ -49,7 +49,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
             "id": "notifications",
             "label": "Notifications",
             "optionKey": "notifications",
-            "type": "checkbox"
+            "type": "boolean-select"
         }
     ],
     "telemetry": {

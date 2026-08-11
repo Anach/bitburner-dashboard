@@ -719,8 +719,10 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                         {filterDefinitions.map((filter) => {
                             const checked = selectedFilterIdSet.has(filter.id);
                             return (
-                                <label
+                                <button
+                                    type="button"
                                     key={filter.id}
+                                    aria-pressed={checked}
                                     style={{
                                         ...styles.networkFilterOption,
                                         ...(checked ? {
@@ -729,15 +731,11 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                                             background: "rgba(12, 24, 20, 0.94)",
                                         } : {}),
                                     }}
+                                    onClick={() => toggleNodeFilter(filter.id)}
                                 >
-                                    <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        style={{ margin: 0, accentColor: filter.accent ?? "#6cb4ff" }}
-                                        onChange={() => toggleNodeFilter(filter.id)}
-                                    />
+                                    <span aria-hidden="true">{checked ? "●" : ""}</span>
                                     <span>{filter.label}</span>
-                                </label>
+                                </button>
                             );
                         })}
                     </div>
