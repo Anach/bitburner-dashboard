@@ -126,6 +126,7 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
             integrationFile: normalized,
             adapter: metadata.adapter,
             serviceId: typeof metadata.serviceId === "string" ? metadata.serviceId : "",
+            shortcutId: typeof metadata.shortcutId === "string" ? metadata.shortcutId : "",
             menuGroup: metadata.menuGroup,
             menuGroupLabel: typeof metadata.menuGroupLabel === "string" ? metadata.menuGroupLabel : "",
             menuGroupOrder: typeof metadata.menuGroupOrder === "number" && Number.isFinite(metadata.menuGroupOrder)
@@ -145,6 +146,40 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
     }
 
     return discovered;
+}
+
+export function buildDashboardPluginShortcuts(pluginDefinitions = []) {
+    if (!Array.isArray(pluginDefinitions)) return [];
+
+    const shortcuts = [];
+    const seenIds = new Set();
+    for (const plugin of pluginDefinitions) {
+        if (!plugin || plugin.adapter !== "shortcut") continue;
+        const id = typeof plugin.shortcutId === "string" ? plugin.shortcutId.trim() : "";
+        if (!id || seenIds.has(id)) continue;
+        if (typeof plugin.filename !== "string" || !plugin.filename) continue;
+        if (typeof plugin.menuLabel !== "string" || !plugin.menuLabel) continue;
+
+        seenIds.add(id);
+        shortcuts.push({
+            id,
+            menuGroup: plugin.menuGroup,
+            menuGroupLabel: plugin.menuGroupLabel,
+            menuGroupOrder: plugin.menuGroupOrder,
+            menuOrder: plugin.menuOrder,
+            menuLabel: plugin.menuLabel,
+            description: plugin.description,
+            menuVisible: plugin.menuVisible,
+            alwaysVisible: true,
+            shortcut: true,
+            scriptPath: plugin.filename,
+            launchArgs: Array.isArray(plugin.metadata?.launchArgs) ? plugin.metadata.launchArgs : [],
+            temporary: plugin.metadata?.temporary !== false,
+            integrationFile: plugin.integrationFile,
+            metadata: plugin.metadata,
+        });
+    }
+    return shortcuts;
 }
 
 export function buildDashboardPluginServices(pluginDefinitions = [], adapterFactories = {}) {

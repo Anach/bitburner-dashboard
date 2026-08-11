@@ -258,6 +258,11 @@ export function buildDashboardMenuGroups(services = [], menuGroups = [], options
                 label: service.menuLabel,
                 menuOrder: service.menuOrder,
                 alwaysVisible: Boolean(service.alwaysVisible),
+                ...(service.shortcut === true ? {
+                    shortcut: true,
+                    scriptPath: service.scriptPath,
+                    description: service.description,
+                } : {}),
             }))),
     }));
 }

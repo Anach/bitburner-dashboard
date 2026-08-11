@@ -37,6 +37,22 @@ export function startHomeScript(ns, script, ...args) {
     return { status: "failed" };
 }
 
+export function startTemporaryHomeScript(ns, script, ...args) {
+    if (!ns || !ns.fileExists(script, "home")) {
+        return { status: "missing" };
+    }
+    if (ns.scriptRunning(script, "home")) {
+        return { status: "already-running" };
+    }
+
+    const pid = ns.exec(script, "home", { threads: 1, temporary: true }, ...args);
+    if (pid > 0) {
+        logLifecycleChange(ns, "Started", script);
+        return { status: "started", pid };
+    }
+    return { status: "failed" };
+}
+
 export function stopHomeScript(ns, script) {
     if (!ns || !ns.fileExists(script, "home")) {
         return { status: "missing" };

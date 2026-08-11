@@ -12,7 +12,7 @@ import {
     isProtectedFile,
     joinFilePath,
 } from "dashboard/libs/file-utils.js";
-import { startHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
+import { startHomeScript, startTemporaryHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": false
@@ -95,10 +95,11 @@ function stopManagedProcesses(ns, command) {
 
 function performScriptAction(ns, command) {
     const { actionId, filename, args } = command;
+    const startScript = command.temporary === true ? startTemporaryHomeScript : startHomeScript;
     let result;
     let managedResult = { killedCount: 0, serverCount: 0 };
     if (actionId === SCRIPT_ACTION_IDS.START) {
-        result = startHomeScript(ns, filename, ...args);
+        result = startScript(ns, filename, ...args);
     } else if (actionId === SCRIPT_ACTION_IDS.STOP) {
         result = stopHomeScript(ns, filename);
         managedResult = stopManagedProcesses(ns, command);
@@ -109,7 +110,7 @@ function performScriptAction(ns, command) {
             result = { status: "failed-to-stop" };
         } else {
             managedResult = stopManagedProcesses(ns, command);
-            const parentStart = startHomeScript(ns, filename, ...args);
+            const parentStart = startScript(ns, filename, ...args);
             result = parentStart.status === "started" ? { ...parentStart, status: "restarted" } : parentStart;
         }
     }

@@ -17,11 +17,13 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
             }, context);
         }
         const managedProcesses = context.getManagedProcessPaths?.(command.filename) ?? {};
+        const launchOptions = context.getScriptLaunchOptions?.(command.filename) ?? {};
         return {
             kind: "script",
             actionId: execution.executeType,
             filename: command.filename,
             args: context.getScriptLaunchArgs?.(command.filename),
+            temporary: launchOptions.temporary === true,
             managedScripts: managedProcesses.home ?? [],
             managedNetworkScripts: managedProcesses.network ?? [],
         };

@@ -26,7 +26,7 @@ import {
 } from "dashboard/libs/dashboard-registry.js";
 import { buildScriptListActions, buildServiceAutostartAction } from "dashboard/libs/script-list-actions.js";
 import { getDashboardPluginAdapterFactories } from "dashboard/libs/plugin-adapters.js";
-import { buildDashboardPluginServices, discoverDashboardPlugins, discoverDashboardViews, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
+import { buildDashboardPluginServices, buildDashboardPluginShortcuts, discoverDashboardPlugins, discoverDashboardViews, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
 import {
     DASHBOARD_THEME_MODE_GAME,
@@ -168,11 +168,11 @@ const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
 const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
-const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v7";
-const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v6";
+const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v8";
+const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v7";
 const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v4";
-const DASHBOARD_MENU_GROUP_REGISTRY_KEY = "__dashboard_menu_group_registry_v2";
-const DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY = "__dashboard_menu_group_registry_source_v2";
+const DASHBOARD_MENU_GROUP_REGISTRY_KEY = "__dashboard_menu_group_registry_v3";
+const DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY = "__dashboard_menu_group_registry_source_v3";
 const DASHBOARD_VIEW_INTERACTION_STATE_KEY = "__dashboard_view_interaction_state_v1";
 const DASHBOARD_VIEW_DRAG_ACTIVE_KEY = "__dashboard_view_drag_active_v1";
 const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
@@ -1480,6 +1480,7 @@ function buildDashboardWorkerCommand(ns, command) {
         getDashboardRestartArgs: (workerNs) => getDashboardRestartArgs(workerNs.args),
         resolveScriptActionExecution,
         getScriptLaunchArgs,
+        getScriptLaunchOptions,
         getManagedProcessPaths,
         getFileActionView: getDashboardFileActionView,
         normalizeFilePath,
@@ -1611,14 +1612,23 @@ function applyQueuedDashboardActions(ns) {
 function getScriptLaunchArgs(filename) {
     const pluginService = getDashboardServiceRegistry().services.find((service) => service.pluginFile === filename);
     if (Array.isArray(pluginService?.pluginMetadata?.launchArgs)) return pluginService.pluginMetadata.launchArgs;
+    const shortcut = getDashboardServiceRegistry().shortcuts?.find((candidate) => candidate.scriptPath === filename);
+    if (Array.isArray(shortcut?.launchArgs)) return shortcut.launchArgs;
     return [];
+}
+
+function getScriptLaunchOptions(filename) {
+    const shortcut = getDashboardServiceRegistry().shortcuts?.find((candidate) => candidate.scriptPath === filename);
+    return { temporary: shortcut?.temporary === true };
 }
 
 function isDashboardPluginScript(filename) {
     if (typeof filename !== "string" || filename.length === 0) return false;
     const normalized = filename.replace(/\\/g, "/");
     if (isDashboardCoreScript(normalized)) return false;
-    return getDashboardServiceRegistry().services.some((service) => service.pluginFile === normalized);
+    const registry = getDashboardServiceRegistry();
+    return registry.services.some((service) => service.pluginFile === normalized)
+        || registry.shortcuts?.some((shortcut) => shortcut.scriptPath === normalized);
 }
 
 function isDashboardCoreScript(filename) {
@@ -1633,10 +1643,15 @@ function isGlobalListMenuItem(itemId) {
 function isDashboardIntegrationScript(filename) {
     if (typeof filename !== "string" || filename.length === 0) return false;
     const normalized = filename.replace(/\\/g, "/");
-    return getDashboardServiceRegistry().services.some((service) => {
+    const registry = getDashboardServiceRegistry();
+    return registry.services.some((service) => {
         return service.pluginFile === normalized
             && typeof service.pluginIntegrationFile === "string"
             && service.pluginIntegrationFile.startsWith("dashboard/integrations/");
+    }) || registry.shortcuts?.some((shortcut) => {
+        return shortcut.scriptPath === normalized
+            && typeof shortcut.integrationFile === "string"
+            && shortcut.integrationFile.startsWith("dashboard/integrations/");
     });
 }
 
@@ -2334,7 +2349,11 @@ function getDashboardServiceRegistry() {
         return registry;
     }
 
-    const fallbackRegistry = validateDashboardServices(DASHBOARD_SERVICES);
+    const fallbackRegistry = {
+        ...validateDashboardServices(DASHBOARD_SERVICES),
+        shortcuts: [],
+        shortcutById: new Map(),
+    };
     globalThis[DASHBOARD_SERVICE_REGISTRY_KEY] = fallbackRegistry;
     return fallbackRegistry;
 }
@@ -2342,6 +2361,10 @@ function getDashboardServiceRegistry() {
 function setDashboardServiceRegistry(registry) {
     if (!registry || !Array.isArray(registry.services) || !(registry.byId instanceof Map)) return;
     globalThis[DASHBOARD_SERVICE_REGISTRY_KEY] = registry;
+}
+
+function getDashboardShortcutById(shortcutId) {
+    return getDashboardServiceRegistry().shortcutById?.get(shortcutId) ?? null;
 }
 
 function validateDashboardViews(views = []) {
@@ -2365,8 +2388,8 @@ function applyDashboardViewWidgetContributions(views, services) {
     return applyDashboardViewWidgetContributionsDefinition(views, services);
 }
 
-function buildDashboardMenuGroupRegistry(services = [], views = []) {
-    return buildDashboardMenuGroupRegistryDefinition(services, views, DASHBOARD_PINNED_MENU_GROUPS);
+function buildDashboardMenuGroupRegistry(services = [], views = [], shortcuts = []) {
+    return buildDashboardMenuGroupRegistryDefinition([...services, ...shortcuts], views, DASHBOARD_PINNED_MENU_GROUPS);
 }
 
 function getDashboardMenuGroupRegistry() {
@@ -2374,21 +2397,22 @@ function getDashboardMenuGroupRegistry() {
     if (registry && Array.isArray(registry.groups) && registry.byId instanceof Map) return registry;
     const fallback = buildDashboardMenuGroupRegistry(
         getDashboardServiceRegistry().services,
-        getDashboardViewRegistry().views
+        getDashboardViewRegistry().views,
+        getDashboardServiceRegistry().shortcuts
     );
     globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = fallback;
     return fallback;
 }
 
-function rebuildDashboardMenuGroupRegistry(services = [], views = []) {
+function rebuildDashboardMenuGroupRegistry(services = [], views = [], shortcuts = []) {
     const previous = globalThis[DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY];
-    if (previous?.services === services && previous?.views === views && previous.registry) {
+    if (previous?.services === services && previous?.views === views && previous?.shortcuts === shortcuts && previous.registry) {
         globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = previous.registry;
         return previous.registry;
     }
-    const registry = buildDashboardMenuGroupRegistry(services, views);
+    const registry = buildDashboardMenuGroupRegistry(services, views, shortcuts);
     globalThis[DASHBOARD_MENU_GROUP_REGISTRY_KEY] = registry;
-    globalThis[DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY] = { services, views, registry };
+    globalThis[DASHBOARD_MENU_GROUP_REGISTRY_SOURCE_KEY] = { services, views, shortcuts, registry };
     return registry;
 }
 
@@ -2498,6 +2522,7 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     }
 
     const pluginServices = buildDashboardPluginServices(pluginDefinitions, getDashboardPluginAdapterFactories());
+    const pluginShortcuts = buildDashboardPluginShortcuts(pluginDefinitions);
 
     const pluginIds = new Set(pluginServices.map((service) => service.id));
     const coreServices = DASHBOARD_SERVICES.filter((service) => !pluginIds.has(service.id));
@@ -2505,7 +2530,18 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const contributedServices = applyDashboardServiceTableContributions(
         applyDashboardServiceTelemetryContributions(mergedServices)
     );
-    const registry = validateDashboardServices(contributedServices);
+    const validatedRegistry = validateDashboardServices(contributedServices);
+    const serviceIds = new Set(validatedRegistry.services.map((service) => service.id));
+    const shortcuts = pluginShortcuts.filter((shortcut) => !serviceIds.has(shortcut.id));
+    const shortcutIssues = pluginShortcuts
+        .filter((shortcut) => serviceIds.has(shortcut.id))
+        .map((shortcut) => `Shortcut id conflicts with service id: ${shortcut.id}`);
+    const registry = {
+        ...validatedRegistry,
+        shortcuts,
+        shortcutById: new Map(shortcuts.map((shortcut) => [shortcut.id, shortcut])),
+        issues: [...(validatedRegistry.issues ?? []), ...shortcutIssues],
+    };
     setDashboardServiceRegistry(registry);
     globalThis[DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY] = { signature: definitionSignature, registry };
     logServiceRegistryIssues(registry);
@@ -2524,8 +2560,9 @@ function getDefaultSelectedServiceId() {
 }
 
 function getMenuGroups(options = {}, pluginRequirements = {}) {
+    const registry = getDashboardServiceRegistry();
     return buildDashboardMenuGroups(
-        getDashboardServiceRegistry().services,
+        [...registry.services, ...(registry.shortcuts ?? [])],
         getDashboardMenuGroupRegistry().groups,
         options,
         pluginRequirements
@@ -3413,6 +3450,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const selectItem = (itemId) => {
+        const shortcut = getDashboardShortcutById(itemId);
+        if (shortcut) {
+            enqueueDashboardAction({
+                kind: "script",
+                actionId: SCRIPT_ACTION_IDS.RESTART,
+                filename: shortcut.scriptPath,
+            });
+            return;
+        }
         if (itemId.startsWith(DASHBOARD_VIEW_ITEM_PREFIX)) {
             setActiveView(itemId.slice(DASHBOARD_VIEW_ITEM_PREFIX.length));
             return;
@@ -3564,7 +3610,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         .filter((group) => group.items.length > 0);
 
     const visibleItemIds = filteredMenuGroups.flatMap((group) => group.items
-        .filter((item) => !item.dashboardViewId)
+        .filter((item) => !item.dashboardViewId && !item.shortcut)
         .map((item) => item.id));
 
     React.useEffect(() => {
@@ -3618,6 +3664,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const getServiceItemTooltip = (itemId) => {
+        const shortcut = getDashboardShortcutById(itemId);
+        if (shortcut) {
+            const description = shortcut.description ? `\n${shortcut.description}` : "";
+            return `Launch ${shortcut.menuLabel}.${description}`;
+        }
         if (itemId.startsWith(DASHBOARD_VIEW_ITEM_PREFIX)) {
             const view = getDashboardViewRegistry().byId.get(itemId.slice(DASHBOARD_VIEW_ITEM_PREFIX.length));
             return `Open ${view?.title ?? view?.menuLabel ?? "the graphical dashboard view"}.`;
@@ -5413,11 +5464,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                         {group.items.map((item) => {
                                             const itemLevel = item.dashboardViewId
                                                 ? "neutral"
+                                                : item.shortcut
+                                                    ? "neutral"
                                                 : serviceHealthById[item.id]?.level ?? "neutral";
                                             const itemSelected = item.dashboardViewId
                                                 ? activeView?.id === item.dashboardViewId
+                                                : item.shortcut
+                                                    ? false
                                                 : !activeView && selectedItem === item.id;
                                             const itemService = item.dashboardViewId
+                                                || item.shortcut
                                                 ? null
                                                 : dashboardServiceRegistry.services.find((candidate) => candidate.id === item.id);
                                             const itemHasRuntime = Boolean(itemService?.pluginFile);
@@ -5833,7 +5889,8 @@ export async function main(ns) {
         );
         const dashboardMenuGroupRegistry = rebuildDashboardMenuGroupRegistry(
             dashboardServiceRegistry.services,
-            dashboardViewRegistry.views
+            dashboardViewRegistry.views,
+            dashboardServiceRegistry.shortcuts
         );
         logMenuGroupRegistryIssues(dashboardMenuGroupRegistry);
         homeScripts = applyPluginScriptMetadata(homeScripts, dashboardServiceRegistry);

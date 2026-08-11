@@ -81,6 +81,7 @@ function normalizeScriptCommand(rawCommand) {
         actionId,
         filename: normalizeManagedPath(rawCommand.filename, "script"),
         args: normalizeScriptArgs(rawCommand.args),
+        temporary: rawCommand.temporary === true,
         managedScripts: normalizePathList(Array.isArray(rawCommand.managedScripts) ? rawCommand.managedScripts : []),
         managedNetworkScripts: normalizePathList(Array.isArray(rawCommand.managedNetworkScripts) ? rawCommand.managedNetworkScripts : []),
     };
