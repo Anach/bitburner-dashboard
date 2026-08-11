@@ -7,6 +7,7 @@ import {
     getDefaultDashboardOptions,
     getServiceStartOrder,
     HIDE_UNQUALIFIED_PLUGINS_MODES,
+    isServiceAutostartEnabled,
     isServiceVisibleInMenu,
     normalizeDashboardOptions,
     normalizeHideUnqualifiedPluginsMode,
@@ -56,7 +57,7 @@ import {
 } from "dashboard/libs/tail-layout.js";
 import { buildDashboardTailTitle } from "dashboard/libs/tail-title.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
-import { getDashboardRestartArgs, parseDashboardLaunchOptions } from "dashboard/libs/startup-policy.js";
+import { getDashboardRestartArgs, parseDashboardLaunchOptions, shouldAutoStartServiceSupervisor } from "dashboard/libs/startup-policy.js";
 import {
     DASHBOARD_ACTION_WORKER_RESULT_FILE,
     DASHBOARD_ACTION_WORKER_SCRIPT,
@@ -134,6 +135,7 @@ import {
 import {
     buildPluginRequirementSection,
     buildPluginRequirementsSnapshot,
+    getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
 import {
@@ -4891,7 +4893,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const isStandalonePanel = isGraphPanel || serviceSections.some((section) => section?.standalone === true);
         const stateLines = isPluginOptionsPanel || isStandalonePanel ? [] : getStateLines();
         const requirementSection = !isStandalonePanel && selectedService?.pluginIntegrationFile
-            ? buildPluginRequirementSection(pluginRequirements?.[selectedService.id] ?? [])
+            ? buildPluginRequirementSection(getPluginRequirementsForPanel(
+                pluginRequirements,
+                selectedService.id,
+                panelId
+            ))
             : null;
         const sections = isPluginOptionsPanel
             ? []
@@ -5729,13 +5735,14 @@ export async function main(ns) {
         setDashboardTailTitle(ns, "Automation Dashboard");
     }
 
+    const supervisorAutostartEnabled = isServiceAutostartEnabled(SERVICE_SUPERVISOR_SCRIPT, loadDashboardOptions(ns));
+    const startServiceSupervisor = shouldAutoStartServiceSupervisor(autoStart, supervisorAutostartEnabled);
     if (!temporaryRun) {
         ns.tprint(isDaemon
-            ? `Starting Automation Dashboard in daemon mode${autoStart ? " with integration auto-start" : ""}...`
-            : `Starting Automation Dashboard in one-shot mode${autoStart ? " with integration auto-start" : ""}...`);
+            ? `Starting Automation Dashboard in daemon mode${startServiceSupervisor ? " with integration auto-start" : ""}...`
+            : `Starting Automation Dashboard in one-shot mode${startServiceSupervisor ? " with integration auto-start" : ""}...`);
     }
-
-    if (autoStart) {
+    if (startServiceSupervisor) {
         queueDashboardWorkerAction(ns, {
             kind: "dashboard",
             actionId: DASHBOARD_ACTION_IDS.START_INTEGRATIONS,
@@ -5829,6 +5836,10 @@ export async function main(ns) {
         const requirementsSignature = JSON.stringify(getDashboardServiceRegistry().services.map((service) => ({
             id: service.id,
             requirements: service.requirements,
+            panelRequirements: (service.pluginMetadata?.panels ?? []).map((panel) => ({
+                id: panel.id,
+                requirements: panel.requirements,
+            })),
         })));
         const pluginRequirements = dashboardSnapshotCoordinator.getOrCreate(
             "plugin-requirements",

@@ -338,6 +338,12 @@ Requirements inform health and availability displays without putting capability 
 
 Set `"required": false` to display a capability as optional.
 
+Requirements declared on the descriptor gate and describe the whole service. A panel may instead
+declare its own `"requirements"` array; those requirements appear only in that panel and do not
+prevent the parent service from starting. When a panel represents a separately running child,
+set `"runtimeScript"` to its Home-relative path so the panel reports the child's actual running
+state rather than inheriting the parent service's state.
+
 ## Metadata capabilities
 
 The example intentionally demonstrates the most common integration path. The framework also supports:

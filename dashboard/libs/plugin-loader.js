@@ -3,6 +3,14 @@ import { parseDashboardMetadataFromSource } from "dashboard/libs/metadata-parser
 const DASHBOARD_INTEGRATION_FOLDER_PREFIX = "dashboard/integrations/";
 const DASHBOARD_PLUGIN_FOLDER_PREFIX = "dashboard/plugins/";
 const DASHBOARD_PLUGIN_INTEGRATION_SUFFIX = "-integration.js";
+// Bitburner accepts any of these as a real runtime script (bitburner-src's own
+// Paths/ScriptFilePath.ts validScriptExtensions, minus the legacy .script NS1 format) - a
+// pluginName-derived lookup that only ever tries ".js" silently drops any integration whose
+// runtime file is .jsx/.ts/.tsx (confirmed real: a daemon:false script-adapter integration paired
+// with a .jsx file - needed for JSX syntax, since bitburner-src's own ScriptTransformer only
+// enables JSX parsing for .jsx/.tsx file types - never appeared in either repo's discovered
+// service list at all, no error surfaced anywhere).
+const RUNTIME_SCRIPT_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx"];
 const DASHBOARD_PLUGIN_METADATA_DECLARATION = "export const DASHBOARD_PLUGIN_METADATA =";
 const DASHBOARD_VIEW_SUFFIX = "-view.js";
 const DASHBOARD_VIEW_METADATA_DECLARATION = "export const DASHBOARD_VIEW_METADATA =";
@@ -95,16 +103,17 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         const metadataOnly = metadata.adapter === "static";
         let scriptPath = "";
         if (!metadataOnly) {
-            const runtimeFilename = `${pluginName}.js`;
+            const runtimeFilenames = RUNTIME_SCRIPT_EXTENSIONS.map((extension) => `${pluginName}${extension}`);
             const runtimeCandidates = pluginDescriptor
-                ? [normalized.slice(0, normalized.lastIndexOf("/") + 1) + runtimeFilename]
+                ? runtimeFilenames
+                    .map((runtimeFilename) => normalized.slice(0, normalized.lastIndexOf("/") + 1) + runtimeFilename)
                     .filter((filename) => normalizedFilenames.includes(filename))
                 : normalizedFilenames.filter((filename) => {
                     if (filename.startsWith(DASHBOARD_INTEGRATION_FOLDER_PREFIX)) return false;
                     if (excludedRuntimeFolders.some((folder) => filename === folder || filename.startsWith(`${folder}/`))) {
                         return false;
                     }
-                    return filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`);
+                    return runtimeFilenames.some((runtimeFilename) => filename === runtimeFilename || filename.endsWith(`/${runtimeFilename}`));
                 });
             if (runtimeCandidates.length !== 1) continue;
             scriptPath = runtimeCandidates[0];

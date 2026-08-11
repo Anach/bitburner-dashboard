@@ -15,6 +15,22 @@ function getMapValue(mapLike, key) {
     return 0;
 }
 
+// A lightweight capability probe for scripts that only need to gate one API-backed worker.
+// Unlike buildCapabilitySnapshot(), this does not touch the Stock API or enumerate Home files,
+// so importing it into a small parent daemon adds only getResetInfo() to that daemon's RAM bill.
+export function hasApiAccess(ns, apiId) {
+    const sourceFile = API_SOURCE_FILES[apiId];
+    if (!Number.isFinite(sourceFile)) return false;
+
+    try {
+        const resetInfo = ns.getResetInfo() ?? {};
+        return Number(resetInfo.currentNode) === sourceFile
+            || getMapValue(resetInfo.ownedSF, sourceFile) >= 1;
+    } catch (error) {
+        return false;
+    }
+}
+
 export function buildCapabilitySnapshot(ns, knownHomeFiles) {
     let resetInfo = {};
     try {

@@ -407,15 +407,15 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
         const statsStateValue = typeof action.stateKey === "string"
             ? getTelemetryFieldValue(safeStats, action.stateKey)
             : undefined;
-        // A plain enable/disable toggle that declares optionKey persists its new value to the
-        // options store the instant it's clicked (see optionValue below), while the daemon it
-        // targets only reflects the change once its own loop next drains the command and
-        // publishes telemetry - which can be many seconds later for a slow-cadence daemon like
-        // the reputation-share filler. Preferring the option over telemetry here makes the button
-        // flip immediately on click instead of waiting out that daemon's full cycle; telemetry
-        // still wins for every other action (mode/enum buttons, anything without optionKey).
-        const isPersistedToggle = typeof action.optionKey === "string" && action.optionKey.length > 0 && action.activeValue === undefined;
-        const stateValue = isPersistedToggle
+        // A persisted action updates the options store the instant it is clicked, while the daemon
+        // it targets only reflects the change once its own loop drains the command and publishes
+        // telemetry. Preferring the saved option here makes both toggles and explicit enum/mode
+        // choices update immediately instead of waiting out that daemon's full cycle.
+        const hasOptionKey = typeof action.optionKey === "string" && action.optionKey.length > 0;
+        const hasExplicitOptionValue = Object.prototype.hasOwnProperty.call(action, "optionValue");
+        const isPersistedToggle = hasOptionKey && action.activeValue === undefined;
+        const isPersistedAction = isPersistedToggle || (hasOptionKey && hasExplicitOptionValue);
+        const stateValue = isPersistedAction
             ? (safeOptions[action.optionKey] ?? statsStateValue ?? action.defaultValue)
             : (statsStateValue ?? safeOptions[action.optionKey] ?? action.defaultValue);
         const variant = getObject(action.variants)?.[String(stateValue)];
@@ -436,14 +436,11 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // own independent command-drain loop on their own port - same rationale as
             // optionBindings' port override below in applyPluginIntegrationOptions.
             ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
-            // Opt-in: a plain enable/disable toggle (no activeValue) that declares optionKey also
-            // reports the value it's ABOUT to become, so the click handler can persist it to the
-            // options store alongside sending the live command. Without this, the button only ever
-            // changes the running script's in-memory state - a full relaunch re-primes from the
-            // options file's stored default and silently reverts the toggle (confirmed real for
-            // the Share Home RAM / Train on Home toggles).
-            ...(isPersistedToggle
-                ? { optionKey: action.optionKey, optionValue: !enabled }
+            // Opt-in actions report the value they are about to select so the click handler can
+            // persist it alongside the live port command. Plain toggles derive the inverse boolean;
+            // enum/mode buttons declare their exact optionValue in metadata.
+            ...(isPersistedAction
+                ? { optionKey: action.optionKey, optionValue: hasExplicitOptionValue ? action.optionValue : !enabled }
                 : {}),
             disabled: Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
             order: startingOrder + (Number(action.order) || index * 10),
@@ -460,7 +457,7 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
         lines.push({ label: "Integration", value: integration?.integrationLabel ?? integration?.displayName, tone: "info" });
     }
     if (options.includeRunningLine !== false) {
-        lines.push({ label: "Bot Status", value: running ? "running" : "stopped", tone: running ? "success" : daemon ? "warn" : "neutral" });
+        lines.push({ label: options.runningLabel ?? "Bot Status", value: running ? "running" : "stopped", tone: running ? "success" : daemon ? "warn" : "neutral" });
     }
 
     const configuredOptions = getObject(options.configuredOptions);
@@ -715,6 +712,22 @@ export function buildPluginIntegrationService(plugin) {
     const panels = Array.isArray(integration.panels) ? integration.panels : [];
     const defaultPanelId = integration.defaultPanelId ?? panels[0]?.id ?? "status";
     const optionsPanelId = "options";
+    const getPanelRuntimeScript = (panelId) => {
+        const panel = panels.find((candidate) => candidate?.id === panelId);
+        return typeof panel?.runtimeScript === "string" && panel.runtimeScript.length > 0
+            ? panel.runtimeScript
+            : integration.scriptPath;
+    };
+    const getPanelRuntimeLabel = (panelId) => {
+        const panel = panels.find((candidate) => candidate?.id === panelId);
+        if (!panel?.runtimeScript) return undefined;
+        const runtimeLabel = panel.runtimeLabel ?? panel.title ?? panel.label ?? panel.id;
+        return `${runtimeLabel} Status`;
+    };
+    const isPanelRuntimeRunning = (panelId, homeScripts) => {
+        const runtimeScript = getPanelRuntimeScript(panelId);
+        return (homeScripts ?? []).some((script) => script?.filename === runtimeScript && script?.running);
+    };
     return {
         id: integration.serviceId,
         menuGroup: integration.menuGroup,
@@ -742,24 +755,34 @@ export function buildPluginIntegrationService(plugin) {
                     ? `${integration.menuLabel} is stopped.`
                     : `${integration.menuLabel} runs on demand.`;
             const level = running || !daemon ? "neutral" : "warn";
+            const panelHealth = Object.fromEntries(panels.map((panel) => {
+                if (!panel?.runtimeScript) return [panel.id, { level, summary }];
+                const panelRunning = isPanelRuntimeRunning(panel.id, homeScripts);
+                return [panel.id, {
+                    level: panelRunning ? "neutral" : "warn",
+                    summary: `${panel.label ?? panel.id} is ${panelRunning ? "running" : "stopped"}.`,
+                }];
+            }));
             return {
                 level,
                 summary,
-                panels: Object.fromEntries(panels.map(({ id }) => [id, level])),
-                panelSummaries: Object.fromEntries(panels.map(({ id }) => [id, summary])),
+                panels: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.level])),
+                panelSummaries: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.summary])),
             };
         },
         getState: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
-            const running = (homeScripts ?? []).some((script) => script?.filename === integration.scriptPath && script?.running);
+            const running = isPanelRuntimeRunning(selectedCenterPanel, homeScripts);
             return getPluginIntegrationStateLines(integration, telemetryByServiceId?.[integration.serviceId] ?? null, {
                 running,
                 panelId: selectedCenterPanel,
+                runningLabel: getPanelRuntimeLabel(selectedCenterPanel),
             });
         },
         getSections: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
-            const running = (homeScripts ?? []).some((script) => script?.filename === integration.scriptPath && script?.running);
+            const running = isPanelRuntimeRunning(selectedCenterPanel, homeScripts);
+            const runtimeScript = getPanelRuntimeScript(selectedCenterPanel);
             return getPluginIntegrationSections(
                 integration,
                 telemetryByServiceId?.[integration.serviceId],
@@ -767,7 +790,7 @@ export function buildPluginIntegrationService(plugin) {
                 // requiresRuntime mirrors serviceRuntimeById's own Boolean(service.pluginFile) -
                 // whether this service has a process to be stale against at all, not whether it's
                 // meant to autostart (that's the separate `daemon` flag).
-                { running, requiresRuntime: Boolean(integration.scriptPath) }
+                { running, requiresRuntime: Boolean(runtimeScript) }
             );
         },
         getInputs: ({ selectedCenterPanel, options, telemetryByServiceId }) => {

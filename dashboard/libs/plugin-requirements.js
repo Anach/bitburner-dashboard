@@ -17,6 +17,8 @@ const STOCK_ACCESS_LABELS = {
     "4s-tix": "4S Market Data TIX API",
 };
 
+const PANEL_REQUIREMENTS_BY_SERVICE_KEY = "__dashboardPanelRequirementsByService";
+
 function getRequirementLabel(requirement) {
     if (typeof requirement.label === "string" && requirement.label.length > 0) return requirement.label;
     if (requirement.type === "api") return API_LABELS[requirement.id] ?? `${requirement.id} API`;
@@ -50,19 +52,43 @@ export function isHiddenByQualificationMode(requirements, mode) {
     });
 }
 
+function evaluateRequirements(requirements, snapshot) {
+    return (Array.isArray(requirements) ? requirements : []).map((requirement) => ({
+        type: requirement.type,
+        id: requirement.id,
+        label: getRequirementLabel(requirement),
+        unlocked: isCapabilityRequirementMet(requirement, snapshot),
+        optional: requirement.required === false,
+    }));
+}
+
 export function buildPluginRequirementsSnapshot(ns, services = [], capabilitySnapshot) {
     const snapshot = capabilitySnapshot ?? buildCapabilitySnapshot(ns);
+    const result = {};
+    const panelRequirementsByService = {};
 
-    return Object.fromEntries((services ?? []).map((service) => {
-        const requirements = Array.isArray(service?.requirements) ? service.requirements : [];
-        return [service.id, requirements.map((requirement) => ({
-            type: requirement.type,
-            id: requirement.id,
-            label: getRequirementLabel(requirement),
-            unlocked: isCapabilityRequirementMet(requirement, snapshot),
-            optional: requirement.required === false,
-        }))];
-    }));
+    for (const service of services ?? []) {
+        result[service.id] = evaluateRequirements(service?.requirements, snapshot);
+
+        const panels = Array.isArray(service?.pluginMetadata?.panels)
+            ? service.pluginMetadata.panels
+            : [];
+        const panelRequirements = Object.fromEntries(panels
+            .filter((panel) => Array.isArray(panel?.requirements) && panel.requirements.length > 0)
+            .map((panel) => [panel.id, evaluateRequirements(panel.requirements, snapshot)]));
+        if (Object.keys(panelRequirements).length > 0) {
+            panelRequirementsByService[service.id] = panelRequirements;
+        }
+    }
+
+    result[PANEL_REQUIREMENTS_BY_SERVICE_KEY] = panelRequirementsByService;
+    return result;
+}
+
+export function getPluginRequirementsForPanel(pluginRequirements, serviceId, panelId) {
+    const serviceRequirements = pluginRequirements?.[serviceId] ?? [];
+    const panelRequirements = pluginRequirements?.[PANEL_REQUIREMENTS_BY_SERVICE_KEY]?.[serviceId]?.[panelId] ?? [];
+    return [...serviceRequirements, ...panelRequirements];
 }
 
 export function buildPluginRequirementSection(requirements = []) {

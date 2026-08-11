@@ -26,7 +26,6 @@ export const GANG_COMMAND_PORT = 20; // affiliations/faction-manager/faction-man
 export const HACKER_BUYER_COMMAND_PORT = 21; // hacking/hacking-engine/hacking-engine-buyer.js
 export const SERVER_BUYER_CORE_COMMAND_PORT = 22; // hardware/server-manager/server-manager.js
 export const FACTION_BOOST_COMMAND_PORT = 23; // affiliations/faction-manager/faction-manager-boost.js
-export const BATCHER_BEGINNER_COMMAND_PORT = 24; // hacking/hacking-ops/profiles/hacking-ops-beginner.js
 export const STOCK_TRADER_COMMAND_PORT = 30; // finances/trading-engine/trading-engine.js
 
 // bitburner-dashboard/*

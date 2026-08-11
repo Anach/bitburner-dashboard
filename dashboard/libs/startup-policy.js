@@ -17,3 +17,10 @@ export function getDashboardRestartArgs(args = []) {
         ...(launchOptions.autoStart ? [] : ["--no-auto-start"]),
     ];
 }
+
+// The launch flag is a global permission, not a replacement for the supervisor daemon's own
+// Autostart toggle. Both must allow startup so restarting the dashboard cannot silently revive a
+// deliberately stopped supervisor (which would then restart every enabled integration service).
+export function shouldAutoStartServiceSupervisor(autoStart, supervisorAutostartEnabled) {
+    return autoStart === true && supervisorAutostartEnabled === true;
+}
