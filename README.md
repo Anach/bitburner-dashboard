@@ -145,6 +145,24 @@ A metadata-only service uses `"adapter": "static"` and `"daemon": false`. It doe
 or start a runtime file; its descriptor alone creates the menu entry and panels. Static services
 are intended for reference/lookup surfaces assembled from generic descriptor contributions.
 
+A launch-only tool uses `"adapter": "shortcut"` and a unique `"shortcutId"`. It pairs with a
+runtime by the same basename convention, but creates no service, status, options, health, or
+subview panels. Clicking its main-menu entry starts it when stopped or restarts it when already
+running without changing the current dashboard selection. Shortcut launches are temporary by
+default; set `"temporary": false` only when game-save restoration is explicitly intended.
+
+```js
+export const DASHBOARD_PLUGIN_METADATA = {
+    "adapter": "shortcut",
+    "shortcutId": "software.themeEditor",
+    "menuGroup": "software",
+    "menuLabel": "Theme Editor",
+    "description": "Open the theme editor tail.",
+    "temporary": true,
+    "launchArgs": []
+};
+```
+
 ### Descriptor rules
 
 Every service descriptor must export this exact declaration:
@@ -264,7 +282,7 @@ its `conflictKey` are highlighted and counted. A table may also declare `statusP
 compact status panel from the same merged rows. Contributions disappear with their descriptor, so
 the table always represents the installed integration set.
 
-Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation. Use the `static` adapter for a menu service with panels but no Netscript process.
+Use the `script` adapter for the normal script-oriented status view, including path and RAM information. The `metadata` adapter is available for a more telemetry-focused presentation. Use the `static` adapter for a menu service with panels but no Netscript process. Use the `shortcut` adapter for a menu entry that only starts/restarts its paired script and never creates a service or dashboard panel.
 
 ### Publish telemetry
 

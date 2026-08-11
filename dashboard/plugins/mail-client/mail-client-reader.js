@@ -1,10 +1,6 @@
 import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
 import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 
-export const DASHBOARD_SCRIPT_METADATA = {
-    "daemon": false
-};
-
 /** @param {NS} ns */
 export async function main(ns) {
     const host = ns.getHostname();

@@ -14,10 +14,6 @@ import {
 } from "dashboard/libs/file-utils.js";
 import { startHomeScript, startTemporaryHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
 
-export const DASHBOARD_SCRIPT_METADATA = {
-    "daemon": false
-};
-
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";

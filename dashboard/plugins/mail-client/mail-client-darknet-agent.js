@@ -1,10 +1,6 @@
 import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
 
-export const DASHBOARD_SCRIPT_METADATA = {
-    "daemon": false
-};
-
 const dnetFiles = ["dashboard/plugins/mail-client/mail-client-darknet-agent.js"];
 const dnetFile = 0;
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";

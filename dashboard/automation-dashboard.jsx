@@ -178,6 +178,7 @@ const DASHBOARD_VIEW_DRAG_ACTIVE_KEY = "__dashboard_view_drag_active_v1";
 const DASHBOARD_OPTIONS_INPUT_FOCUS_KEY = "__dashboard_options_input_focus_v1";
 const DASHBOARD_FILE_ACTION_RESULT_KEY = "__dashboard_file_action_result_v1";
 const DASHBOARD_FILE_PREVIEW_RESULT_KEY = "__dashboard_file_preview_result_v1";
+const SCRIPT_MANAGER_IDS_WITH_LIST_HIDING = new Set(["global.options", "global.integrations", "global.plugins"]);
 const DASHBOARD_FILE_VIEW_RENDER_STATE_KEY = "__dashboard_file_view_render_state_v1";
 const DASHBOARD_NETWORK_MAP_VIEW_RENDER_STATE_KEY = "__dashboard_network_map_view_render_state_v1";
 const DASHBOARD_ACTION_WORKER_TIMEOUT_MS = 60000;
@@ -1694,10 +1695,18 @@ function isDashboardHiddenScript(filename, hiddenFolders = DEFAULT_HIDDEN_SCRIPT
         || isScriptFileHidden(filename, hiddenFiles);
 }
 
+function isScriptHiddenFromManager(script, hiddenFolders, hiddenFiles = []) {
+    if (isDashboardCoreScript(script?.filename)) return true;
+    if (typeof script?.daemon === "boolean") {
+        return isScriptFileHidden(script?.filename, hiddenFiles);
+    }
+    return isDashboardHiddenScript(script?.filename, hiddenFolders, hiddenFiles);
+}
+
 function getNonPluginScripts(homeScripts, hiddenFolders, hiddenFiles = []) {
     return (homeScripts ?? []).filter((script) => {
         return !isDashboardPluginScript(script?.filename)
-            && !isDashboardHiddenScript(script?.filename, hiddenFolders, hiddenFiles);
+            && !isScriptHiddenFromManager(script, hiddenFolders, hiddenFiles);
     });
 }
 
@@ -1710,9 +1719,10 @@ function buildScriptBuckets(
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
     const hiddenFolders = parseScriptFolders(rawHiddenFolders);
     const hiddenFiles = parseScriptFiles(rawHiddenFiles);
-    const integrationScripts = scripts.filter((script) => isDashboardIntegrationScript(script?.filename));
+    const visibleManagerScripts = scripts.filter((script) => !isScriptHiddenFromManager(script, hiddenFolders, hiddenFiles));
+    const integrationScripts = visibleManagerScripts.filter((script) => isDashboardIntegrationScript(script?.filename));
     const pluginScripts = [
-        ...scripts.filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename)),
+        ...visibleManagerScripts.filter((script) => isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename)),
         ...getViewOnlyPluginEntries(views),
     ];
     const dashboardCoreScripts = scripts.filter((script) => isDashboardCoreScript(script?.filename));
@@ -2192,9 +2202,11 @@ const DASHBOARD_SERVICES = [
             default: { title: "Integrations", accent: "#6cb4ff", subtitle: "Independently-runnable scripts with a dashboard descriptor" },
             script: { title: "Integration", accent: "#6cb4ff", subtitle: "Integration status and controls" },
         },
-        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
-            return isDashboardIntegrationScript(script?.filename);
-        })),
+        getHealth: ({ homeScripts, options }) => summarizeScriptListHealth(buildScriptBuckets(
+            homeScripts,
+            options.hiddenScriptFolders,
+            options.hiddenScriptFiles
+        ).integrationScripts),
         getState: ({ selectedScript }) => {
             if (!selectedScript) return [];
             return [
@@ -2234,9 +2246,11 @@ const DASHBOARD_SERVICES = [
             default: { title: "Plugins", accent: "#6cb4ff", subtitle: "Packaged dashboard plugin scripts" },
             script: { title: "Plugin", accent: "#6cb4ff", subtitle: "Plugin status and controls" },
         },
-        getHealth: ({ homeScripts }) => summarizeScriptListHealth((homeScripts ?? []).filter((script) => {
-            return isDashboardPluginScript(script?.filename) && !isDashboardIntegrationScript(script?.filename);
-        })),
+        getHealth: ({ homeScripts, options }) => summarizeScriptListHealth(buildScriptBuckets(
+            homeScripts,
+            options.hiddenScriptFolders,
+            options.hiddenScriptFiles
+        ).pluginScripts.filter((script) => !script?.viewOnly)),
         getState: ({ selectedScript }) => {
             if (!selectedScript) return [];
             if (selectedScript.viewOnly) {
@@ -3480,7 +3494,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     const centerPanelSource = selectedItem === "global.options"
         ? nonPluginScripts
-        : homeScripts;
+        : selectedItem === "global.integrations"
+            ? integrationScripts
+            : selectedItem === "global.plugins"
+                ? pluginScripts
+                : homeScripts;
 
     const serviceCenterPanels = getCenterPanelsForItem(selectedItem, centerPanelSource);
     const isPluginService = Boolean(selectedService?.pluginFile);
@@ -4379,17 +4397,23 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // back to its own filename - same identifier space serviceAutostart:${id} already uses.
     // isDashboardCoreScript excludes automation-dashboard.jsx/service-supervisor.js by exact
     // filename - both declare daemon:true (they're long-running) but are never really in the set
-    // this list is meant to reorder. Do NOT additionally filter by PLUGIN_RUNTIME_EXCLUDED_FOLDERS
+    // this list is meant to reorder. Do NOT filter by the full PLUGIN_RUNTIME_EXCLUDED_FOLDERS set
     // (dashboard/, libs/, trashbin/) here - that's the right exclusion for service-supervisor.js's
     // OWN plugin-descriptor discovery (finding NEW -integration.js files under dashboard/, see
     // discoverDashboardPlugins's non-co-located branch), but a blanket "dashboard/" prefix match
     // also wrongly excludes every real plugin runtime script under dashboard/plugins/*/ (mail client
     // scanner, player stats, network navigator, etc.) - those ARE co-located with their own
     // descriptor and were never excluded from discovery in the first place, so excluding them
-    // here just hid them from this list for no reason. isDashboardCoreScript's exact match is
-    // the only exclusion actually needed.
+    // here just hid them from this list for no reason. "trashbin/" specifically has no such
+    // false-positive case (nothing legitimate ever runs from there), so it's still excluded on its
+    // own: confirmed real - a script soft-deleted via File Manager's archive/Cleanup into
+    // trashbin/ kept its old DASHBOARD_SCRIPT_METADATA daemon:true declaration intact, so it kept
+    // showing up here as a live start-order candidate (and staying in the persisted
+    // serviceStartOrder list) long after the user believed it deleted.
     const serviceStartOrderRows = homeScripts
-        .filter((script) => script?.daemon === true && !isDashboardCoreScript(script?.filename))
+        .filter((script) => script?.daemon === true
+            && !isDashboardCoreScript(script?.filename)
+            && !String(script?.filename ?? "").startsWith("trashbin/"))
         .map((script) => {
             const matchedService = dashboardServiceRegistry.services.find((service) => service.pluginFile === script.filename);
             return {
@@ -4476,7 +4500,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         dashboardServiceRegistry.services,
                         dashboardViews
                     );
-                    const inlineActions = selectedItem === "global.options"
+                    const supportsListHiding = SCRIPT_MANAGER_IDS_WITH_LIST_HIDING.has(selectedItem)
+                        && !panel.viewOnly;
+                    const inlineActions = supportsListHiding
                         ? [
                             ...standardInlineActions,
                             {
@@ -4485,7 +4511,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 kind: "save-options",
                                 tone: "warn",
                                 disabled: false,
-                                tooltip: `Hide ${panel.id} from the Script List display. It stays a valid target for Script List's bulk Kill Home/Remote actions.`,
+                                tooltip: `Hide ${panel.id} from this manager. The script remains installed and can still be launched elsewhere.`,
                                 optionOverrides: {
                                     hiddenScriptFiles: normalizeScriptFiles([
                                         ...parseScriptFiles(options.hiddenScriptFiles),
