@@ -1941,6 +1941,7 @@ const DASHBOARD_SERVICES = [
         menuGroup: "hardware",
         menuGroupLabel: "Hardware",
         menuLabel: "Home Server",
+        menuOrder: -100,
         description: "Home RAM capacity and safeguards for dashboard-managed service startup.",
         rendererKey: "hardware.home",
         defaultPanelId: "infrastructure",
@@ -4951,7 +4952,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ? []
             : [requirementSection, ...serviceSections].filter(Boolean);
         const inputs = getInputs();
-        const actions = panelActions;
+        // Same convention as section.panelId (getPluginIntegrationSections): no panelId means
+        // "show on every panel" (the original, unscoped behavior), preserving every existing
+        // integration's actions exactly as before. A panelId confines an action to that one panel -
+        // e.g. Augment Manager's buy actions, kept off the generic Options tab.
+        const actions = panelActions.filter((action) => typeof action.panelId !== "string" || action.panelId === panelId);
 
         const panelHealthLevel = isPluginOptionsPanel || isStandalonePanel
             ? "neutral"

@@ -444,6 +444,12 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
                 : {}),
             disabled: Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
             order: startingOrder + (Number(action.order) || index * 10),
+            // Mirrors telemetry sections' own panelId scoping (getPluginIntegrationSections) - an
+            // action with no panelId shows on every panel (the pre-existing, still-default
+            // behavior), one with a panelId is confined to it. Lets buy-style actions live on their
+            // own dedicated panel instead of bleeding into the generic auto-injected "Options" tab
+            // every plugin service gets, which is meant for configuration, not shopping.
+            ...(typeof action.panelId === "string" ? { panelId: action.panelId } : {}),
         };
     });
 }
