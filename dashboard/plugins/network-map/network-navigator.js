@@ -27,9 +27,10 @@ const SINGULARITY_WORKER_SCRIPT = "dashboard/plugins/network-map/network-navigat
 // "EquipmentMinFunds:" (or any other Faction Manager option) command had a coin-flip chance of
 // being silently eaten by this script's own drain loop instead of ever reaching
 // faction-manager-gangs.js - confirmed as the actual cause of gang equipment purchases repeatedly
-// ignoring a configured spending cap. Now imported from dashboard/libs/port-registry.js, the single
-// cross-repo source of truth this bug is why exists - see docs/PORT_MAP.md (bitburner-scripts repo)
-// for the full table.
+// ignoring a configured spending cap. This dashboard-owned constant now comes from
+// dashboard/libs/port-registry.js; the cross-repo validator checks it together with the scripts
+// registry and descriptor metadata. See docs/PORT_MAP.md (bitburner-scripts repo) for the full
+// table.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const TRAVEL_COST = 200_000;
 // Workers publish on their own ~2s cadence too - anything older than this is treated as "worker

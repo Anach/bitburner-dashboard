@@ -2679,6 +2679,7 @@ function formatResourceCardValue(value, format = "text") {
     if (format === "ram") return formatRam(Math.max(0, Number(value) || 0));
     if (format === "number") return (Number(value) || 0).toLocaleString();
     if (format === "percent") return formatUtilizationPercent(Number(value) || 0);
+    if (format === "money") return formatMoney(Number(value) || 0);
     return value === undefined || value === null || value === "" ? "n/a" : String(value);
 }
 
@@ -2705,6 +2706,9 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
     const nameEdit = section?.nameEdit && typeof section.nameEdit === "object"
         ? section.nameEdit
         : null;
+    const itemAction = section?.itemAction && typeof section.itemAction === "object"
+        ? section.itemAction
+        : null;
     const utilization = section?.utilization && typeof section.utilization === "object"
         ? section.utilization
         : null;
@@ -2715,6 +2719,32 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
         setEditingIdentity(identity);
         setDraftName(name);
         setDashboardOptionsInputFocusState(true);
+    };
+
+    // A generalized, one-click sibling to nameEdit's rename flow - same identity-scoped command
+    // dispatch (enqueueDashboardAction), but fires immediately instead of opening a text input.
+    // Lets any resource-cards section (not just the one that happens to support renaming) offer a
+    // per-row button, e.g. Augment Manager's per-augment "Buy".
+    const runItemAction = (identity) => {
+        if (!itemAction || !serviceId) return;
+        const commandPrefix = typeof itemAction.commandPrefix === "string" ? itemAction.commandPrefix : "";
+        if (!commandPrefix) return;
+
+        const encode = itemAction.encoding === "uri-component"
+            ? (value) => encodeURIComponent(value)
+            : (value) => value;
+        enqueueDashboardAction({
+            kind: "plugin-command",
+            serviceId,
+            command: `${commandPrefix}${encode(identity)}`,
+        });
+        if (itemAction.startRuntime === true && scriptPath) {
+            enqueueDashboardAction({
+                kind: "script",
+                actionId: SCRIPT_ACTION_IDS.START,
+                filename: scriptPath,
+            });
+        }
     };
 
     const finishNameEdit = (identity, currentName) => {
@@ -2848,6 +2878,24 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                             ) : (
                                 <div data-dashboard-theme-role="data-value" style={WIDGET_STYLES.resourceCardName}>{name}</div>
                             )}
+                            {itemAction ? (
+                                <button
+                                    type="button"
+                                    title={itemAction.title ?? "Run"}
+                                    disabled={typeof itemAction.disabledKey === "string"
+                                        && !getGraphValue(item, itemAction.disabledKey)}
+                                    style={{
+                                        ...WIDGET_STYLES.actionButton,
+                                        ...(typeof itemAction.disabledKey === "string" && !getGraphValue(item, itemAction.disabledKey)
+                                            ? WIDGET_STYLES.actionButtonDisabled
+                                            : {}),
+                                        marginTop: "4px",
+                                    }}
+                                    onClick={() => runItemAction(identity)}
+                                >
+                                    {itemAction.title ?? "Run"}
+                                </button>
+                            ) : null}
                         </div>
                         <div style={WIDGET_STYLES.resourceCardBody}>
                             {metrics.length > 0 ? (
