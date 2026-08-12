@@ -9,7 +9,7 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 > [!IMPORTANT]
 > This project is approaching public beta. Back up your Bitburner save and scripts before testing file-management or kill controls. The metadata contract may still change before a stable release.
 
-[![System Overview in a fully integrated dashboard installation](docs/images/system-overview-custom-installation.png)](docs/images/system-overview-custom-installation.png)
+<img width="1920" height="1019" alt="dash_overview_full" src="https://github.com/user-attachments/assets/b7680d8f-f899-4470-90d7-8ca83f87d88a" />
 
 *A customized installation combining the dashboard framework with user-owned automation integrations. External services pictured here are examples of what the metadata API can support and are not bundled with the dashboard.*
 
@@ -34,7 +34,7 @@ The framework remains usable with no external automation repository, and direct 
 
 | Framework only | Framework with bundled plugins |
 | --- | --- |
-| [![Framework-only dashboard with no plugins or external integrations](docs/images/dashboard-framework-only.png)](docs/images/dashboard-framework-only.png) | [![Dashboard with bundled plugins and no external integrations](docs/images/dashboard-bundled-plugins.png)](docs/images/dashboard-bundled-plugins.png) |
+| <img width="1920" height="1019" alt="dash_no_plugins" src="https://github.com/user-attachments/assets/67866937-f1b1-4943-b81f-ed62980d223f" /> | <img width="1920" height="1019" alt="dash_plugin_mngr" src="https://github.com/user-attachments/assets/e4342676-2f05-43eb-a053-78a0ca7f2f27" /> |
 | Core dashboard, configuration, and service-management surfaces only. | Plugin discovery and lifecycle controls without user-owned script integrations. |
 
 ## Requirements
@@ -137,7 +137,7 @@ An integration has two independent parts:
 1. Your runtime script, which owns all automation and telemetry production.
 2. A JSON-compatible descriptor, which tells the dashboard how to present and control it.
 
-[![Example integrated service with metadata-defined navigation, requirements, and telemetry](docs/images/integrated-service-details.png)](docs/images/integrated-service-details.png)
+<img width="1920" height="1019" alt="dash_report_glyphs" src="https://github.com/user-attachments/assets/d00aa78e-204b-48a9-823c-5a18fe26e37e" />
 
 *A user-owned integration using metadata-defined categories, subviews, unlock glyphs, requirements, and telemetry. The runtime remains independent of the dashboard.*
 
@@ -440,7 +440,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `script-log`
 - `mail-client`
 
-[![Network Navigator full-window view](docs/images/network-navigator.png)](docs/images/network-navigator.png)
+<img width="1920" height="1019" alt="dash_net_map" src="https://github.com/user-attachments/assets/f25a9981-2177-43c9-8cce-971b292407bb" />
 
 *Network Navigator demonstrates a metadata-discovered full-window view with interactive topology, server details, route controls, and integration-contributed telemetry.*
 
