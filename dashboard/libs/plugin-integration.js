@@ -386,6 +386,7 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
             ...(typeof input.group === "string" && input.group.length > 0 ? { group: input.group } : {}),
             ...(typeof input.description === "string" && input.description.length > 0 ? { description: input.description } : {}),
             ...(typeof input.tooltip === "string" && input.tooltip.length > 0 ? { tooltip: input.tooltip } : {}),
+            ...(typeof input.format === "string" && input.format.length > 0 ? { format: input.format } : {}),
             type: input.type,
             value: inputLocked ? (input.lockedValue === "maximum" ? maximum : input.lockedValue) : (input.type === "number" ? numericValue : rawValue),
             ...(Array.isArray(input.values) ? { options: input.values } : {}),

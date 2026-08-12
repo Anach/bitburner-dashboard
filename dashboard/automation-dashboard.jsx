@@ -4130,6 +4130,34 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
                             ))}
                         </select>
+                    ) : input.format === "money" ? (
+                        // A raw digit string like "20000000000000" is unreadable at a glance - this
+                        // preview is read-only and purely a display aid, the <input> itself is
+                        // completely unchanged (still the raw number, still what onChange writes),
+                        // so nothing about validation/round-tripping changes for money inputs vs.
+                        // any other number input.
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                                data-dashboard-theme-role="data-value"
+                                title={tooltip}
+                                style={{ ...controlStyle, flex: "1 1 auto", minWidth: 0 }}
+                                type={input.type ?? "number"}
+                                value={input.value}
+                                min={input.type === "number" && Number.isFinite(input.min) ? input.min : undefined}
+                                max={input.type === "number" && Number.isFinite(input.max) ? input.max : undefined}
+                                step={input.type === "number" ? (input.step ?? "any") : undefined}
+                                disabled={Boolean(input.disabled)}
+                                onFocus={() => setOptionsInputFocus(true)}
+                                onBlur={() => setOptionsInputFocus(false)}
+                                onChange={(e) => updateOptionInput(input, e.target.value)}
+                            />
+                            <span
+                                data-dashboard-theme-role="data-value"
+                                style={{ ...WIDGET_STYLES.smallMuted, whiteSpace: "nowrap", flex: "0 0 auto", fontWeight: 800 }}
+                            >
+                                {formatCompactDashboardValue(Number(input.value) || 0, "money")}
+                            </span>
+                        </div>
                     ) : (
                         <input
                             data-dashboard-theme-role="data-value"
