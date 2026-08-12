@@ -448,7 +448,7 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 
 | File Manager | Mail Client | Script Logs |
 | --- | --- | --- |
-| [![File Manager full-window view](docs/images/file-manager.png)](docs/images/file-manager.png) | [![Mail Client full-window view](docs/images/mail-client.png)](docs/images/mail-client.png) | [![Script Logs full-window view](docs/images/script-logs.png)](docs/images/script-logs.png) |
+| <img width="1920" height="1019" alt="dash_file_mngr" src="https://github.com/user-attachments/assets/3f568cd8-d3e9-49ec-98b6-bc0e83b63b99" /> | <img width="1920" height="1019" alt="dash_mail_client" src="https://github.com/user-attachments/assets/82ba4fe0-b888-4447-b996-b0f0ff4a510c" /> | <img width="1920" height="1019" alt="dash_log_viewer" src="https://github.com/user-attachments/assets/5fdb3951-5dc5-4b3e-9923-be0e592c6a97" /> |
 | Browse and safely manage the `home` filesystem. | Read discovered messages, lore, and text files. | Search and inspect output from running and completed scripts. |
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
