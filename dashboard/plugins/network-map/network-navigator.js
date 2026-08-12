@@ -1,11 +1,8 @@
 import { CITY_NAMES, getCityLocations } from "dashboard/plugins/network-map/city-locations.js";
 import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
 import { startHomeScript } from "dashboard/libs/runtime-actions.js";
-import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
+import { hasApiAccess } from "dashboard/libs/capabilities.js";
 import { NETWORK_NAVIGATOR_COMMAND_PORT } from "dashboard/libs/port-registry.js";
-
-const SINGULARITY_REQUIREMENT = { type: "api", id: "singularity" };
-const FORMULAS_REQUIREMENT = { type: "program", id: "Formulas.exe" };
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
@@ -456,9 +453,11 @@ export async function main(ns) {
     let lastSnapshotSignature = "";
     while (true) {
         const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
-        const capabilities = buildCapabilitySnapshot(ns);
-        const singularityAvailable = isCapabilityRequirementMet(SINGULARITY_REQUIREMENT, capabilities);
-        const formulasAvailable = isCapabilityRequirementMet(FORMULAS_REQUIREMENT, capabilities);
+        // This launcher only needs two gates, so avoid the full capability snapshot's unrelated
+        // Stock API probes. fileExists() is already in this script's static call graph through
+        // startHomeScript(), while hasApiAccess() adds only getResetInfo().
+        const singularityAvailable = hasApiAccess(ns, "singularity");
+        const formulasAvailable = ns.fileExists("Formulas.exe", "home");
 
         // Launcher duties: start each gated worker once its own capability is cheaply detected.
         // startHomeScript() no-ops if already running, so a worker that crashed gets relaunched on

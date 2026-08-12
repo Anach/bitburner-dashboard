@@ -15,17 +15,24 @@ function getMapValue(mapLike, key) {
     return 0;
 }
 
+// Pure form for callers that already need reset information for other work. Reusing that object
+// avoids both another runtime probe and the unrelated Stock/file checks in a full capability
+// snapshot. Keep the API-to-Source-File mapping here so every integration uses the same rule.
+export function hasApiAccessFromResetInfo(resetInfo, apiId) {
+    const sourceFile = API_SOURCE_FILES[apiId];
+    if (!Number.isFinite(sourceFile)) return false;
+
+    const info = resetInfo && typeof resetInfo === "object" ? resetInfo : {};
+    return Number(info.currentNode) === sourceFile
+        || getMapValue(info.ownedSF, sourceFile) >= 1;
+}
+
 // A lightweight capability probe for scripts that only need to gate one API-backed worker.
 // Unlike buildCapabilitySnapshot(), this does not touch the Stock API or enumerate Home files,
 // so importing it into a small parent daemon adds only getResetInfo() to that daemon's RAM bill.
 export function hasApiAccess(ns, apiId) {
-    const sourceFile = API_SOURCE_FILES[apiId];
-    if (!Number.isFinite(sourceFile)) return false;
-
     try {
-        const resetInfo = ns.getResetInfo() ?? {};
-        return Number(resetInfo.currentNode) === sourceFile
-            || getMapValue(resetInfo.ownedSF, sourceFile) >= 1;
+        return hasApiAccessFromResetInfo(ns.getResetInfo(), apiId);
     } catch (error) {
         return false;
     }

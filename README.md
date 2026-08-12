@@ -61,8 +61,8 @@ Included plugins (each independently removable; only pay for what you keep insta
 | Plugin runtime | Pre-SF4 RAM | With SF4 RAM | Notes |
 | --- | ---: | ---: | --- |
 | Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.10 GB | 2.60 GB | Optional Singularity-backed player details account for the difference. |
-| Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.40 GB | 9.40 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
-| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.80 GB** in the normal qualified state. |
+| Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.20 GB | 9.20 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
+| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.60 GB** in the normal qualified state. |
 | Mail Client Scanner (`dashboard/plugins/mail-client/mail-client-scanner.js`) | 5.25 GB | 5.25 GB | |
 | Mail Client Darknet Agent (`dashboard/plugins/mail-client/mail-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
 | Mail Client Reader (`dashboard/plugins/mail-client/mail-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
