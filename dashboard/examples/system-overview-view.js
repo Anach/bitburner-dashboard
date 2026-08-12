@@ -2,6 +2,7 @@ export const DASHBOARD_VIEW_METADATA = {
     "id": "system-overview",
     "renderer": "system-overview",
     "menuGroup": "overview",
+    "menuGroupOrder": -100,
     "menuOrder": -100,
     "menuLabel": "System Overview",
     "title": "System Overview",

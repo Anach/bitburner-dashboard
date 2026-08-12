@@ -1,5 +1,6 @@
 import { discoverNetwork } from "dashboard/plugins/mail-client/mail-client-topology.js";
 import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
+import { isMailboxCandidate } from "dashboard/plugins/mail-client/mail-client-files.js";
 import { MAILBOX_COMMAND_PORT, MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -8,27 +9,24 @@ export const DASHBOARD_SCRIPT_METADATA = {
 
 const MAILBOX_STATE_JSON = "data/mail_client_state.json";
 const READER_SCRIPT = "dashboard/plugins/mail-client/mail-client-reader.js";
+const READER_FILES = [
+    READER_SCRIPT,
+    "dashboard/plugins/mail-client/mail-client-files.js",
+    "dashboard/plugins/mail-client/mail-client-lit-text.js",
+    "dashboard/libs/port-registry.js",
+];
 const DARKNET_AGENT_SCRIPT = "dashboard/plugins/mail-client/mail-client-darknet-agent.js";
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
 const SCAN_INTERVAL_MS = 5000;
 const READER_RETRY_MS = 30000;
-const MESSAGE_EXTENSIONS = [".msg", ".lit", ".txt"];
-
-function isMailboxCandidate(filename) {
-    if (!MESSAGE_EXTENSIONS.some((extension) => filename.endsWith(extension))) return false;
-    // "data/" is this codebase's convention for automation-owned state/report files
-    // (see DATA_PATHS in libs/fs-paths.js) - never in-universe narrative pickups.
-    if (filename.startsWith("data/")) return false;
-    return true;
-}
-
 function makeId(source, filename) {
     return `${source}::${filename}`;
 }
 
 function classifyType(filename) {
-    if (filename.endsWith(".msg")) return "message";
-    if (filename.endsWith(".lit")) return "lore";
+    const comparable = filename.toLowerCase();
+    if (comparable.endsWith(".msg")) return "message";
+    if (comparable.endsWith(".lit")) return "lore";
     return "other";
 }
 
@@ -65,6 +63,17 @@ function loadState(ns) {
         try {
             const parsed = JSON.parse(ns.read(MAILBOX_STATE_JSON));
             if (parsed && typeof parsed === "object" && parsed.messages && typeof parsed.messages === "object") {
+                // Snapshots expose messages as an array for the UI. Internally, commands address
+                // them by id, so rebuild the id-keyed map instead of treating array indexes as ids
+                // after every scanner restart.
+                if (Array.isArray(parsed.messages)) {
+                    const messagesById = {};
+                    for (const record of parsed.messages) {
+                        if (!record || typeof record !== "object" || typeof record.id !== "string") continue;
+                        messagesById[record.id] = record;
+                    }
+                    return messagesById;
+                }
                 return parsed.messages;
             }
         } catch (error) {
@@ -75,11 +84,11 @@ function loadState(ns) {
 }
 
 function migrateStoredMessages(messages) {
-    // One-time cleanup for state written before the data/-exclusion and lore HTML-stripping
-    // fixes existed: drop automation-file records outright, and re-clean already-stored content.
+    // Clean state written before application-owned paths were excluded, and re-clean already-
+    // stored lore content. This also removes files that ceased to be mailbox candidates later.
     for (const id of Object.keys(messages)) {
         const record = messages[id];
-        if (record.filename.startsWith("data/")) {
+        if (!isMailboxCandidate(record?.filename)) {
             delete messages[id];
             continue;
         }
@@ -122,6 +131,9 @@ function drainFeed(ns, messages, networkHosts) {
 
         const { source, filename, content } = raw;
         if (typeof source !== "string" || typeof filename !== "string") continue;
+        // Older reader copies can remain on remote hosts, so enforce the current filter again at
+        // the scanner boundary instead of trusting every feed producer to be up to date.
+        if (!isMailboxCandidate(filename)) continue;
 
         const originHostType = source === "home" ? "home" : networkHosts.has(source) ? "network" : "darknet";
         const record = ensureRecord(messages, source, filename, originHostType);
@@ -178,9 +190,10 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
         const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
         if (readerCost <= 0 || freeRam < readerCost) continue;
 
-        // Always re-copy rather than only when missing: a host that still holds an older reader
-        // would otherwise keep running stale capture logic forever.
-        ns.scp(READER_SCRIPT, host, "home");
+        // Always re-copy the reader and its imports rather than only when missing: a host that
+        // still holds older code would otherwise keep running stale capture logic forever, while
+        // a fresh host cannot compile the reader without the imported modules beside it.
+        ns.scp(READER_FILES, host, "home");
         ns.exec(READER_SCRIPT, host, { threads: 1, temporary: true });
         readerLaunchState.set(host, Date.now());
     }

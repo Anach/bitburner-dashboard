@@ -1,11 +1,17 @@
 # Bitburner Automation Dashboard
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A metadata-driven dashboard framework for [Bitburner](https://github.com/bitburner-official/bitburner-src). It turns a script tail into a responsive control surface for user-owned Netscript services without coupling the dashboard to those services.
 
 The framework discovers declarative integration descriptors, reads JSON telemetry, and supplies the common UI: status and health, script controls, options, commands, graphs, resource cards, full-window views, logs, and file management. Your automation remains independent and continues to work when the dashboard is not running.
 
 > [!IMPORTANT]
 > This project is approaching public beta. Back up your Bitburner save and scripts before testing file-management or kill controls. The metadata contract may still change before a stable release.
+
+[![System Overview in a fully integrated dashboard installation](docs/images/system-overview-custom-installation.png)](docs/images/system-overview-custom-installation.png)
+
+*A customized installation combining the dashboard framework with user-owned automation integrations. External services pictured here are examples of what the metadata API can support and are not bundled with the dashboard.*
 
 ## What the framework provides
 
@@ -22,6 +28,15 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 
 No game DOM modification is required. The interface is rendered inside a normal Netscript tail window.
 
+### Modular deployment
+
+The framework remains usable with no external automation repository, and direct plugins can be removed without leaving broken menu entries or empty view surfaces. Select either image to view it at full resolution.
+
+| Framework only | Framework with bundled plugins |
+| --- | --- |
+| [![Framework-only dashboard with no plugins or external integrations](docs/images/dashboard-framework-only.png)](docs/images/dashboard-framework-only.png) | [![Dashboard with bundled plugins and no external integrations](docs/images/dashboard-bundled-plugins.png)](docs/images/dashboard-bundled-plugins.png) |
+| Core dashboard, configuration, and service-management surfaces only. | Plugin discovery and lifecycle controls without user-owned script integrations. |
+
 ## Requirements
 
 - Bitburner 3.0.x. The current beta is developed against Bitburner 3.0.2.
@@ -37,20 +52,21 @@ Static RAM cost of each framework and included-plugin script, measured on Bitbur
 | Component | Static RAM | Notes |
 | --- | ---: | --- |
 | `dashboard/automation-dashboard.jsx` | 4.90 GB | Required. The dashboard itself. |
-| `dashboard/service-supervisor.js` | 4.50 GB | Required if any daemon integration is enabled. Supervises daemon start/restart. |
-| **Combined steady footprint** | **8.60 GB** | Dashboard + supervisor running together, the normal steady state. |
+| `dashboard/service-supervisor.js` | 4.50 GB | Supervises daemon start/restart (optional). |
+| **Combined steady footprint** | **9.40 GB** | Dashboard + supervisor running together, the normal steady state. |
 | `dashboard/action-worker.js` | 8.50 GB | Transient only — a worker instance starts on demand for a script/kill/file action and exits immediately after, never part of the permanent footprint. |
 
 Included plugins (each independently removable; only pay for what you keep installed):
 
-| Plugin runtime | Static RAM | Notes |
-| --- | ---: | --- |
-| Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.1 GB | |
-| Network Navigator (`dashboard/plugins/network-map/network-navigator.js`) | 234.9 GB | Dominated by six pre-SF4-penalized `ns.singularity.*` calls used for city/company details. Drops sharply once Source-File 4 is unlocked — this is expected, not a bug. |
-| Mail Client Scanner (`dashboard/plugins/mail-client/mail-client-scanner.js`) | 5.25 GB | |
-| Mail Client Darknet Agent (`dashboard/plugins/mail-client/mail-client-darknet-agent.js`) | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
-| Mail Client Reader (`dashboard/plugins/mail-client/mail-client-reader.js`) | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
-| File Manager / Script Log / Mail Client views (`file-manager-view.js`, `script-log-view.js`, `mail-client-view.js`) | 1.6 GB each | Pure metadata descriptors with no `main()` — base script cost only. |
+| Plugin runtime | Pre-SF4 RAM | With SF4 RAM | Notes |
+| --- | ---: | ---: | --- |
+| Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.10 GB | 2.60 GB | Optional Singularity-backed player details account for the difference. |
+| Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.40 GB | 9.40 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
+| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.80 GB** in the normal qualified state. |
+| Mail Client Scanner (`dashboard/plugins/mail-client/mail-client-scanner.js`) | 5.25 GB | 5.25 GB | |
+| Mail Client Darknet Agent (`dashboard/plugins/mail-client/mail-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
+| Mail Client Reader (`dashboard/plugins/mail-client/mail-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
+| Included view descriptors | 1.60 GB each | 1.60 GB each | Pure metadata with no `main()`; the dashboard reads these files rather than launching them, so they do not create separate processes. |
 
 These figures are static per-script costs, not a live-usage snapshot — measure your own installation after syncing if you need an exact number, since it depends on exactly which plugins you keep and whether Source-File 4 is unlocked.
 
@@ -120,6 +136,10 @@ An integration has two independent parts:
 
 1. Your runtime script, which owns all automation and telemetry production.
 2. A JSON-compatible descriptor, which tells the dashboard how to present and control it.
+
+[![Example integrated service with metadata-defined navigation, requirements, and telemetry](docs/images/integrated-service-details.png)](docs/images/integrated-service-details.png)
+
+*A user-owned integration using metadata-defined categories, subviews, unlock glyphs, requirements, and telemetry. The runtime remains independent of the dashboard.*
 
 Start with [dashboard/examples/example-monitor-integration.js](dashboard/examples/example-monitor-integration.js). It is stored outside the discovery directory, so it does nothing by itself.
 
@@ -419,6 +439,10 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `file-manager`
 - `script-log`
 - `mail-client`
+
+[![Network Navigator full-window view](docs/images/network-navigator.png)](docs/images/network-navigator.png)
+
+*Network Navigator demonstrates a metadata-discovered full-window view with interactive topology, server details, route controls, and integration-contributed telemetry.*
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 
