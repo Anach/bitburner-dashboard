@@ -444,6 +444,13 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 
 *Network Navigator demonstrates a metadata-discovered full-window view with interactive topology, server details, route controls, and integration-contributed telemetry.*
 
+### Included utility views
+
+| File Manager | Mail Client | Script Logs |
+| --- | --- | --- |
+| [![File Manager full-window view](docs/images/file-manager.png)](docs/images/file-manager.png) | [![Mail Client full-window view](docs/images/mail-client.png)](docs/images/mail-client.png) | [![Script Logs full-window view](docs/images/script-logs.png)](docs/images/script-logs.png) |
+| Browse and safely manage the `home` filesystem. | Read discovered messages, lore, and text files. | Search and inspect output from running and completed scripts. |
+
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 
 Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata, or to the normal workspace right pane through `workspaceWidgets`. Player Stats uses both contracts to add itself to System Overview and beside the service status panel in non-global system groups. Its dashboard option is also plugin-contributed, so removing Player Stats removes the widgets and option without leaving an empty surface or inactive control.
