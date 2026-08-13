@@ -2,10 +2,11 @@ import { discoverNetwork } from "dashboard/plugins/mail-client/mail-client-topol
 import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
 import { isMailboxCandidate } from "dashboard/plugins/mail-client/mail-client-files.js";
 import { MAILBOX_COMMAND_PORT, MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
-
-export const DASHBOARD_SCRIPT_METADATA = {
-    "daemon": true
-};
+import { registerDashboardWorkspaceProvider } from "dashboard/libs/workspace-provider.js";
+import {
+    createMailClientWorkspaceController,
+    MailClientWorkspace,
+} from "dashboard/plugins/mail-client/mail-client-workspace.js";
 
 const MAILBOX_STATE_JSON = "data/mail_client_state.json";
 const READER_SCRIPT = "dashboard/plugins/mail-client/mail-client-reader.js";
@@ -19,6 +20,7 @@ const DARKNET_AGENT_SCRIPT = "dashboard/plugins/mail-client/mail-client-darknet-
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
 const SCAN_INTERVAL_MS = 5000;
 const READER_RETRY_MS = 30000;
+const WORKSPACE_ID = "mail.mailbox";
 function makeId(source, filename) {
     return `${source}::${filename}`;
 }
@@ -250,10 +252,11 @@ function ensureDarknetAgentRunning(ns) {
     ns.exec(DARKNET_AGENT_SCRIPT, "home", { threads: 1, temporary: true });
 }
 
-function drainCommands(ns, messages) {
+function drainCommands(ns, messages, queuedCommands = []) {
     let lastCommand = null;
+    const pending = Array.isArray(queuedCommands) ? [...queuedCommands] : [];
     while (true) {
-        const raw = ns.readPort(MAILBOX_COMMAND_PORT);
+        const raw = pending.length > 0 ? pending.shift() : ns.readPort(MAILBOX_COMMAND_PORT);
         if (raw === "NULL PORT DATA") break;
         const command = String(raw);
         ns.print(`[MAILBOX] Command received: ${command}`);
@@ -354,6 +357,29 @@ export async function main(ns) {
     const readerLaunchState = new Map();
     let lastCommand = null;
     let lastStateSignature = "";
+    const workspaceController = createMailClientWorkspaceController(buildSnapshot(messages, lastCommand));
+    let workspaceRegistration = null;
+    let cleaned = false;
+    const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        workspaceRegistration?.unregister();
+        workspaceController.shutdown();
+    };
+
+    try {
+        workspaceRegistration = registerDashboardWorkspaceProvider({
+            id: WORKSPACE_ID,
+            title: "Mail Client",
+            component: MailClientWorkspace,
+            controller: workspaceController,
+            persistent: true,
+        });
+    }
+    catch (error) {
+        ns.print(`Mail Client workspace could not register: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    ns.atExit(cleanup);
 
     while (true) {
         const networkHosts = new Set(discoverNetwork(ns, "home").servers);
@@ -364,10 +390,11 @@ export async function main(ns) {
         drainFeed(ns, messages, networkHosts);
         dedupeMessagesByFilenameAndContent(messages);
 
-        const commandResult = drainCommands(ns, messages);
+        const commandResult = drainCommands(ns, messages, workspaceController.drainCommands());
         if (commandResult) lastCommand = commandResult;
 
         const snapshot = buildSnapshot(messages, lastCommand);
+        workspaceController.publish(snapshot);
         // Excludes generatedAt from the comparison - it always differs, which would defeat the
         // point. A genuinely new command result still triggers a write, since lastCommand's own
         // timestamp isn't excluded. Same signature-gating pattern as network-navigator.js/

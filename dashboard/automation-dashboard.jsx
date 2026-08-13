@@ -98,7 +98,6 @@ import { configureDashboardShell, DashboardShell } from "dashboard/renderers/das
 import { configureWorkspaceProviderView, WorkspaceProviderView } from "dashboard/renderers/workspace-provider-view.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
-import { MailClientView } from "dashboard/renderers/mail-client-view.jsx";
 import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
 import { configureDashboardTable, DashboardDataTable } from "dashboard/renderers/dashboard-table.jsx";
 import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
@@ -2395,7 +2394,7 @@ const DASHBOARD_SERVICES = [
     },
 ];
 
-const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log", "mail-client"]);
+const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log"]);
 const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health", "gauges", "service-health", "graphs"]);
 const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command"]);
 const SERVICE_HEALTH_LEVELS = new Set(["neutral", "info", "warn", "danger"]);
@@ -5497,20 +5496,6 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     dashboardTheme={dashboardTheme}
                     initialState={getDashboardViewInteractionState(activeView.id)}
                     onStateChange={(state) => saveDashboardViewInteractionState(activeView.id, state)}
-                    onInputFocusChange={setOptionsInputFocus}
-                    onExit={() => setActiveView("")}
-                    headerActions={<>{minimizeControl}{windowControl}</>}
-                />
-            ) : activeView?.renderer === "mail-client" ? (
-                <MailClientView
-                    view={activeView}
-                    telemetry={activeViewTelemetry}
-                    dashboardTheme={dashboardTheme}
-                    onCommand={(serviceId, command) => runServiceAction({
-                        kind: "plugin-command",
-                        serviceId,
-                        command,
-                    })}
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
                     headerActions={<>{minimizeControl}{windowControl}</>}

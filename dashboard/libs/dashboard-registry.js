@@ -267,7 +267,7 @@ export function buildDashboardMenuGroups(services = [], menuGroups = [], options
     }));
 }
 
-// Some plugins (Mail Client, Network Map, File Manager, Script Log) hide their own service entry
+// Some plugins (Network Map, File Manager, Script Log) hide their own service entry
 // (menuVisible: false) and instead surface a full-window VIEW as the actual clickable menu
 // item - hiding the service itself would have no visible effect for those, so callers that
 // need to target "whatever actually shows in the nav" look up the view backed by a service id.

@@ -21,7 +21,7 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 - Generic start, stop, restart, edit, option, action, and requirement controls.
 - A metadata-driven supervisor for integrated daemon services.
 - JSON telemetry fields, quick statistics, gauges, history graphs, lists, and resource cards.
-- Metadata-driven full-window overview, network-map, file-manager, script-log, and mail client views.
+- Metadata-driven full-window overview, network-map, file-manager, and script-log views, plus retained embedded workspaces such as Mail Client.
 - Health filtering and daemon/on-demand lifecycle presentation.
 - Persistent dashboard options stored on `home`.
 - Safe metadata parsing with `JSON.parse`; integration source is never evaluated.
@@ -442,6 +442,8 @@ Interactive providers should register with `persistent: true`. The framework the
 
 Provider React handlers must not call Netscript functions directly. Queue Netscript-backed work to the provider process and perform it from that process's main loop, as concurrent Netscript calls from UI callbacks can terminate a script.
 
+The included Mail Client is the reference for converting an existing dashboard application to this layout. Its scanner daemon remains the sole Netscript owner, publishes live snapshots to an in-memory workspace controller, and drains UI commands from its normal loop. The retained Mail Client UI occupies the standard center workspace while metadata-contributed Player Status remains visible beside it; no second polling process or full-window renderer branch is required.
+
 ## Full-window views
 
 Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service descriptors. Supported renderers currently include:
@@ -450,7 +452,6 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 - `network-map`
 - `file-manager`
 - `script-log`
-- `mail-client`
 
 <img width="1920" height="1019" alt="dash_net_map" src="https://github.com/user-attachments/assets/f25a9981-2177-43c9-8cce-971b292407bb" />
 
@@ -458,10 +459,10 @@ Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service 
 
 ### Included utility views
 
-| File Manager | Mail Client | Script Logs |
-| --- | --- | --- |
-| <img width="1920" height="1019" alt="dash_file_mngr" src="https://github.com/user-attachments/assets/3f568cd8-d3e9-49ec-98b6-bc0e83b63b99" /> | <img width="1920" height="1019" alt="dash_mail_client" src="https://github.com/user-attachments/assets/82ba4fe0-b888-4447-b996-b0f0ff4a510c" /> | <img width="1920" height="1019" alt="dash_log_viewer" src="https://github.com/user-attachments/assets/5fdb3951-5dc5-4b3e-9923-be0e592c6a97" /> |
-| Browse and safely manage the `home` filesystem. | Read discovered messages, lore, and text files. | Search and inspect output from running and completed scripts. |
+| File Manager | Script Logs |
+| --- | --- |
+| <img width="1920" height="1019" alt="dash_file_mngr" src="https://github.com/user-attachments/assets/3f568cd8-d3e9-49ec-98b6-bc0e83b63b99" /> | <img width="1920" height="1019" alt="dash_log_viewer" src="https://github.com/user-attachments/assets/5fdb3951-5dc5-4b3e-9923-be0e592c6a97" /> |
+| Browse and safely manage the `home` filesystem. | Search and inspect output from running and completed scripts. |
 
 The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin>/`. View metadata is discovered from each plugin's immediate `*-view.js` descriptor, while supported renderer implementations live under `dashboard/renderers/`. The loader still accepts legacy `dashboard/integrations/*-view.js` descriptors, but new dashboard-dependent views should be packaged as plugin folders.
 

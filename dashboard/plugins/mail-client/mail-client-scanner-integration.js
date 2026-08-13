@@ -1,10 +1,10 @@
 export const DASHBOARD_PLUGIN_METADATA = {
-    "adapter": "script",
+    "adapter": "workspace",
     "serviceId": "mail.mailbox",
+    "workspaceId": "mail.mailbox",
     "menuGroup": "software",
-    "menuLabel": "Mail Client Scanner",
-    "menuVisible": false,
-    "description": "Scans home, the normal network, and the darknet for message, lore, and text files, and tracks their read/unread state.",
+    "menuLabel": "Mail Client",
+    "description": "Persistent mailbox workspace backed by the scanner for messages, lore, and text files discovered across the network.",
     "requirements": [
         { "type": "api", "id": "darknet", "required": false }
     ],

@@ -160,11 +160,18 @@ const STYLES = {
         background: "#000000",
     },
     indexToolbar: {
+        display: "flex",
+        justifyContent: "flex-end",
         padding: "6px 9px",
         borderBottom: `1px solid ${COLORS.border}`,
         color: COLORS.muted,
         fontSize: "10px",
         flex: "0 0 auto",
+        minWidth: 0,
+        overflow: "hidden",
+        textAlign: "right",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     indexList: {
         flex: "1 1 auto",
@@ -298,13 +305,6 @@ const STYLES = {
         fontFamily: "inherit",
         fontSize: "11px",
     },
-    statusBar: {
-        borderTop: `1px solid ${COLORS.border}`,
-        padding: "5px 9px",
-        color: COLORS.blue,
-        fontSize: "10px",
-        flex: "0 0 auto",
-    },
     empty: {
         color: COLORS.muted,
         padding: "12px",
@@ -343,7 +343,7 @@ function capitalize(value) {
     return text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
-export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onInputFocusChange, onExit, headerActions }) {
+export function MailClientView({ view, telemetry, dashboardTheme, embedded = false, onCommand, onInputFocusChange, onExit, headerActions }) {
     const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
         rawReact = nextRawReact;
@@ -403,12 +403,9 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
         });
     }, [view?.id, selectedFolder, selectedMessageId, cursorId]);
 
-    // The tail redraws (and rebuilds its DOM) on every dashboard refresh tick, which drops focus
-    // back to the terminal. This used to reclaim it after every render by checking
-    // document.activeElement, but that's a bare document reference, which
-    // DASHBOARD_DESIGN_PRINCIPLES.md's Platform Boundaries forbids outright - removed rather than
-    // worked around. Accepted regression: focus may occasionally drift back to the terminal after
-    // a remount instead of being automatically reclaimed.
+    // The persistent workspace host retains this component and restores its last focused control
+    // when the dashboard shell is replaced. The view only reports explicit input focus; it never
+    // inspects the game's document or attempts to reclaim focus from another surface itself.
 
     React.useEffect(() => {
         return () => onInputFocusChange?.(false);
@@ -610,8 +607,10 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
                 break;
             case "q":
             case "Q":
-                event.preventDefault();
-                onExit?.();
+                if (!embedded && onExit) {
+                    event.preventDefault();
+                    onExit();
+                }
                 break;
             default:
                 break;
@@ -633,14 +632,15 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
         { id: "delete", key: "d", label: "Delete", onClick: () => deleteMessage(activeTargetId()) },
         { id: "read-toggle", key: "m", label: readToggleLabel, onClick: () => toggleReadMessage(activeTargetId()) },
         { id: "mark-all", key: "a", label: "Mark all", onClick: markAllRead },
-        { id: "close", key: "q", label: "Close", onClick: () => onExit?.() },
+        ...(!embedded && onExit ? [{ id: "close", key: "q", label: "Close", onClick: onExit }] : []),
     ];
 
     const unreadTotal = Number(folderCounts?.Inbox) || 0;
     const totalResolved = Object.values(totalCounts).reduce((sum, value) => sum + (Number(value) || 0), 0);
     const readTotal = Math.max(0, totalResolved - unreadTotal);
 
-    const statusSummary = `${selectedFolder} — ${visibleMessages.length} shown${searchQuery ? `, filtered by "${searchQuery}"` : ""}`;
+    const statusSummary = `${selectedFolder} - ${visibleMessages.length} shown${searchQuery ? `, filtered by "${searchQuery}"` : ""}`;
+    const paneStatus = `${statusSummary}${lastResult?.message ? ` · ${lastResult.message}` : ""}`;
 
     return (
         <main
@@ -648,24 +648,26 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
             ref={shellRef}
             tabIndex={0}
             onKeyDown={handleKeyDown}
-            style={STYLES.shell}
+            style={{ ...STYLES.shell, ...(embedded ? { border: "none" } : {}) }}
         >
             <header style={STYLES.header}>
                 <div>
                     <div style={STYLES.title}>{view?.title ?? "Mail Client"}</div>
                     <div style={STYLES.subtitle}>{view?.subtitle ?? "In-game messages, lore, and text files"}</div>
                 </div>
-                <div style={getDashboardFrameControlGroupStyle()}>
-                    {headerActions}
-                    <button
-                        type="button"
-                        style={STYLES.closeButton}
-                        onMouseDown={(event) => runDashboardFrameControlMouseDown(event, onExit)}
-                        onClick={(event) => runDashboardFrameControlClick(event, onExit)}
-                    >
-                        {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
-                    </button>
-                </div>
+                {!embedded ? (
+                    <div style={getDashboardFrameControlGroupStyle()}>
+                        {headerActions}
+                        <button
+                            type="button"
+                            style={STYLES.closeButton}
+                            onMouseDown={(event) => runDashboardFrameControlMouseDown(event, onExit)}
+                            onClick={(event) => runDashboardFrameControlClick(event, onExit)}
+                        >
+                            {view?.closeLabel ?? DASHBOARD_FRAME_CONTROL_LABELS.close}
+                        </button>
+                    </div>
+                ) : null}
             </header>
 
             <div style={STYLES.shortcutBar}>
@@ -714,6 +716,7 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
                 </aside>
 
                 <section data-dashboard-theme-role="control-frame" style={STYLES.mainPane}>
+                    <div style={STYLES.indexToolbar} title={paneStatus}>{paneStatus}</div>
                     {selectedMessage ? (
                         <div ref={setDetailBodyRef} onScroll={onDetailScroll} style={STYLES.readerScroll}>
                             <div style={STYLES.readerRule} />
@@ -738,7 +741,6 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
                         </div>
                     ) : (
                         <>
-                            <div style={STYLES.indexToolbar}>{selectedFolder}</div>
                             <div ref={setMessageListRef} onScroll={onMessageListScroll} style={STYLES.indexList}>
                                 {visibleMessages.map((message, index) => {
                                     const id = idOf(message);
@@ -811,9 +813,6 @@ export function MailClientView({ view, telemetry, dashboardTheme, onCommand, onI
                 </div>
             ) : null}
 
-            <div style={STYLES.statusBar}>
-                {statusSummary}{lastResult?.message ? ` · ${lastResult.message}` : ""}
-            </div>
         </main>
     );
 }
