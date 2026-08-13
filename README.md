@@ -432,6 +432,10 @@ Framework renderers remain installed when a plugin is removed. A renderer define
 
 ### Embedded workspace providers
 
+<img width="1920" height="1019" alt="image" src="https://github.com/user-attachments/assets/6d176c28-d444-46ca-976a-fbe3ba3d21ac" />
+
+*An example BBS Connect plugin - not included*
+
 An integration with the `workspace` adapter may register a scripts-owned React component through `dashboard/libs/workspace-provider.js`. The provider process owns its controller, long-lived state, and any worker or resource bridge; the dashboard only supplies the workspace slot, current theme, and input-focus callback.
 
 Interactive providers should register with `persistent: true`. The framework then renders the provider into a retained `ReactDOM` root whose lifetime follows the provider registration rather than the dashboard's replaceable `printRaw()` tree. Dashboard telemetry can continue refreshing without remounting a game canvas or resetting component state, and keyboard focus is restored to the retained control after the outer dashboard tree is replaced. Navigating away merely detaches the retained root, navigating back reattaches it, and unregistering the provider performs the final React cleanup.
