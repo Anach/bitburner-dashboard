@@ -118,23 +118,44 @@ const STYLES = {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        overflow: "auto",
+        overflow: "hidden",
         border: `1px solid ${COLORS.border}`,
         background: COLORS.panel,
-        padding: "6px",
+        boxSizing: "border-box",
+    },
+    folderHeader: {
+        display: "flex",
+        alignItems: "center",
+        flex: "0 0 auto",
+        boxSizing: "border-box",
+        height: "32px",
+        padding: "4px 9px",
+        borderBottom: "1px solid rgba(125, 160, 212, 0.14)",
+        color: COLORS.muted,
+        fontSize: "9px",
+        fontWeight: 400,
+        letterSpacing: "0.06em",
+        lineHeight: 1.2,
+        textTransform: "uppercase",
+    },
+    folderContent: {
+        flex: "1 1 auto",
+        minHeight: 0,
+        overflow: "auto",
+        padding: "0 0 6px",
         boxSizing: "border-box",
     },
     folderList: {
         display: "flex",
         flexDirection: "column",
-        gap: "2px",
     },
     folderButton: {
         display: "flex",
         alignItems: "center",
         width: "100%",
-        padding: "6px 7px",
+        padding: "4px 9px",
         border: "none",
+        borderBottom: "1px solid transparent",
         background: "transparent",
         color: COLORS.text,
         textAlign: "left",
@@ -149,13 +170,13 @@ const STYLES = {
     },
     folderDivider: {
         borderTop: `1px dashed ${COLORS.border}`,
-        margin: "8px 2px",
+        margin: "8px",
     },
     folderSummary: {
         display: "flex",
         flexDirection: "column",
         gap: "3px",
-        padding: "0 7px",
+        padding: "0 9px",
     },
     folderSummaryRow: {
         display: "flex",
@@ -175,7 +196,10 @@ const STYLES = {
     },
     indexToolbar: {
         display: "flex",
+        alignItems: "center",
         justifyContent: "flex-end",
+        boxSizing: "border-box",
+        height: "32px",
         padding: "6px 9px",
         borderBottom: `1px solid ${COLORS.border}`,
         color: COLORS.muted,
@@ -195,9 +219,11 @@ const STYLES = {
     indexColumnHeader: {
         display: "grid",
         gridTemplateColumns: MESSAGE_INDEX_GRID,
-        alignItems: "center",
+        alignItems: "stretch",
         gap: "0 8px",
         flex: "0 0 auto",
+        boxSizing: "border-box",
+        height: "32px",
         padding: "4px 9px",
         borderBottom: "1px solid rgba(125, 160, 212, 0.14)",
         color: COLORS.muted,
@@ -224,7 +250,8 @@ const STYLES = {
         minWidth: 0,
         overflow: "hidden",
         color: COLORS.muted,
-        fontSize: "10px",
+        fontSize: "9px",
+        lineHeight: 1.2,
         letterSpacing: "normal",
         textAlign: "right",
         textOverflow: "ellipsis",
@@ -232,15 +259,22 @@ const STYLES = {
         whiteSpace: "nowrap",
     },
     indexCellDivider: {
+        display: "flex",
+        alignItems: "center",
         alignSelf: "stretch",
         boxSizing: "border-box",
+        minWidth: 0,
         borderLeft: "1px solid rgba(125, 160, 212, 0.09)",
         paddingLeft: "7px",
+    },
+    indexCellContent: {
+        width: "100%",
+        minWidth: 0,
     },
     indexRow: {
         display: "grid",
         gridTemplateColumns: MESSAGE_INDEX_GRID,
-        alignItems: "baseline",
+        alignItems: "stretch",
         gap: "0 8px",
         width: "100%",
         padding: "4px 9px",
@@ -262,6 +296,8 @@ const STYLES = {
         fontWeight: 700,
     },
     indexDot: {
+        display: "flex",
+        alignItems: "center",
         color: COLORS.green,
     },
     indexDotRead: {
@@ -762,27 +798,30 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
 
             <div style={STYLES.body}>
                 <aside data-dashboard-theme-role="control-frame" style={STYLES.folderPane}>
-                    <div style={STYLES.folderList}>
-                        {folders.map((folder) => {
-                            const isInbox = folder.id === "Inbox";
-                            const count = isInbox ? unreadTotal : null;
-                            return (
-                                <button
-                                    type="button"
-                                    data-dashboard-theme-role="navigation-item"
-                                    key={folder.id}
-                                    style={{ ...STYLES.folderButton, ...(selectedFolder === folder.id ? STYLES.folderButtonActive : {}) }}
-                                    onClick={() => selectFolder(folder.id)}
-                                >
-                                    {folder.label}{count !== null ? ` (${count})` : ""}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <div style={STYLES.folderDivider} />
-                    <div style={STYLES.folderSummary}>
-                        <div style={STYLES.folderSummaryRow}><span>Unread</span><span>{unreadTotal}</span></div>
-                        <div style={STYLES.folderSummaryRow}><span>Read</span><span>{readTotal}</span></div>
+                    <div style={STYLES.folderHeader}>Folders</div>
+                    <div style={STYLES.folderContent}>
+                        <div style={STYLES.folderList}>
+                            {folders.map((folder) => {
+                                const isInbox = folder.id === "Inbox";
+                                const count = isInbox ? unreadTotal : null;
+                                return (
+                                    <button
+                                        type="button"
+                                        data-dashboard-theme-role="navigation-item"
+                                        key={folder.id}
+                                        style={{ ...STYLES.folderButton, ...(selectedFolder === folder.id ? STYLES.folderButtonActive : {}) }}
+                                        onClick={() => selectFolder(folder.id)}
+                                    >
+                                        {folder.label}{count !== null ? ` (${count})` : ""}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div style={STYLES.folderDivider} />
+                        <div style={STYLES.folderSummary}>
+                            <div style={STYLES.folderSummaryRow}><span>Unread</span><span>{unreadTotal}</span></div>
+                            <div style={STYLES.folderSummaryRow}><span>Read</span><span>{readTotal}</span></div>
+                        </div>
                     </div>
                 </aside>
 
@@ -791,10 +830,10 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                     {!selectedMessage ? (
                         <div style={STYLES.indexColumnHeader}>
                             <span />
-                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider, textAlign: "right" }}>#</span>
-                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider }}>Date</span>
-                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider }}>Sender</span>
-                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider, textAlign: "right" }}>Size</span>
+                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellContent, textAlign: "right" }}>#</span></span>
+                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellContent }}>Date</span></span>
+                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellContent }}>Sender</span></span>
+                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellContent, textAlign: "right" }}>Size</span></span>
                             <span style={{ ...STYLES.indexSubjectHeader, ...STYLES.indexCellDivider }}>
                                 <span style={STYLES.indexColumnLabel}>Subject</span>
                                 <span style={STYLES.indexHeaderStatus} title={paneStatus}>{paneStatus}</span>
@@ -849,12 +888,12 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                                             <span style={{ ...STYLES.indexDot, ...(isRead ? STYLES.indexDotRead : {}) }}>
                                                 {isRead ? "○" : "●"}
                                             </span>
-                                            <span style={{ ...STYLES.indexNum, ...STYLES.indexCellDivider }}>{index + 1}</span>
-                                            <span style={{ ...STYLES.indexDate, ...STYLES.indexCellDivider }}>{formatIndexDate(getDashboardViewValue(message, firstSeenField))}</span>
-                                            <span style={{ ...STYLES.indexSender, ...STYLES.indexCellDivider }}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span>
-                                            <span style={{ ...STYLES.indexSize, ...STYLES.indexCellDivider }}>{formatSize(String(getDashboardViewValue(message, contentField) ?? "").length)}</span>
-                                            <span style={{ ...STYLES.indexSubject, ...STYLES.indexCellDivider }}>
-                                                {String(getDashboardViewValue(message, subjectField) ?? "")}
+                                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexNum, ...STYLES.indexCellContent }}>{index + 1}</span></span>
+                                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexDate, ...STYLES.indexCellContent }}>{formatIndexDate(getDashboardViewValue(message, firstSeenField))}</span></span>
+                                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexSender, ...STYLES.indexCellContent }}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span></span>
+                                            <span style={STYLES.indexCellDivider}><span style={{ ...STYLES.indexSize, ...STYLES.indexCellContent }}>{formatSize(String(getDashboardViewValue(message, contentField) ?? "").length)}</span></span>
+                                            <span style={STYLES.indexCellDivider}>
+                                                <span style={{ ...STYLES.indexSubject, ...STYLES.indexCellContent }}>{String(getDashboardViewValue(message, subjectField) ?? "")}</span>
                                             </span>
                                         </button>
                                     );

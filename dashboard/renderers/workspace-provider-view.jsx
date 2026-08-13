@@ -79,8 +79,8 @@ function PersistentWorkspaceProvider({ provider, dashboardTheme, onInputFocusCha
             />
         </WorkspaceProviderErrorBoundary>);
         host.restoreFocus();
-        // Deliberately do not unmount on dashboard refresh or navigation. Provider unregister owns
-        // final disposal; the next dashboard tree simply reattaches this same container.
+        // Detach, but deliberately do not unmount, on dashboard refresh or navigation. Provider
+        // unregister owns final disposal; the next dashboard tree reattaches this same live root.
         return () => host.prepareDetach();
     }, [host, provider, dashboardTheme, onInputFocusChange, resetKey]);
 

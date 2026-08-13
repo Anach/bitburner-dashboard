@@ -63,6 +63,10 @@ export function getDashboardPersistentWorkspaceHost(provider, dependencies = {})
             focusedElement = activeElement && container.contains?.(activeElement)
                 ? activeElement
                 : null;
+            // Keep the provider's React root mounted, but remove its container from the visible
+            // workspace. Otherwise selecting another persistent provider appends that provider
+            // beside this one until the dashboard tree is replaced.
+            container.remove?.();
             return Boolean(focusedElement);
         },
         restoreFocus() {
