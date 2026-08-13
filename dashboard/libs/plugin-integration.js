@@ -78,7 +78,11 @@ function formatTelemetryFieldValue(value, format) {
     if (format === "time") return Number(value) > 0 ? new Date(Number(value)).toLocaleTimeString() : "n/a";
     if (format === "uppercase") return String(value).toUpperCase();
     if (format === "shortDurationText") {
+        // Covers every unit formatDuration can emit - it escalates past hours into days and years
+        // for long-range ETAs, and the overview stat bar is too narrow to spell those out.
         return String(value)
+            .replace(/\byears?\b/gi, "yr")
+            .replace(/\bdays?\b/gi, "d")
             .replace(/\bhours?\b/gi, "hrs")
             .replace(/\bminutes?\b/gi, "min");
     }

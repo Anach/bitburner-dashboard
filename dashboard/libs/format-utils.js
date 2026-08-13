@@ -1,13 +1,37 @@
+// Beyond this, a duration carries no information a player can act on, and printing it in full is
+// actively worse than saying so - an ETA to a far-off hacking level can reach ~1e56 hours, which
+// rendered as a raw number produced "6.458975140990254e+56 hrs 44 min" in the stat bar.
+const DURATION_UNREACHABLE_YEARS = 1000;
+
 export function formatDuration(ms) {
     if (!Number.isFinite(ms) || ms <= 0) return "now";
 
     const totalMinutes = Math.ceil(ms / 60000);
     if (totalMinutes < 60) return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
 
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (minutes === 0) return `${hours} hour${hours === 1 ? "" : "s"}`;
-    return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+    const totalHours = Math.floor(totalMinutes / 60);
+    if (totalHours < 24) {
+        const minutes = totalMinutes % 60;
+        if (minutes === 0) return `${totalHours} hour${totalHours === 1 ? "" : "s"}`;
+        return `${totalHours} hour${totalHours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+    }
+
+    // Everything below is new escalation; sub-24h output above is unchanged so existing displays
+    // and the console report read exactly as before.
+    const totalDays = Math.floor(totalHours / 24);
+    if (totalDays < 365) {
+        const hours = totalHours % 24;
+        if (hours === 0) return `${totalDays} day${totalDays === 1 ? "" : "s"}`;
+        return `${totalDays} day${totalDays === 1 ? "" : "s"} ${hours} hour${hours === 1 ? "" : "s"}`;
+    }
+
+    const totalYears = Math.floor(totalDays / 365);
+    if (totalYears >= DURATION_UNREACHABLE_YEARS) {
+        return `over ${DURATION_UNREACHABLE_YEARS.toLocaleString()} years`;
+    }
+    const days = totalDays % 365;
+    if (days === 0) return `${totalYears} year${totalYears === 1 ? "" : "s"}`;
+    return `${totalYears} year${totalYears === 1 ? "" : "s"} ${days} day${days === 1 ? "" : "s"}`;
 }
 
 export function formatMoney(value) {
