@@ -426,6 +426,13 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ? String(stateValue) === String(action.activeValue)
             : Boolean(stateValue);
         const requiresRuntime = action.requiresRuntime !== false && integration?.commands?.requiresRuntime !== false;
+        // A "clipboard" action just hands the player a string to paste - it dispatches nothing, so
+        // it must not be gated on the integration's script running, and its payload comes from
+        // telemetry rather than from the descriptor (the target changes as the game progresses).
+        const clipboardText = typeof action.textKey === "string"
+            ? String(getTelemetryFieldValue(safeStats, action.textKey) ?? "")
+            : "";
+        const isClipboard = action.kind === "clipboard";
         return {
             id: `${idPrefix}-${action.id}`,
             label: variant?.label ?? action.label,
@@ -433,7 +440,12 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             tone: variant?.tone ?? (enabled
                 ? action.activeTone ?? action.enabledTone ?? "success"
                 : action.inactiveTone ?? action.disabledTone ?? "danger"),
-            kind: integration?.commands?.actionKind ?? "plugin-command",
+            // Per-action kind wins over the integration-level actionKind. Required for "clipboard":
+            // buildPluginIntegrationService.getActions hard-overrides actionKind to "plugin-command"
+            // for the auto Options panel, so without this a clipboard entry would silently be
+            // dispatched as a port command instead.
+            kind: action.kind ?? integration?.commands?.actionKind ?? "plugin-command",
+            ...(isClipboard ? { text: clipboardText } : {}),
             command: action.command ?? variant?.command ?? (enabled ? action.disableCommand : action.enableCommand),
             // Per-action override for an integration whose merged components each still run their
             // own independent command-drain loop on their own port - same rationale as
@@ -445,7 +457,12 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ...(isPersistedAction
                 ? { optionKey: action.optionKey, optionValue: hasExplicitOptionValue ? action.optionValue : !enabled }
                 : {}),
-            disabled: Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
+            // A clipboard action copies telemetry, so it is gated on having something to copy
+            // rather than on the integration's own script running - the whole point of these is to
+            // work while the Singularity-gated worker is stopped.
+            disabled: isClipboard
+                ? clipboardText.length === 0
+                : Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
             order: startingOrder + (Number(action.order) || index * 10),
             // Mirrors telemetry sections' own panelId scoping (getPluginIntegrationSections) - an
             // action with no panelId shows on every panel (the pre-existing, still-default
@@ -821,8 +838,9 @@ export function buildPluginIntegrationService(plugin) {
             if (selectedCenterPanel !== optionsPanelId) return [];
             return buildPluginIntegrationInputs(integration, options, telemetryByServiceId?.[integration.serviceId], { includeRanges: true, idPrefix: integration.serviceId });
         },
-        getActions: ({ selectedCenterPanel, homeScripts, options, telemetryByServiceId }) => {
-            if (selectedCenterPanel !== optionsPanelId) return [];
+        getActions: ({ homeScripts, options, telemetryByServiceId }) => {
+            // Not gated to the Options panel - see the matching comment in script-plugin.js's
+            // getActions. Placement is decided by renderStandardServicePanel's panelId filter.
             // Own scriptPath OR any managedScripts sibling - see isIntegrationScriptRunning's own
             // comment for why this can't just check scriptPath alone.
             const runningFilenames = new Set((homeScripts ?? []).filter((s) => s?.running).map((s) => s.filename));

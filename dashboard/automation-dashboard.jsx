@@ -2396,7 +2396,11 @@ const DASHBOARD_SERVICES = [
 
 const DASHBOARD_VIEW_RENDERERS = new Set(["system-overview", "network-map", "file-manager", "script-log"]);
 const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health", "gauges", "service-health", "graphs"]);
-const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command"]);
+// "clipboard" is the odd one out: every other kind dispatches something (a script action, a port
+// command, an options write), whereas clipboard just hands the player a string to paste into the
+// game's own terminal. It exists for workflows that are only manual until Singularity unlocks the
+// automated path. normalizeDashboardActions() silently drops unknown kinds, so it must be listed.
+const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command", "clipboard"]);
 const SERVICE_HEALTH_LEVELS = new Set(["neutral", "info", "warn", "danger"]);
 const SERVICE_CONTRACT_STRICT_MODE = Boolean(globalThis?.__DASHBOARD_SERVICE_STRICT_MODE__);
 
@@ -3314,6 +3318,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         ? <DashboardMinimizeButton controlStyle={networkMapControlStyle} />
         : null;
     const [pressedActionButtonId, setPressedActionButtonId] = React.useState("");
+    // Result of the most recent "clipboard" action. Doubles as the failure path: when the browser
+    // refuses writeText() the raw command is shown here so it can still be selected by hand.
+    const [copyNotice, setCopyNotice] = React.useState("");
     const [killAllPending, setKillAllPending] = React.useState(false);
     const killAllSnapshotRef = React.useRef(null);
     React.useEffect(() => {
@@ -3858,6 +3865,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         if (action.kind === "plugin-command") {
             return `Send plugin command: ${action.command ?? "(missing)"}`;
         }
+        if (action.kind === "clipboard") {
+            return action.text
+                ? `Copy to clipboard, then paste into the game terminal:\n${action.text}`
+                : `${action.label}\nNothing to copy right now.`;
+        }
         return action.label;
     };
 
@@ -3926,6 +3938,30 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     const runServiceAction = (action) => {
         if (!action) return;
+        if (action.kind === "clipboard") {
+            // Handled inline, NOT via enqueueDashboardAction: that queue exists to marshal ns.*
+            // calls onto the script's own loop, and copying a string touches no ns at all.
+            const text = String(action.text ?? "");
+            if (!text) return;
+            try {
+                // No focus pre-check - that would require touching document/window, which
+                // DASHBOARD_DESIGN_PRINCIPLES.md's Platform Boundaries forbids outright. If the
+                // tail hasn't taken focus yet the promise rejects, and the .catch() below surfaces
+                // the raw command so it can still be copied by hand. Same approach as
+                // dashboard/renderers/network-map-view.jsx's node-action copy.
+                const clipboard = globalThis?.navigator?.clipboard;
+                if (clipboard && typeof clipboard.writeText === "function") {
+                    void Promise.resolve(clipboard.writeText(text))
+                        .then(() => setCopyNotice(`Copied: ${text}`))
+                        .catch(() => setCopyNotice(`Clipboard unavailable. Command: ${text}`));
+                    return;
+                }
+            } catch (error) {
+                // Fall through to the visible command hint.
+            }
+            setCopyNotice(`Clipboard unavailable. Command: ${text}`);
+            return;
+        }
         if (action.kind === "save-options") {
             const optionOverrides = action.optionOverrides && typeof action.optionOverrides === "object"
                 ? action.optionOverrides
@@ -3995,7 +4031,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ? { display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "stretch" }
             : WIDGET_STYLES.actionGrid;
 
+        // Only surface the copy result on a panel that actually has a clipboard action, so the
+        // notice appears next to the button that produced it rather than on every panel.
+        const showCopyNotice = copyNotice && actions.some((action) => action.kind === "clipboard");
+
         return (
+            <div>
             <div style={containerStyle}>
                 {actions.map((action) => (
                     <button
@@ -4025,6 +4066,19 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         {renderActionLabel(action)}
                     </button>
                 ))}
+            </div>
+            {showCopyNotice ? (
+                <div
+                    style={{
+                        ...WIDGET_STYLES.smallMuted,
+                        marginTop: "8px",
+                        color: "#8ef0b5",
+                        overflowWrap: "anywhere",
+                    }}
+                >
+                    {copyNotice}
+                </div>
+            ) : null}
             </div>
         );
     };
@@ -5223,11 +5277,18 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             ? []
             : [requirementSection, ...serviceSections].filter(Boolean);
         const inputs = getInputs();
-        // Same convention as section.panelId (getPluginIntegrationSections): no panelId means
-        // "show on every panel" (the original, unscoped behavior), preserving every existing
-        // integration's actions exactly as before. A panelId confines an action to that one panel -
-        // e.g. Augment Manager's buy actions, kept off the generic Options tab.
-        const actions = panelActions.filter((action) => typeof action.panelId !== "string" || action.panelId === panelId);
+        // Single place that decides action placement, now that the adapters no longer hard-gate
+        // getActions to the Options panel:
+        //   - an action WITH a panelId appears only on that panel (e.g. the copy-route button on
+        //     BDRouter, or Augment Manager's bulk buy on its Buy tab);
+        //   - an action WITHOUT one keeps the historical behavior of appearing only on a plugin's
+        //     auto-injected Options panel, so lifting the adapter gate doesn't splatter mode
+        //     toggles across every panel. Non-plugin services are untouched - their actions have
+        //     no panelId and have always rendered on whatever panel they were built for.
+        const actions = panelActions.filter((action) => {
+            if (typeof action.panelId === "string") return action.panelId === panelId;
+            return !isPluginService || isPluginOptionsPanel;
+        });
 
         const panelHealthLevel = isPluginOptionsPanel || isStandalonePanel
             ? "neutral"

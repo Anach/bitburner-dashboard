@@ -364,6 +364,21 @@ Options are stored with the dashboard configuration. The dashboard can send thei
 
 Allocate an unused port for each interactive runtime. The runtime is responsible for reading that port and applying commands. Custom action buttons use the same boundary through an `actions` array; see the complete example descriptor.
 
+### Action buttons and where they appear
+
+Each `actions` entry renders one button. The default kind sends `command` over the integration's `commands.port`, so it needs a running runtime to receive it:
+
+```js
+"actions": [
+    { "id": "mode-auto", "label": "Auto", "icon": "AD", "command": "Mode:auto", "stateKey": "mode", "activeValue": "auto" },
+    { "id": "copy-route", "kind": "clipboard", "label": "Copy backdoor route", "textKey": "progression.story.nextTargetCommand", "panelId": "bdrouter" }
+]
+```
+
+**Placement.** An action with a `panelId` appears only on that panel. An action without one appears on the auto-injected Options panel, which is the right home for configuration toggles. Use `panelId` to put a button beside the data it acts on rather than in the settings tab.
+
+**`kind: "clipboard"`** copies a string to the clipboard instead of dispatching anything. The payload comes from telemetry via `textKey` (a dotted path, resolved the same way telemetry `fields` are), so it tracks live game state. Because it sends no command, it is *not* gated on the runtime being alive — it stays usable while a capability-gated worker is stopped, which is the point: it exists for workflows the player must perform manually until an API unlocks. The button disables itself when the resolved text is empty, and if the browser refuses clipboard access the raw text is displayed instead so it can still be copied by hand.
+
 ### Declare requirements
 
 Requirements inform health and availability displays without putting capability checks in the descriptor. Supported requirement types are:
@@ -480,6 +495,6 @@ Plugins may contribute widgets to a discovered view through JSON-compatible `vie
 - Port numbers are shared game-wide; integrations must not reuse ports unintentionally.
 - File-manager actions can move, archive, or delete files on `home`. Running and descriptor-protected files are blocked, but a save backup remains strongly recommended.
 - `dashboard/action-worker.js` and `data/dashboard_action_result.json` are framework-protected File Manager paths.
-- Metadata and view schemas are still beta contracts. Review release notes before updating an existing integration.
+- Metadata and view schemas are still beta contracts. Review [CHANGELOG.md](CHANGELOG.md) before updating an existing integration; entries marked **contract** are the ones that can affect a descriptor or runtime you already wrote.
 
 Bug reports should include the Bitburner version, the descriptor, a small telemetry sample, the dashboard log output, and reproduction steps.

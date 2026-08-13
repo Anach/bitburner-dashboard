@@ -111,8 +111,12 @@ export function buildScriptPluginService(plugin) {
                 idPrefix: integration.serviceId,
             });
         },
-        getActions: ({ selectedCenterPanel, homeScripts, options, telemetryByServiceId }) => {
-            if (selectedCenterPanel !== optionsPanelId) return [];
+        getActions: ({ homeScripts, options, telemetryByServiceId }) => {
+            // Deliberately NOT gated to the Options panel any more. It used to early-return [] for
+            // every other panel, which silently defeated per-action `panelId` scoping: a scoped
+            // action was filtered off Options by the panel filter and never built anywhere else,
+            // so it rendered nowhere at all. Placement is now decided in one place -
+            // renderStandardServicePanel's filter, which keeps un-scoped actions on Options only.
             // Own scriptPath OR any managedScripts sibling - a merged integration's action buttons
             // (gang mode, territory warfare, share-home-ram, etc.) target whichever daemon actually
             // drains that command's port, which isn't necessarily this integration's own paired
