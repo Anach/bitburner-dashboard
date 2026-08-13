@@ -24,6 +24,7 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
             filename: command.filename,
             args: context.getScriptLaunchArgs?.(command.filename),
             temporary: launchOptions.temporary === true,
+            closeTailOnRestart: launchOptions.closeTailOnRestart === true,
             managedScripts: managedProcesses.home ?? [],
             managedNetworkScripts: managedProcesses.network ?? [],
         };

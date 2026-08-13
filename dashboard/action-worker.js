@@ -89,6 +89,20 @@ function stopManagedProcesses(ns, command) {
     }, [ns.pid]);
 }
 
+function closeHomeScriptTails(ns, filename) {
+    let closedCount = 0;
+    for (const process of ns.ps("home")) {
+        if (process?.filename !== filename) continue;
+        try {
+            ns.ui.closeTail(process.pid);
+            closedCount += 1;
+        } catch (error) {
+            // The process may exit between the process snapshot and close request.
+        }
+    }
+    return closedCount;
+}
+
 function performScriptAction(ns, command) {
     const { actionId, filename, args } = command;
     const startScript = command.temporary === true ? startTemporaryHomeScript : startHomeScript;
@@ -101,6 +115,7 @@ function performScriptAction(ns, command) {
         managedResult = stopManagedProcesses(ns, command);
         if (result.status === "not-running" && managedResult.killedCount > 0) result = { status: "stopped" };
     } else {
+        if (command.closeTailOnRestart === true) closeHomeScriptTails(ns, filename);
         const parentStop = stopHomeScript(ns, filename);
         if (parentStop.status === "failed") {
             result = { status: "failed-to-stop" };

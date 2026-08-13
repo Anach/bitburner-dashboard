@@ -111,7 +111,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 .filter((definition) => (!serviceIds || serviceIds.has(definition.serviceId)) && (definition.groups?.length ?? 0) > 0);
             const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
             const isOffline = runtimeStatuses.some((status) => status?.requiresRuntime && !status?.running);
-            return <div key={widget.id} style={{ ...wrapperStyle, ...styles.playerStatusColumn }}>
+            return <div key={widget.id} style={{ ...wrapperStyle, ...styles.playerStatusDividerColumn }}>
                 <HomePanel title={title} subtitle={subtitle} widgetStyles={styles} muted={isOffline}>
                     {isOffline
                         ? <div style={styles.muted}>Service is offline.</div>

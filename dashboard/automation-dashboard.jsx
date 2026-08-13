@@ -95,6 +95,7 @@ import {
     getDashboardServiceTableStateLines,
 } from "dashboard/libs/service-tables.js";
 import { configureDashboardShell, DashboardShell } from "dashboard/renderers/dashboard-shell.jsx";
+import { configureWorkspaceProviderView, WorkspaceProviderView } from "dashboard/renderers/workspace-provider-view.jsx";
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import { MailClientView } from "dashboard/renderers/mail-client-view.jsx";
@@ -905,6 +906,9 @@ const WIDGET_STYLES = {
         gap: "10px 16px"
     },
     playerStatusColumn: {
+        minWidth: 0
+    },
+    playerStatusDividerColumn: {
         minWidth: 0,
         borderLeft: "1px solid rgba(108, 180, 255, 0.28)",
         paddingLeft: "10px",
@@ -1211,6 +1215,10 @@ function configureDashboardRenderers() {
 
     configureDashboardShell({
         getTheme: () => activeDashboardTheme,
+    });
+
+    configureWorkspaceProviderView({
+        react: rawReact ?? globalThis.React,
     });
 }
 
@@ -1635,8 +1643,12 @@ function getScriptLaunchArgs(filename) {
 }
 
 function getScriptLaunchOptions(filename) {
+    const pluginService = getDashboardServiceRegistry().services.find((service) => service.pluginFile === filename);
     const shortcut = getDashboardServiceRegistry().shortcuts?.find((candidate) => candidate.scriptPath === filename);
-    return { temporary: shortcut?.temporary === true };
+    return {
+        temporary: pluginService?.pluginMetadata?.temporary === true || shortcut?.temporary === true,
+        closeTailOnRestart: Boolean(shortcut),
+    };
 }
 
 function isDashboardPluginScript(filename) {
@@ -3223,17 +3235,20 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     if (tier === "wide") {
         return {
             workspaceColumns: "320px 420px minmax(620px, 1fr)",
+            navigationColumn: "320px",
             statMinimumWidth: 180,
         };
     }
     if (tier === "standard") {
         return {
             workspaceColumns: "280px 360px minmax(520px, 1fr)",
+            navigationColumn: "280px",
             statMinimumWidth: 160,
         };
     }
     return {
         workspaceColumns: "minmax(220px, 0.85fr) minmax(280px, 1fr) minmax(480px, 2.2fr)",
+        navigationColumn: "minmax(220px, 0.85fr)",
         statMinimumWidth: 138,
     };
 }
@@ -3549,6 +3564,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             setActiveView(itemId.slice(DASHBOARD_VIEW_ITEM_PREFIX.length));
             return;
         }
+        const workspaceService = dashboardServiceRegistry.byId.get(itemId);
+        if (workspaceService?.pluginAdapter === "workspace"
+            && workspaceService.pluginFile
+            && !homeScripts.some((script) => script?.filename === workspaceService.pluginFile && script?.running)) {
+            enqueueDashboardAction({
+                kind: "script",
+                actionId: SCRIPT_ACTION_IDS.START,
+                filename: workspaceService.pluginFile,
+            });
+        }
         setUiState((current) => {
             const next = { ...current, activeViewId: "", selectedItem: itemId };
             saveUiState(next);
@@ -3636,6 +3661,15 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         activeView
     );
     const visibleWorkspaceWidgets = workspaceWidgets.filter((widget) => widget.type !== "player-stats" || playerStatsEnabled);
+    const selectedWorkspaceService = selectedService?.pluginAdapter === "workspace" ? selectedService : null;
+    const selectedWorkspaceProviderId = selectedWorkspaceService
+        ? String(selectedWorkspaceService.workspaceId || selectedWorkspaceService.pluginMetadata?.workspaceId || selectedWorkspaceService.id)
+        : "";
+    const workspaceGridColumns = selectedWorkspaceService
+        ? visibleWorkspaceWidgets.length > 0
+            ? `${responsiveLayout.navigationColumn} minmax(0, 1fr) ${PLAYER_STATS_WIDGET_WIDTH}px`
+            : `${responsiveLayout.navigationColumn} minmax(0, 1fr)`
+        : workspaceColumns;
     const selectedServiceHealth = serviceHealthById[selectedItem] ?? { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
     const healthFilter = HEALTH_FILTER_MODES.has(uiState.healthFilter) ? uiState.healthFilter : "all";
     const menuUnlockGlyphsEnabled = options.menuUnlockGlyphsEnabled !== false;
@@ -5559,7 +5593,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 </div>
                 </div>
 
-                <div style={{ ...WIDGET_STYLES.workspaceRow, ...normalContentBounds, gridTemplateColumns: workspaceColumns }}>
+                <div style={{ ...WIDGET_STYLES.workspaceRow, ...normalContentBounds, gridTemplateColumns: workspaceGridColumns }}>
                 <div
                     ref={leftColumnRef}
                     data-dashboard-theme-role="workspace-column-first"
@@ -5747,58 +5781,94 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     </div>
                 </div>
 
-                <div
-                    ref={centerColumnRef}
-                    data-dashboard-theme-role="workspace-column"
-                    style={WIDGET_STYLES.column}
-                    onScroll={(e) => rememberScroll("center", e.currentTarget.scrollTop)}
-                >
-                    {selectedItem === "global.startOrder" ? (
-                        <>
-                            <Card title="Kill Controls" accent="#ff9a9a" subtitle="Kill scripts across home and remote hosts" widgetStyles={WIDGET_STYLES}>
-                                {renderServiceActions(globalScriptControlActions)}
-                            </Card>
-                            <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
-                        </>
-                    ) : null}
-                    {renderSubWidgets()}
-                </div>
-
-                {visibleWorkspaceWidgets.length > 0 ? (
-                    <div
-                        data-dashboard-theme-role="workspace-column"
-                        style={{
-                            ...WIDGET_STYLES.column,
-                            display: "grid",
-                            gridTemplateColumns: `minmax(0, 1fr) ${PLAYER_STATS_WIDGET_WIDTH}px`,
-                            gap: "10px",
-                            overflow: "hidden",
-                        }}
-                    >
+                {selectedWorkspaceService ? (
+                    <>
                         <div
-                            ref={rightColumnRef}
-                            style={{ minWidth: 0, height: "100%", overflowY: "auto" }}
-                            onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
+                            ref={centerColumnRef}
+                            data-dashboard-theme-role="workspace-column"
+                            style={{ ...WIDGET_STYLES.column, minWidth: 0, overflow: "hidden" }}
                         >
-                            {renderDataPanel()}
+                            <WorkspaceProviderView
+                                providerId={selectedWorkspaceProviderId}
+                                dashboardTheme={dashboardTheme}
+                                onInputFocusChange={setOptionsInputFocus}
+                            />
                         </div>
-                        <div
-                            ref={playerStatsColumnRef}
-                            style={{ height: "100%", overflowY: "auto" }}
-                            onScroll={(e) => rememberScroll("playerStats", e.currentTarget.scrollTop)}
-                        >
-                            {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
-                        </div>
-                    </div>
+                        {visibleWorkspaceWidgets.length > 0 ? (
+                            <div
+                                data-dashboard-theme-role="workspace-column"
+                                style={{ ...WIDGET_STYLES.column, minWidth: 0, overflow: "hidden" }}
+                            >
+                                <div
+                                    ref={playerStatsColumnRef}
+                                    style={{ height: "100%", overflowY: "auto" }}
+                                    onScroll={(e) => rememberScroll("playerStats", e.currentTarget.scrollTop)}
+                                >
+                                    {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
+                                </div>
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
-                    <div
-                        ref={rightColumnRef}
-                        data-dashboard-theme-role="workspace-column"
-                        style={WIDGET_STYLES.column}
-                        onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
-                    >
-                        <div style={{ minWidth: 0 }}>{renderDataPanel()}</div>
-                    </div>
+                    <>
+                        <div
+                            ref={centerColumnRef}
+                            data-dashboard-theme-role="workspace-column"
+                            style={WIDGET_STYLES.column}
+                            onScroll={(e) => rememberScroll("center", e.currentTarget.scrollTop)}
+                        >
+                            {selectedItem === "global.startOrder" ? (
+                                <>
+                                    <Card title="Kill Controls" accent="#ff9a9a" subtitle="Kill scripts across home and remote hosts" widgetStyles={WIDGET_STYLES}>
+                                        {renderServiceActions(globalScriptControlActions)}
+                                    </Card>
+                                    <div style={{ ...WIDGET_STYLES.sectionGap, height: "8px" }} />
+                                </>
+                            ) : null}
+                            {renderSubWidgets()}
+                        </div>
+
+                        {visibleWorkspaceWidgets.length > 0 ? (
+                            <div
+                                data-dashboard-theme-role="workspace-column"
+                                style={{
+                                    ...WIDGET_STYLES.column,
+                                    display: "grid",
+                                    gridTemplateColumns: `minmax(0, 1fr) ${PLAYER_STATS_WIDGET_WIDTH}px`,
+                                    gap: "10px",
+                                    overflow: "hidden",
+                                }}
+                            >
+                                <div
+                                    ref={rightColumnRef}
+                                    style={{ minWidth: 0, height: "100%", overflowY: "auto" }}
+                                    onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
+                                >
+                                    {renderDataPanel()}
+                                </div>
+                                <div
+                                    ref={playerStatsColumnRef}
+                                    style={{
+                                        ...WIDGET_STYLES.playerStatusDividerColumn,
+                                        height: "100%",
+                                        overflowY: "auto",
+                                    }}
+                                    onScroll={(e) => rememberScroll("playerStats", e.currentTarget.scrollTop)}
+                                >
+                                    {visibleWorkspaceWidgets.map(renderWorkspaceWidget)}
+                                </div>
+                            </div>
+                        ) : (
+                            <div
+                                ref={rightColumnRef}
+                                data-dashboard-theme-role="workspace-column"
+                                style={WIDGET_STYLES.column}
+                                onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
+                            >
+                                <div style={{ minWidth: 0 }}>{renderDataPanel()}</div>
+                            </div>
+                        )}
+                    </>
                 )}
                 </div>
             </>

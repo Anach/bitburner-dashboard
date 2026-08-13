@@ -430,6 +430,14 @@ A direct plugin must keep all plugin-specific files in its own folder. Removing 
 
 Framework renderers remain installed when a plugin is removed. A renderer defines a supported metadata view type, such as `file-manager` or `script-log`; the plugin descriptor activates that type and supplies its configuration. Without the descriptor, the renderer is dormant and no menu item or view is created. Do not delete a file under `dashboard/renderers/` when uninstalling a plugin because the dashboard's static import graph still requires it for RAM calculation and startup.
 
+### Embedded workspace providers
+
+An integration with the `workspace` adapter may register a scripts-owned React component through `dashboard/libs/workspace-provider.js`. The provider process owns its controller, long-lived state, and any worker or resource bridge; the dashboard only supplies the workspace slot, current theme, and input-focus callback.
+
+Interactive providers should register with `persistent: true`. The framework then renders the provider into a retained `ReactDOM` root whose lifetime follows the provider registration rather than the dashboard's replaceable `printRaw()` tree. Dashboard telemetry can continue refreshing without remounting a game canvas or resetting component state, and keyboard focus is restored to the retained control after the outer dashboard tree is replaced. Navigating away merely detaches the retained root, navigating back reattaches it, and unregistering the provider performs the final React cleanup.
+
+Provider React handlers must not call Netscript functions directly. Queue Netscript-backed work to the provider process and perform it from that process's main loop, as concurrent Netscript calls from UI callbacks can terminate a script.
+
 ## Full-window views
 
 Full-window pages use `DASHBOARD_VIEW_METADATA` descriptors rather than service descriptors. Supported renderers currently include:

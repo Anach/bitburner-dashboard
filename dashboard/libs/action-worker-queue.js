@@ -11,6 +11,11 @@ export function createActionWorkerQueue({
     let pending = null;
     let sequence = 0;
 
+    const isDuplicatePendingScriptAction = (left, right) => left?.kind === "script"
+        && right?.kind === "script"
+        && left.actionId === right.actionId
+        && left.filename === right.filename;
+
     const complete = (ns, action, result) => {
         if (typeof onComplete === "function") onComplete(ns, action, result);
     };
@@ -53,8 +58,13 @@ export function createActionWorkerQueue({
 
     return {
         enqueue(ns, command) {
+            if (isDuplicatePendingScriptAction(command, pending?.command)
+                || queue.some((queued) => isDuplicatePendingScriptAction(command, queued))) {
+                return false;
+            }
             queue.push(command);
             startNext(ns);
+            return true;
         },
         poll(ns) {
             if (pending) {
