@@ -34,6 +34,8 @@ const COLORS = {
     bar: "#123322",
 };
 
+const MESSAGE_INDEX_GRID = "16px 26px 60px 150px 46px minmax(0, 1fr)";
+
 const STYLES = {
     shell: {
         display: "flex",
@@ -51,6 +53,10 @@ const STYLES = {
         ...getDashboardFrameHeaderStyle(),
         borderBottom: `1px solid ${COLORS.border}`,
     },
+    embeddedHeader: {
+        gridTemplateColumns: "auto minmax(0, 1fr)",
+        alignItems: "center",
+    },
     title: {
         color: COLORS.green,
         fontSize: "14px",
@@ -62,6 +68,14 @@ const STYLES = {
         color: COLORS.muted,
         fontSize: "9px",
         marginTop: "2px",
+    },
+    embeddedSubtitle: {
+        minWidth: 0,
+        marginTop: 0,
+        overflow: "hidden",
+        textAlign: "right",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     closeButton: getDashboardFrameControlStyle("neutral"),
     shortcutBar: {
@@ -178,9 +192,54 @@ const STYLES = {
         minHeight: 0,
         overflowY: "auto",
     },
+    indexColumnHeader: {
+        display: "grid",
+        gridTemplateColumns: MESSAGE_INDEX_GRID,
+        alignItems: "center",
+        gap: "0 8px",
+        flex: "0 0 auto",
+        padding: "4px 9px",
+        borderBottom: "1px solid rgba(125, 160, 212, 0.14)",
+        color: COLORS.muted,
+        fontSize: "9px",
+        fontWeight: 400,
+        letterSpacing: "0.06em",
+        lineHeight: 1.2,
+        textTransform: "uppercase",
+    },
+    indexColumnLabel: {
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    indexSubjectHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        minWidth: 0,
+    },
+    indexHeaderStatus: {
+        minWidth: 0,
+        overflow: "hidden",
+        color: COLORS.muted,
+        fontSize: "10px",
+        letterSpacing: "normal",
+        textAlign: "right",
+        textOverflow: "ellipsis",
+        textTransform: "none",
+        whiteSpace: "nowrap",
+    },
+    indexCellDivider: {
+        alignSelf: "stretch",
+        boxSizing: "border-box",
+        borderLeft: "1px solid rgba(125, 160, 212, 0.09)",
+        paddingLeft: "7px",
+    },
     indexRow: {
         display: "grid",
-        gridTemplateColumns: "16px 26px 60px 150px 46px minmax(0, 1fr)",
+        gridTemplateColumns: MESSAGE_INDEX_GRID,
         alignItems: "baseline",
         gap: "0 8px",
         width: "100%",
@@ -650,11 +709,23 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
             onKeyDown={handleKeyDown}
             style={{ ...STYLES.shell, ...(embedded ? { border: "none" } : {}) }}
         >
-            <header style={STYLES.header}>
-                <div>
-                    <div style={STYLES.title}>{view?.title ?? "Mail Client"}</div>
-                    <div style={STYLES.subtitle}>{view?.subtitle ?? "In-game messages, lore, and text files"}</div>
-                </div>
+            <header style={{ ...STYLES.header, ...(embedded ? STYLES.embeddedHeader : {}) }}>
+                {embedded ? (
+                    <>
+                        <div style={STYLES.title}>{view?.title ?? "Mail Client"}</div>
+                        <div
+                            style={{ ...STYLES.subtitle, ...STYLES.embeddedSubtitle }}
+                            title={view?.subtitle ?? "In-game messages, lore, and text files"}
+                        >
+                            {view?.subtitle ?? "In-game messages, lore, and text files"}
+                        </div>
+                    </>
+                ) : (
+                    <div>
+                        <div style={STYLES.title}>{view?.title ?? "Mail Client"}</div>
+                        <div style={STYLES.subtitle}>{view?.subtitle ?? "In-game messages, lore, and text files"}</div>
+                    </div>
+                )}
                 {!embedded ? (
                     <div style={getDashboardFrameControlGroupStyle()}>
                         {headerActions}
@@ -716,7 +787,20 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                 </aside>
 
                 <section data-dashboard-theme-role="control-frame" style={STYLES.mainPane}>
-                    <div style={STYLES.indexToolbar} title={paneStatus}>{paneStatus}</div>
+                    {selectedMessage ? <div style={STYLES.indexToolbar} title={paneStatus}>{paneStatus}</div> : null}
+                    {!selectedMessage ? (
+                        <div style={STYLES.indexColumnHeader}>
+                            <span />
+                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider, textAlign: "right" }}>#</span>
+                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider }}>Date</span>
+                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider }}>Sender</span>
+                            <span style={{ ...STYLES.indexColumnLabel, ...STYLES.indexCellDivider, textAlign: "right" }}>Size</span>
+                            <span style={{ ...STYLES.indexSubjectHeader, ...STYLES.indexCellDivider }}>
+                                <span style={STYLES.indexColumnLabel}>Subject</span>
+                                <span style={STYLES.indexHeaderStatus} title={paneStatus}>{paneStatus}</span>
+                            </span>
+                        </div>
+                    ) : null}
                     {selectedMessage ? (
                         <div ref={setDetailBodyRef} onScroll={onDetailScroll} style={STYLES.readerScroll}>
                             <div style={STYLES.readerRule} />
@@ -765,11 +849,11 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                                             <span style={{ ...STYLES.indexDot, ...(isRead ? STYLES.indexDotRead : {}) }}>
                                                 {isRead ? "○" : "●"}
                                             </span>
-                                            <span style={STYLES.indexNum}>{index + 1}</span>
-                                            <span style={STYLES.indexDate}>{formatIndexDate(getDashboardViewValue(message, firstSeenField))}</span>
-                                            <span style={STYLES.indexSender}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span>
-                                            <span style={STYLES.indexSize}>{formatSize(String(getDashboardViewValue(message, contentField) ?? "").length)}</span>
-                                            <span style={STYLES.indexSubject}>
+                                            <span style={{ ...STYLES.indexNum, ...STYLES.indexCellDivider }}>{index + 1}</span>
+                                            <span style={{ ...STYLES.indexDate, ...STYLES.indexCellDivider }}>{formatIndexDate(getDashboardViewValue(message, firstSeenField))}</span>
+                                            <span style={{ ...STYLES.indexSender, ...STYLES.indexCellDivider }}>{String(getDashboardViewValue(message, sourceField) ?? "")}</span>
+                                            <span style={{ ...STYLES.indexSize, ...STYLES.indexCellDivider }}>{formatSize(String(getDashboardViewValue(message, contentField) ?? "").length)}</span>
+                                            <span style={{ ...STYLES.indexSubject, ...STYLES.indexCellDivider }}>
                                                 {String(getDashboardViewValue(message, subjectField) ?? "")}
                                             </span>
                                         </button>
