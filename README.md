@@ -63,9 +63,9 @@ Included plugins (each independently removable; only pay for what you keep insta
 | Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.10 GB | 2.60 GB | Optional Singularity-backed player details account for the difference. |
 | Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.20 GB | 9.20 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
 | Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.60 GB** in the normal qualified state. |
-| Mail Client Scanner (`dashboard/plugins/mail-client/mail-client-scanner.js`) | 5.25 GB | 5.25 GB | |
-| Mail Client Darknet Agent (`dashboard/plugins/mail-client/mail-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
-| Mail Client Reader (`dashboard/plugins/mail-client/mail-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
+|  Client Scanner (`dashboard/plugins/-client/-client-scanner.js`) | 5.25 GB | 5.25 GB | |
+|  Client Darknet Agent (`dashboard/plugins/-client/-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
+|  Client Reader (`dashboard/plugins/-client/-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
 | Included view descriptors | 1.60 GB each | 1.60 GB each | Pure metadata with no `main()`; the dashboard reads these files rather than launching them, so they do not create separate processes. |
 
 These figures are static per-script costs, not a live-usage snapshot — measure your own installation after syncing if you need an exact number, since it depends on exactly which plugins you keep and whether Source-File 4 is unlocked.
@@ -441,6 +441,8 @@ An integration with the `workspace` adapter may register a scripts-owned React c
 Interactive providers should register with `persistent: true`. The framework then renders the provider into a retained `ReactDOM` root whose lifetime follows the provider registration rather than the dashboard's replaceable `printRaw()` tree. Dashboard telemetry can continue refreshing without remounting a game canvas or resetting component state, and keyboard focus is restored to the retained control after the outer dashboard tree is replaced. Navigating away merely detaches the retained root, navigating back reattaches it, and unregistering the provider performs the final React cleanup.
 
 Provider React handlers must not call Netscript functions directly. Queue Netscript-backed work to the provider process and perform it from that process's main loop, as concurrent Netscript calls from UI callbacks can terminate a script.
+
+<img width="1920" height="1019" alt="image" src="https://github.com/user-attachments/assets/ba83d82e-25ba-44e9-b52f-e1fb7644804d" />
 
 The included Mail Client is the reference for converting an existing dashboard application to this layout. Its scanner daemon remains the sole Netscript owner, publishes live snapshots to an in-memory workspace controller, and drains UI commands from its normal loop. The retained Mail Client UI occupies the standard center workspace while metadata-contributed Player Status remains visible beside it; no second polling process or full-window renderer branch is required.
 
