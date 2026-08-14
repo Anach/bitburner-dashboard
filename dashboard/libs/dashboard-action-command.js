@@ -1,17 +1,16 @@
-export function buildDashboardWorkerCommand(ns, command, context = {}) {
+export function buildDashboardActionCommand(ns, command, context = {}) {
     if (command?.kind === "dashboard") {
-        const workerCommand = { kind: "dashboard", actionId: command.actionId };
+        const actionCommand = { kind: "dashboard", actionId: command.actionId };
         if (command.actionId === context.restartDashboardActionId) {
-            workerCommand.dashboardPid = context.getDashboardPid?.(ns);
-            workerCommand.args = context.getDashboardRestartArgs?.(ns);
+            actionCommand.args = context.getDashboardRestartArgs?.(ns);
         }
-        return workerCommand;
+        return actionCommand;
     }
     if (command?.kind === "script") {
         const execution = context.resolveScriptActionExecution?.(command.actionId, command.filename);
         if (!execution || !["start", "stop", "restart"].includes(execution.executeType)) return null;
         if (command.filename === context.dashboardScript && execution.executeType === "restart") {
-            return buildDashboardWorkerCommand(ns, {
+            return buildDashboardActionCommand(ns, {
                 kind: "dashboard",
                 actionId: context.restartDashboardActionId,
             }, context);
@@ -32,7 +31,7 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
     if (command?.kind === "file") {
         const view = context.getFileActionView?.(command.viewId);
         if (!view) throw new Error("File Manager view is unavailable.");
-        const workerCommand = {
+        const actionCommand = {
             ...command,
             protection: view.protection ?? {},
             archiveRoot: context.normalizeFilePath?.(view?.archive?.root ?? "trashbin") || "trashbin",
@@ -43,9 +42,9 @@ export function buildDashboardWorkerCommand(ns, command, context = {}) {
                 view.manifest ?? {}
             );
             if (!manifest?.available) throw new Error("Cleanup requires a deployment manifest.");
-            workerCommand.stalePaths = manifest.staleFiles;
+            actionCommand.stalePaths = manifest.staleFiles;
         }
-        return workerCommand;
+        return actionCommand;
     }
     return null;
 }

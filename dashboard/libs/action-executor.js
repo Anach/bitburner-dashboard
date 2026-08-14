@@ -1,8 +1,4 @@
-import {
-    DASHBOARD_ACTION_WORKER_RESULT_FILE,
-    normalizeActionWorkerEnvelope,
-} from "dashboard/libs/action-worker-contract.js";
-import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "dashboard/libs/action-ids.js";
+import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "./action-ids.js";
 import {
     buildArchivePath,
     getFileName,
@@ -11,22 +7,22 @@ import {
     isMovableFile,
     isProtectedFile,
     joinFilePath,
-} from "dashboard/libs/file-utils.js";
-import { startHomeScript, startTemporaryHomeScript, stopHomeScript } from "dashboard/libs/runtime-actions.js";
+} from "./file-utils.js";
 
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 
-function writeResult(ns, requestId, result) {
-    ns.write(DASHBOARD_ACTION_WORKER_RESULT_FILE, JSON.stringify({
-        requestId,
-        ...result,
-    }), "w");
-}
-
 function success(message, tone = "success", details = {}) {
     return { ok: true, message, tone, ...details };
+}
+
+function getProcesses(ns, host) {
+    try {
+        return ns.ps(host) ?? [];
+    } catch (error) {
+        return [];
+    }
 }
 
 function getReachableServers(ns) {
@@ -52,35 +48,34 @@ function getReachableServers(ns) {
 function killMatchingProcesses(ns, hosts, matcher, excludedPids = []) {
     const excluded = new Set(excludedPids);
     let killedCount = 0;
+    let failedCount = 0;
     let serverCount = 0;
     for (const host of hosts) {
         let hostKills = 0;
-        let processes = [];
-        try {
-            processes = ns.ps(host) ?? [];
-        } catch (error) {
-            continue;
-        }
-        for (const process of processes) {
+        for (const process of getProcesses(ns, host)) {
             if (excluded.has(process?.pid) || !matcher(process?.filename, host)) continue;
             try {
                 if (ns.kill(process.pid)) {
                     killedCount += 1;
                     hostKills += 1;
+                } else {
+                    failedCount += 1;
                 }
             } catch (error) {
-                // Processes can exit while the action snapshot is being handled.
+                // Processes can exit while an action snapshot is being handled.
             }
         }
         if (hostKills > 0) serverCount += 1;
     }
-    return { killedCount, serverCount };
+    return { killedCount, failedCount, serverCount };
 }
 
 function stopManagedProcesses(ns, command) {
     const homeScripts = new Set(command.managedScripts ?? []);
     const networkScripts = new Set(command.managedNetworkScripts ?? []);
-    if (homeScripts.size === 0 && networkScripts.size === 0) return { killedCount: 0, serverCount: 0 };
+    if (homeScripts.size === 0 && networkScripts.size === 0) {
+        return { killedCount: 0, failedCount: 0, serverCount: 0 };
+    }
 
     const hosts = networkScripts.size > 0 ? getReachableServers(ns) : ["home"];
     return killMatchingProcesses(ns, hosts, (filename, host) => {
@@ -91,7 +86,7 @@ function stopManagedProcesses(ns, command) {
 
 function closeHomeScriptTails(ns, filename) {
     let closedCount = 0;
-    for (const process of ns.ps("home")) {
+    for (const process of getProcesses(ns, "home")) {
         if (process?.filename !== filename) continue;
         try {
             ns.ui.closeTail(process.pid);
@@ -103,13 +98,45 @@ function closeHomeScriptTails(ns, filename) {
     return closedCount;
 }
 
+function startHomeScript(ns, script, args, temporary) {
+    if (!ns.fileExists(script, "home")) return { status: "missing" };
+    if (getProcesses(ns, "home").some((process) => process?.filename === script)) {
+        return { status: "already-running" };
+    }
+
+    const options = temporary === true
+        ? { threads: 1, temporary: true }
+        : { threads: 1 };
+    const pid = ns.exec(script, "home", options, ...args);
+    return pid > 0 ? { status: "started", pid } : { status: "failed" };
+}
+
+function stopHomeScript(ns, script) {
+    if (!ns.fileExists(script, "home")) return { status: "missing" };
+    const processes = getProcesses(ns, "home").filter((process) => process?.filename === script);
+    if (processes.length === 0) return { status: "not-running" };
+
+    let killedCount = 0;
+    let failedCount = 0;
+    for (const process of processes) {
+        try {
+            if (ns.kill(process.pid)) killedCount += 1;
+            else failedCount += 1;
+        } catch (error) {
+            // A process which exits between the snapshot and kill is already stopped.
+        }
+    }
+    return failedCount > 0
+        ? { status: "failed", killedCount, failedCount }
+        : { status: "stopped", killedCount, failedCount };
+}
+
 function performScriptAction(ns, command) {
     const { actionId, filename, args } = command;
-    const startScript = command.temporary === true ? startTemporaryHomeScript : startHomeScript;
     let result;
-    let managedResult = { killedCount: 0, serverCount: 0 };
+    let managedResult = { killedCount: 0, failedCount: 0, serverCount: 0 };
     if (actionId === SCRIPT_ACTION_IDS.START) {
-        result = startScript(ns, filename, ...args);
+        result = startHomeScript(ns, filename, args, command.temporary);
     } else if (actionId === SCRIPT_ACTION_IDS.STOP) {
         result = stopHomeScript(ns, filename);
         managedResult = stopManagedProcesses(ns, command);
@@ -121,10 +148,11 @@ function performScriptAction(ns, command) {
             result = { status: "failed-to-stop" };
         } else {
             managedResult = stopManagedProcesses(ns, command);
-            const parentStart = startScript(ns, filename, ...args);
+            const parentStart = startHomeScript(ns, filename, args, command.temporary);
             result = parentStart.status === "started" ? { ...parentStart, status: "restarted" } : parentStart;
         }
     }
+
     const labels = {
         missing: `Cannot ${actionId} ${filename} (missing file).`,
         started: `Started ${filename}.`,
@@ -149,7 +177,8 @@ function performScriptAction(ns, command) {
         filename,
         managedKilledCount: managedResult.killedCount,
         managedServerCount: managedResult.serverCount,
-        applyOptions: ["start", "restart"].includes(actionId) && ["started", "restarted", "already-running"].includes(result.status),
+        applyOptions: ["start", "restart"].includes(actionId)
+            && ["started", "restarted", "already-running"].includes(result.status),
     };
 }
 
@@ -157,9 +186,9 @@ function performDashboardKillAction(ns, command) {
     const actionId = command.actionId;
     const allHosts = getReachableServers(ns);
     const remoteHosts = allHosts.filter((host) => host !== "home");
-    const excludeWorker = [ns.pid];
+    const excludeDashboard = [ns.pid];
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS) {
-        const result = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeWorker);
+        const result = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeDashboard);
         return success(`Killed ${result.killedCount} home script${result.killedCount === 1 ? "" : "s"} (dashboard preserved).`, "warning", result);
     }
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS) {
@@ -168,12 +197,8 @@ function performDashboardKillAction(ns, command) {
     }
     if (actionId === DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS) {
         const remoteResult = killMatchingProcesses(ns, remoteHosts, () => true);
-        const homeResult = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeWorker);
+        const homeResult = killMatchingProcesses(ns, ["home"], (filename) => filename !== DASHBOARD_SCRIPT, excludeDashboard);
         const killedCount = remoteResult.killedCount + homeResult.killedCount;
-        // Kill All is a deliberate "stop everything" action - the supervisor (just killed
-        // along with everything else) would otherwise relaunch every autostart-enabled
-        // service the instant it's restarted for any reason. Pause it until the user
-        // explicitly clicks Start integrations again.
         ns.write(AUTOSTART_PAUSE_FILE, "1", "w");
         return success(`Killed ${killedCount} script${killedCount === 1 ? "" : "s"} across home and all reachable servers (dashboard preserved). Autostart paused.`, "warning", {
             killedCount,
@@ -183,12 +208,7 @@ function performDashboardKillAction(ns, command) {
 }
 
 function isProtected(ns, path, protection) {
-    let running = false;
-    try {
-        running = ns.scriptRunning(path, "home");
-    } catch (error) {
-        running = false;
-    }
+    const running = getProcesses(ns, "home").some((process) => process?.filename === path);
     return path === DASHBOARD_SCRIPT || isProtectedFile({ path, running }, protection);
 }
 
@@ -227,7 +247,9 @@ function performFileAction(ns, command) {
     if (actionId === "copy") {
         const source = requireSource(ns, command.path);
         const target = requireTarget(ns, command.target);
-        if (!isEditableFile(source) || !isEditableFile(target)) throw new Error("Copy support is limited to scripts and editable text files.");
+        if (!isEditableFile(source) || !isEditableFile(target)) {
+            throw new Error("Copy support is limited to scripts and editable text files.");
+        }
         ns.write(target, ns.read(source), "w");
         if (!ns.fileExists(target, "home")) throw new Error(`Copy failed: ${source}`);
         return success(`Copied ${source} to ${target}.`, "success", { actionId, path: source, target, viewId: command.viewId, kind: "file" });
@@ -275,11 +297,10 @@ function performFileAction(ns, command) {
         }
     }
     const verb = actionId === "copy-many" ? "Copied" : actionId === "move-many" ? "Moved" : actionId === "delete-many" ? "Deleted" : "Archived";
-    const noun = actionId === "archive-many" ? "stale file" : actionId === "delete-many" ? "selected file" : "selected file";
-    const message = `${verb} ${completedCount} ${noun}${completedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`;
+    const noun = actionId === "archive-many" ? "stale file" : "selected file";
     return {
         ok: completedCount > 0 || skipped.length === 0,
-        message,
+        message: `${verb} ${completedCount} ${noun}${completedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`,
         tone: skipped.length > 0 ? "warning" : actionId === "delete-many" ? "warning" : "success",
         kind: "file",
         actionId,
@@ -290,52 +311,29 @@ function performFileAction(ns, command) {
 }
 
 function performDashboardAction(ns, command) {
+    if (command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
+        return success("Restarting dashboard...", "info", {
+            restartDashboard: true,
+            restartArgs: command.args,
+        });
+    }
     if (command.actionId === DASHBOARD_ACTION_IDS.START_INTEGRATIONS) {
         if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) ns.rm(AUTOSTART_PAUSE_FILE, "home");
-        return performScriptAction(ns, { kind: "script", actionId: SCRIPT_ACTION_IDS.START, filename: SERVICE_SUPERVISOR_SCRIPT, args: [] });
+        return performScriptAction(ns, {
+            kind: "script",
+            actionId: SCRIPT_ACTION_IDS.START,
+            filename: SERVICE_SUPERVISOR_SCRIPT,
+            args: [],
+            managedScripts: [],
+            managedNetworkScripts: [],
+        });
     }
     return performDashboardKillAction(ns, command);
 }
 
-/** @param {NS} ns */
-export async function main(ns) {
-    ns.disableLog("ALL");
-    let requestId = "invalid";
-    let envelope = null;
-    try {
-        envelope = normalizeActionWorkerEnvelope(ns.args[0]);
-        requestId = envelope.requestId;
-    } catch (error) {
-        const message = error && typeof error === "object" && "message" in error ? String(error.message) : String(error);
-        writeResult(ns, requestId, { ok: false, message, tone: "error" });
-        return;
-    }
-
-    const { command } = envelope;
-    if (command.kind === "dashboard" && command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
-        writeResult(ns, requestId, success("Restarting dashboard...", "info"));
-        if (!ns.kill(command.dashboardPid)) {
-            writeResult(ns, requestId, { ok: false, message: "Could not stop the dashboard for restart.", tone: "error" });
-            return;
-        }
-        ns.spawn(DASHBOARD_SCRIPT, { threads: 1, spawnDelay: 0 }, ...command.args);
-        return;
-    }
-
-    try {
-        const result = command.kind === "script"
-            ? performScriptAction(ns, command)
-            : command.kind === "file"
-                ? performFileAction(ns, command)
-                : performDashboardAction(ns, command);
-        writeResult(ns, requestId, result);
-        if (result.terminateDashboard) ns.scriptKill(DASHBOARD_SCRIPT, "home");
-    } catch (error) {
-        const message = error && typeof error === "object" && "message" in error ? String(error.message) : String(error);
-        try {
-            writeResult(ns, requestId, { ok: false, message, tone: "error" });
-        } catch (writeError) {
-            ns.tprint(`[DASHBOARD WORKER] ${message}`);
-        }
-    }
+export function executeDashboardAction(ns, command) {
+    if (command.kind === "script") return performScriptAction(ns, command);
+    if (command.kind === "file") return performFileAction(ns, command);
+    if (command.kind === "dashboard") return performDashboardAction(ns, command);
+    throw new Error(`Unknown dashboard command kind: ${String(command.kind ?? "(missing)")}`);
 }

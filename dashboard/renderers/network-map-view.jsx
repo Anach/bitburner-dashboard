@@ -332,12 +332,17 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         // backend to build it - selectMode() only fires on an actual click - so the on-demand
         // fetch on first open waits forever for data the backend never builds. Runs on mount too,
         // not just on user-driven switches, since lastSentModeIdRef starts null.
+        // Do not attempt this handshake while the provider is offline. Besides being pointless,
+        // it used to enqueue a rejected command on every dashboard remount and spam the same
+        // "Network Telemetry is not running" toast. Keeping the ref unset lets this effect send
+        // the saved mode once when serviceStatus transitions to running.
+        if (isOffline) return;
         if (!actionConfig.setModePrefix) return;
         const serviceId = String(actionConfig.serviceId ?? dataConfig.serviceId ?? "");
         if (!serviceId || !activeModeId || lastSentModeIdRef.current === activeModeId) return;
         lastSentModeIdRef.current = activeModeId;
         sendCommand(actionConfig.setModePrefix, activeModeId);
-    }, [activeModeId, actionConfig.setModePrefix, actionConfig.serviceId, dataConfig.serviceId]);
+    }, [isOffline, activeModeId, actionConfig.setModePrefix, actionConfig.serviceId, dataConfig.serviceId]);
 
     const copyNodeActionValue = (value, label) => {
         const text = String(value ?? "");

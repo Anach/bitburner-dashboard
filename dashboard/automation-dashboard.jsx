@@ -64,15 +64,10 @@ import {
 import { buildDashboardTailTitle } from "dashboard/libs/tail-title.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions, shouldAutoStartServiceSupervisor } from "dashboard/libs/startup-policy.js";
-import {
-    DASHBOARD_ACTION_WORKER_RESULT_FILE,
-    DASHBOARD_ACTION_WORKER_SCRIPT,
-    normalizeActionWorkerEnvelope,
-    parseActionWorkerResult,
-} from "dashboard/libs/action-worker-contract.js";
-import { createActionWorkerQueue } from "dashboard/libs/action-worker-queue.js";
+import { normalizeDashboardActionCommand } from "dashboard/libs/action-command.js";
+import { executeDashboardAction } from "dashboard/libs/action-executor.js";
 import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispatch.js";
-import { buildDashboardWorkerCommand as buildWorkerCommand } from "dashboard/libs/dashboard-worker-command.js";
+import { buildDashboardActionCommand as buildActionCommand } from "dashboard/libs/dashboard-action-command.js";
 import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
 import {
@@ -190,7 +185,7 @@ const DASHBOARD_FILE_PREVIEW_RESULT_KEY = "__dashboard_file_preview_result_v1";
 const SCRIPT_MANAGER_IDS_WITH_LIST_HIDING = new Set(["global.options", "global.integrations", "global.plugins"]);
 const DASHBOARD_FILE_VIEW_RENDER_STATE_KEY = "__dashboard_file_view_render_state_v1";
 const DASHBOARD_NETWORK_MAP_VIEW_RENDER_STATE_KEY = "__dashboard_network_map_view_render_state_v1";
-const DASHBOARD_ACTION_WORKER_TIMEOUT_MS = 60000;
+const DASHBOARD_START_ORDER_RENDER_STATE_KEY = "__dashboard_start_order_render_state_v1";
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
@@ -1410,6 +1405,33 @@ function rememberDashboardFileManagerRender(viewId, signature) {
         : null;
 }
 
+// Start Order is an interactive editor whose visible rows depend on the daemon catalogue, not on
+// live service telemetry. Keep its mounted tree while unrelated telemetry changes so the list's
+// scroll position, selected row, and repeated move-button clicks are not destroyed every second.
+// Deliberately exclude serviceStartOrder from this signature: moves update the mounted component
+// immediately and save through the global action queue, so the disk round-trip must not trigger a
+// second remount of the same edit.
+function getDashboardStartOrderRenderSignature(homeScripts, themeSignature = "", layoutSignature = "") {
+    const rows = buildServiceStartOrderRows(homeScripts)
+        .map((row) => ({
+            serviceId: row.serviceId,
+            label: row.label,
+            ramPerThread: row.ramPerThread,
+            description: row.description,
+        }))
+        .sort((left, right) => left.serviceId.localeCompare(right.serviceId));
+    return JSON.stringify({ rows, themeSignature, layoutSignature });
+}
+
+function isDashboardStartOrderRenderStable(signature) {
+    const previous = globalThis[DASHBOARD_START_ORDER_RENDER_STATE_KEY];
+    return Boolean(signature && previous?.signature === signature);
+}
+
+function rememberDashboardStartOrderRender(signature) {
+    globalThis[DASHBOARD_START_ORDER_RENDER_STATE_KEY] = signature ? { signature } : null;
+}
+
 // Same purpose as the File Manager trio above, generalized for any full-window view that's
 // bound to a single serviceId's telemetry (network-map today). While such a view is active, its
 // ONLY visible data is that one service's telemetry - every other plugin's telemetry is entirely
@@ -1496,12 +1518,11 @@ function saveDashboardOptions(ns, options) {
     ns.toast("Dashboard options saved", "success", 3500);
 }
 
-function buildDashboardWorkerCommand(ns, command) {
-    return buildWorkerCommand(ns, command, {
+function buildExecutableDashboardCommand(ns, command) {
+    return buildActionCommand(ns, command, {
         restartDashboardActionId: DASHBOARD_ACTION_IDS.RESTART_DASHBOARD,
         dashboardScript: DASHBOARD_SCRIPT,
-        getDashboardPid: (workerNs) => workerNs.pid,
-        getDashboardRestartArgs: (workerNs) => getDashboardRestartArgs(workerNs.args),
+        getDashboardRestartArgs: (actionNs) => getDashboardRestartArgs(actionNs.args),
         resolveScriptActionExecution,
         getScriptLaunchArgs,
         getScriptLaunchOptions,
@@ -1513,9 +1534,8 @@ function buildDashboardWorkerCommand(ns, command) {
     });
 }
 
-function completeDashboardWorkerAction(ns, pending, result) {
-    const command = pending.command;
-    const message = String(result?.message ?? "Dashboard action worker returned an invalid result.");
+function completeDashboardAction(ns, command, result) {
+    const message = String(result?.message ?? "Dashboard action returned an invalid result.");
     const tone = result?.tone ?? (result?.ok ? "success" : "error");
     if (command.kind === "file") {
         setDashboardFileActionResult(command.viewId, result?.ok ? "success" : "error", message, result);
@@ -1529,29 +1549,30 @@ function completeDashboardWorkerAction(ns, pending, result) {
     }
 }
 
-const dashboardActionWorker = createActionWorkerQueue({
-    workerScript: DASHBOARD_ACTION_WORKER_SCRIPT,
-    resultFile: DASHBOARD_ACTION_WORKER_RESULT_FILE,
-    timeoutMs: DASHBOARD_ACTION_WORKER_TIMEOUT_MS,
-    normalizeEnvelope: normalizeActionWorkerEnvelope,
-    parseResult: parseActionWorkerResult,
-    onComplete: completeDashboardWorkerAction,
-});
-
-function pollDashboardWorkerAction(ns) {
-    dashboardActionWorker.poll(ns);
-}
-
-function queueDashboardWorkerAction(ns, command) {
-    const workerCommand = buildDashboardWorkerCommand(ns, command);
-    if (!workerCommand) return false;
-    dashboardActionWorker.enqueue(ns, workerCommand);
-    return true;
+function executeQueuedNetscriptAction(ns, command) {
+    let executableCommand = command;
+    try {
+        executableCommand = buildExecutableDashboardCommand(ns, command);
+        if (!executableCommand) return false;
+        executableCommand = normalizeDashboardActionCommand(executableCommand);
+        const result = executeDashboardAction(ns, executableCommand);
+        completeDashboardAction(ns, executableCommand, result);
+        if (result && "restartDashboard" in result && result.restartDashboard === true) {
+            const restartArgs = "restartArgs" in result && Array.isArray(result.restartArgs) ? result.restartArgs : [];
+            ns.spawn(DASHBOARD_SCRIPT, { threads: 1, spawnDelay: 0 }, ...restartArgs);
+        }
+        return true;
+    } catch (error) {
+        const message = error && typeof error === "object" && "message" in error
+            ? String(error.message)
+            : String(error);
+        completeDashboardAction(ns, executableCommand, { ok: false, message, tone: "error" });
+        return false;
+    }
 }
 
 function applyQueuedDashboardActions(ns) {
     if (!ns) return;
-    pollDashboardWorkerAction(ns);
     const queue = flushDashboardActionQueue();
     if (!Array.isArray(queue) || queue.length === 0) return;
     dispatchDashboardActions(ns, queue, {
@@ -1594,13 +1615,13 @@ function applyQueuedDashboardActions(ns) {
             );
         },
         dashboard: (command) => {
-            if (typeof command.actionId === "string") queueDashboardWorkerAction(ns, command);
+            if (typeof command.actionId === "string") executeQueuedNetscriptAction(ns, command);
         },
         file: (command) => {
             if (command.actionId === "refresh") {
                 setDashboardFileActionResult(command.viewId, "success", "Home filesystem rescanned.");
             } else {
-                queueDashboardWorkerAction(ns, command);
+                executeQueuedNetscriptAction(ns, command);
             }
         },
         "file-preview": (command) => {
@@ -1630,7 +1651,6 @@ function applyQueuedDashboardActions(ns) {
             logMajorAction(ns, `Dashboard action failed (${actionName}): ${message}`, "danger");
         },
     });
-    pollDashboardWorkerAction(ns);
 }
 
 function getScriptLaunchArgs(filename) {
@@ -1661,6 +1681,24 @@ function isDashboardPluginScript(filename) {
 
 function isDashboardCoreScript(filename) {
     return filename === DASHBOARD_SCRIPT || filename === SERVICE_SUPERVISOR_SCRIPT;
+}
+
+function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceRegistry()) {
+    return (Array.isArray(homeScripts) ? homeScripts : [])
+        .filter((script) => script?.daemon === true
+            && !isDashboardCoreScript(script?.filename)
+            && !String(script?.filename ?? "").startsWith("trashbin/"))
+        .map((script) => {
+            const matchedService = registry.services.find((service) => service.pluginFile === script.filename);
+            return {
+                serviceId: matchedService?.id || script.filename,
+                label: matchedService?.menuLabel || script.label || script.filename,
+                ramPerThread: script.ramPerThread ?? 0,
+                // Bare daemon scripts (no -integration.js descriptor) have no description field
+                // to fall back to - leave it blank rather than showing something misleading.
+                description: matchedService?.description || "",
+            };
+        });
 }
 
 function isGlobalListMenuItem(itemId) {
@@ -1975,7 +2013,7 @@ function performScriptFileAction(ns, action, filename) {
     }
 
     if (["start", "stop", "restart"].includes(execution.executeType)) {
-        queueDashboardWorkerAction(ns, { kind: "script", actionId: action, filename });
+        executeQueuedNetscriptAction(ns, { kind: "script", actionId: action, filename });
         return;
     }
     logMajorAction(ns, `Unsupported execution type for action ${action}: ${execution.executeType}`, "warning");
@@ -3153,13 +3191,27 @@ function formatDashboardHudValue(value, format) {
     return String(value ?? "n/a");
 }
 
-function buildDashboardHudDefinition(services, telemetryByServiceId) {
+function isDashboardHudEntryVisible(service, entry, options = {}) {
+    const optionKey = typeof entry?.visibleOptionKey === "string" ? entry.visibleOptionKey : "";
+    if (!optionKey) return true;
+    const optionDefinition = service?.pluginMetadata?.options?.[optionKey];
+    const fallback = optionDefinition && typeof optionDefinition === "object"
+        ? optionDefinition.default
+        : true;
+    const currentValue = options?.[optionKey] ?? fallback;
+    if (Object.prototype.hasOwnProperty.call(entry, "visibleOptionValue")) {
+        return String(currentValue) === String(entry.visibleOptionValue);
+    }
+    return Boolean(currentValue);
+}
+
+function buildDashboardHudDefinition(services, telemetryByServiceId, options = {}) {
     const definitions = [];
     for (const service of Array.isArray(services) ? services : []) {
         const hud = service?.pluginMetadata?.hud;
         if (!hud || typeof hud !== "object" || !Array.isArray(hud.groups)) continue;
         const telemetry = telemetryByServiceId?.[service.id];
-        const groups = hud.groups.map((group) => ({
+        const groups = hud.groups.filter((group) => isDashboardHudEntryVisible(service, group, options)).map((group) => ({
             id: `${service.id}:${String(group?.id ?? "group")}`,
             sourceId: String(group?.id ?? "group"),
             title: String(group?.title ?? service.menuLabel ?? "Status"),
@@ -3441,7 +3493,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             // Avoid clobbering active edits while any option control is focused.
             if (optionsInputFocusedRef.current) return currentOptions;
             if (optionsDirtyRef.current) {
-                // A save was just enqueued (250ms debounce below) but the action-worker queue
+                // A save was just enqueued (250ms debounce below) but the main-loop action queue
                 // hasn't necessarily written it to disk by the time this fires - persistedOptions
                 // is re-read from disk on every tick, so it can still be reporting the pre-save
                 // content for a few ticks after the debounce timer clears. Only accept this read,
@@ -3534,7 +3586,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             telemetryByServiceId
         )
         : null;
-    const playerHudDefinitions = buildDashboardHudDefinition(dashboardServiceRegistry.services, telemetryByServiceId);
+    const playerHudDefinitions = buildDashboardHudDefinition(dashboardServiceRegistry.services, telemetryByServiceId, options);
     const playerStatsEnabled = isServiceVisibleInMenu("system.playerStatus", options);
     const pluginDashboardOptionInputs = buildPluginDashboardOptionInputs(dashboardServiceRegistry.services, options);
     const workspaceColumns = responsiveLayout.workspaceColumns;
@@ -3890,7 +3942,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const getFeatureActionSizeStyle = (action) => {
-        if (action?.kind !== "plugin-command") return {};
+        if (action?.kind !== "plugin-command" && action?.featureSize !== true) return {};
         return {
             padding: "6px 8px",
             minHeight: "40px",
@@ -4564,7 +4616,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             sourceLabel: graph.sourceLabel || service.menuLabel,
         })));
     const hasLocalKillTargets = runningProcessSnapshot.homeFilenames.some((filename) => {
-        return filename !== DASHBOARD_SCRIPT && filename !== DASHBOARD_ACTION_WORKER_SCRIPT;
+        return filename !== DASHBOARD_SCRIPT;
     });
     const hasRemoteKillTargets = runningProcessSnapshot.remoteFilenames.length > 0;
     const hasKillAllTargets = hasLocalKillTargets || hasRemoteKillTargets;
@@ -4620,21 +4672,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // trashbin/ kept its old DASHBOARD_SCRIPT_METADATA daemon:true declaration intact, so it kept
     // showing up here as a live start-order candidate (and staying in the persisted
     // serviceStartOrder list) long after the user believed it deleted.
-    const serviceStartOrderRows = homeScripts
-        .filter((script) => script?.daemon === true
-            && !isDashboardCoreScript(script?.filename)
-            && !String(script?.filename ?? "").startsWith("trashbin/"))
-        .map((script) => {
-            const matchedService = dashboardServiceRegistry.services.find((service) => service.pluginFile === script.filename);
-            return {
-                serviceId: matchedService?.id || script.filename,
-                label: matchedService?.menuLabel || script.label || script.filename,
-                ramPerThread: script.ramPerThread ?? 0,
-                // Bare daemon scripts (no -integration.js descriptor) have no description field
-                // to fall back to - just left blank rather than showing something misleading.
-                description: matchedService?.description || "",
-            };
-        });
+    const serviceStartOrderRows = buildServiceStartOrderRows(homeScripts, dashboardServiceRegistry);
     const orderedServiceStartOrderRows = sortByServiceStartOrder(serviceStartOrderRows, options);
 
     // Ref callbacks run before layout effects. The general column-scroll restoration effect near
@@ -6198,7 +6236,7 @@ export async function main(ns) {
             : `Starting Automation Dashboard in one-shot mode${startServiceSupervisor ? " with integration auto-start" : ""}...`);
     }
     if (startServiceSupervisor) {
-        queueDashboardWorkerAction(ns, {
+        executeQueuedNetscriptAction(ns, {
             kind: "dashboard",
             actionId: DASHBOARD_ACTION_IDS.START_INTEGRATIONS,
         });
@@ -6308,7 +6346,8 @@ export async function main(ns) {
                 capabilitySnapshot
             )
         );
-        const activeDashboardViewId = String(globalThis[DASHBOARD_UI_STATE_KEY]?.activeViewId ?? "");
+        const currentDashboardUiState = globalThis[DASHBOARD_UI_STATE_KEY];
+        const activeDashboardViewId = String(currentDashboardUiState?.activeViewId ?? "");
         const activeDashboardView = dashboardViewRegistry.byId.get(activeDashboardViewId);
         const fileManagerSnapshots = activeDashboardView?.renderer === "file-manager"
             ? dashboardSnapshotCoordinator.getOrCreate(
@@ -6391,11 +6430,25 @@ export async function main(ns) {
         const networkMapRenderStable = activeNetworkMapServiceId
             ? isDashboardNetworkMapRenderStable(activeDashboardView.id, networkMapRenderSignature)
             : false;
+        const activeStartOrder = !activeDashboardViewId
+            && currentDashboardUiState?.selectedItem === "global.startOrder"
+            && String(currentDashboardUiState?.centerPanels?.["global.startOrder"] ?? "order") === "order";
+        const startOrderRenderSignature = activeStartOrder
+            ? getDashboardStartOrderRenderSignature(
+                homeScripts,
+                activeDashboardTheme.signature,
+                `${layoutSnapshot.mode}:${layoutSnapshot.tailWidth}x${layoutSnapshot.tailHeight}`
+            )
+            : "";
+        const startOrderRenderStable = activeStartOrder
+            ? isDashboardStartOrderRenderStable(startOrderRenderSignature)
+            : false;
         const optionsInputFocused = Boolean(globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY]);
         const viewDragActive = Boolean(globalThis[DASHBOARD_VIEW_DRAG_ACTIVE_KEY]);
 
         if (React) {
-            if (optionsInputFocused || viewDragActive || fileManagerRenderStable || networkMapRenderStable) {
+            if (optionsInputFocused || viewDragActive || fileManagerRenderStable
+                || networkMapRenderStable || startOrderRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
                 const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
@@ -6458,6 +6511,7 @@ export async function main(ns) {
                 );
                 lastRenderedSignature = renderSignature;
             }
+            rememberDashboardStartOrderRender(activeStartOrder ? startOrderRenderSignature : "");
         } else {
             printFallbackDashboard(
                 ns,

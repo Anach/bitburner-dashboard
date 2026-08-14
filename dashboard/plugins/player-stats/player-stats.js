@@ -1,30 +1,35 @@
+import { hasApiAccessFromResetInfo } from "dashboard/libs/capabilities.js";
+import { reconcileTemporaryHomeScripts } from "dashboard/libs/runtime-actions.js";
+import { loadPersistedDashboardOptions, readPersistedBoolean } from "dashboard/libs/persisted-options.js";
+
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
 };
 
 const REFRESH_MS = 1000;
 const PLAYER_STATUS_PATH = "data/player_status.json";
+const CURRENT_WORK_PATH = "data/player_status_singularity.json";
+const CURRENT_WORK_SCRIPT = "dashboard/plugins/player-stats/player-stats-singularity.js";
+const CURRENT_WORK_OPTION_KEY = "playerStatsCurrentWorkEnabled";
+const CURRENT_WORK_STALE_MS = 15000;
+const CURRENT_WORK_RECONCILE_MS = 30000;
 
-function formatWork(task) {
-    if (!task || typeof task !== "object") return { label: "Idle", detail: "No focused work" };
-    const durationSeconds = Math.max(0, Math.floor((Number(task.cyclesWorked) || 0) / 5));
-    const duration = durationSeconds < 60
-        ? `${durationSeconds}s`
-        : `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`;
-    if (task.type === "COMPANY") return { label: `Company: ${task.companyName}`, detail: `Working ${duration}` };
-    if (task.type === "FACTION") return { label: `Faction: ${task.factionName}`, detail: `${task.factionWorkType} · ${duration}` };
-    if (task.type === "CLASS") return { label: task.classType, detail: `${task.location} · ${duration}` };
-    if (task.type === "CRIME") return { label: `Crime: ${task.crimeType}`, detail: `Active ${duration}` };
-    if (task.type === "CREATE_PROGRAM") return { label: `Program: ${task.programName}`, detail: `Creating ${duration}` };
-    if (task.type === "GRAFTING") return { label: `Grafting: ${task.augmentation}`, detail: `Active ${duration}` };
-    return { label: String(task.type ?? "Working"), detail: duration };
-}
-
-function readCurrentWork(ns) {
+function readCurrentWork(ns, hasSingularity, enabled) {
+    if (!enabled) return { label: "Disabled", detail: "Enable Singularity API" };
+    if (!hasSingularity) return { label: "Unavailable", detail: "Singularity req." };
     try {
-        return formatWork(ns.singularity.getCurrentWork());
+        if (!ns.fileExists(CURRENT_WORK_PATH, "home")) return { label: "Starting", detail: "Waiting for Work worker" };
+        const raw = ns.read(CURRENT_WORK_PATH);
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (!parsed || Date.now() - Number(parsed.generatedAt || 0) > CURRENT_WORK_STALE_MS) {
+            return { label: "Starting", detail: "Waiting for Work worker" };
+        }
+        return {
+            label: String(parsed.label ?? "Unavailable"),
+            detail: String(parsed.detail ?? "No current work data"),
+        };
     } catch (error) {
-        return { label: "Unavailable", detail: "Singularity req." };
+        return { label: "Unavailable", detail: "Work telemetry error" };
     }
 }
 
@@ -103,9 +108,9 @@ function resolveBitNode12SkillMultiplier(ownedSF) {
 // ns.getResetInfo() is a flat 1GB with no SF gate, unlike ns.getBitNodeMultipliers()'s flat 4GB
 // behind Source-File 5 - resolved once since a BitNode's multipliers cannot change mid-run, and this
 // daemon restarts on every reset anyway.
-function resolveBitNodeSkillMultipliers(ns) {
+function resolveBitNodeSkillMultipliers(ns, knownResetInfo = null) {
     try {
-        const resetInfo = ns.getResetInfo();
+        const resetInfo = knownResetInfo ?? ns.getResetInfo();
         const bitNodeN = Number(resetInfo?.currentNode);
         if (bitNodeN === 12) {
             const mult = resolveBitNode12SkillMultiplier(resetInfo?.ownedSF);
@@ -117,9 +122,8 @@ function resolveBitNodeSkillMultipliers(ns) {
     }
 }
 
-export function buildPlayerStatus(ns, bitNodeSkillMultipliers = {}) {
+export function buildPlayerStatus(ns, bitNodeSkillMultipliers = {}, work = { label: "Unavailable", detail: "Current Work disabled" }) {
     const player = ns.getPlayer();
-    const work = readCurrentWork(ns);
     const skills = player?.skills ?? {};
     const hp = player?.hp ?? {};
     const hackingProgress = readSkillProgress(ns, player, "hacking", bitNodeSkillMultipliers.hacking);
@@ -163,10 +167,42 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[PLAYER] Player status telemetry started.");
     ns.print("[LIFECYCLE] Player status telemetry started.");
-    const bitNodeSkillMultipliers = resolveBitNodeSkillMultipliers(ns);
+    let resetInfo = {};
+    try {
+        resetInfo = ns.getResetInfo() ?? {};
+    } catch (error) {
+        resetInfo = {};
+    }
+    const bitNodeSkillMultipliers = resolveBitNodeSkillMultipliers(ns, resetInfo);
+    const hasSingularity = hasApiAccessFromResetInfo(resetInfo, "singularity");
     let lastStatusSignature = "";
+    let currentWorkDisabledReconciled = false;
+    let nextCurrentWorkReconcileAt = 0;
     while (true) {
-        const status = buildPlayerStatus(ns, bitNodeSkillMultipliers);
+        const currentWorkEnabled = readPersistedBoolean(
+            loadPersistedDashboardOptions(ns),
+            CURRENT_WORK_OPTION_KEY,
+            false
+        );
+        const now = Date.now();
+        if (hasSingularity && currentWorkEnabled) {
+            if (now >= nextCurrentWorkReconcileAt) {
+                reconcileTemporaryHomeScripts(ns, [CURRENT_WORK_SCRIPT], [CURRENT_WORK_SCRIPT]);
+                nextCurrentWorkReconcileAt = now + CURRENT_WORK_RECONCILE_MS;
+            }
+            currentWorkDisabledReconciled = false;
+        } else if (!currentWorkDisabledReconciled) {
+            reconcileTemporaryHomeScripts(ns, [], [CURRENT_WORK_SCRIPT]);
+            currentWorkDisabledReconciled = true;
+            nextCurrentWorkReconcileAt = 0;
+        }
+
+        const work = readCurrentWork(ns, hasSingularity, currentWorkEnabled);
+        const status = {
+            ...buildPlayerStatus(ns, bitNodeSkillMultipliers, work),
+            hasSingularity,
+            currentWorkEnabled,
+        };
         // Excludes generatedAt from the comparison - it always differs, which would defeat the
         // point. HP/money/XP genuinely change almost every tick during active play, so this
         // mostly helps during idle/AFK stretches, but it's the same signature-gating pattern

@@ -406,7 +406,11 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
     const locked = isLocked(integration, safeStats);
     const idPrefix = context.idPrefix ?? integration?.id ?? "plugin";
     const running = Boolean(context.running);
-    const icon = (value) => (context.iconBrackets ? `[${value}]` : value);
+    const icon = (value) => {
+        const normalized = typeof value === "string" ? value.trim() : "";
+        if (!normalized) return "";
+        return context.iconBrackets ? `[${normalized}]` : normalized;
+    };
     const startingOrder = Number(context.startingOrder) || 0;
 
     return (integration?.actions ?? []).map((rawAction, index) => {
@@ -429,7 +433,16 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
         const enabled = action.activeValue !== undefined
             ? String(stateValue) === String(action.activeValue)
             : Boolean(stateValue);
-        const requiresRuntime = action.requiresRuntime !== false && integration?.commands?.requiresRuntime !== false;
+        const actionKind = action.kind ?? integration?.commands?.actionKind ?? "plugin-command";
+        // A metadata-owned save-options action changes only the persisted dashboard option store.
+        // It deliberately does not require, or send a command to, the service runtime. This makes
+        // fail-closed feature gates usable before a daemon is started and lets cheap parents poll
+        // the same saved setting without allocating a command port solely for configuration.
+        const isSaveOptions = actionKind === "save-options";
+        const requiresRuntime = action.requiresRuntime === true
+            || (!isSaveOptions
+                && action.requiresRuntime !== false
+                && integration?.commands?.requiresRuntime !== false);
         // A "clipboard" action just hands the player a string to paste - it dispatches nothing, so
         // it must not be gated on the integration's script running, and its payload comes from
         // telemetry rather than from the descriptor (the target changes as the game progresses).
@@ -441,6 +454,7 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             id: `${idPrefix}-${action.id}`,
             label: variant?.label ?? action.label,
             icon: icon(action.icon ?? ""),
+            ...(typeof action.tooltip === "string" && action.tooltip ? { tooltip: action.tooltip } : {}),
             tone: variant?.tone ?? (enabled
                 ? action.activeTone ?? action.enabledTone ?? "success"
                 : action.inactiveTone ?? action.disabledTone ?? "danger"),
@@ -448,7 +462,8 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // buildPluginIntegrationService.getActions hard-overrides actionKind to "plugin-command"
             // for the auto Options panel, so without this a clipboard entry would silently be
             // dispatched as a port command instead.
-            kind: action.kind ?? integration?.commands?.actionKind ?? "plugin-command",
+            kind: actionKind,
+            featureSize: action.featureSize === true,
             ...(isClipboard ? { text: clipboardText } : {}),
             command: action.command ?? variant?.command ?? (enabled ? action.disableCommand : action.enableCommand),
             // Per-action override for an integration whose merged components each still run their
@@ -460,6 +475,9 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // enum/mode buttons declare their exact optionValue in metadata.
             ...(isPersistedAction
                 ? { optionKey: action.optionKey, optionValue: hasExplicitOptionValue ? action.optionValue : !enabled }
+                : {}),
+            ...(isSaveOptions && isPersistedAction
+                ? { optionOverrides: { [action.optionKey]: hasExplicitOptionValue ? action.optionValue : !enabled } }
                 : {}),
             // A clipboard action copies telemetry, so it is gated on having something to copy
             // rather than on the integration's own script running - the whole point of these is to
@@ -508,7 +526,15 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
 
     let hasKnownStats = false;
     const fields = (integration?.telemetry?.fields ?? []).filter((field) => {
-        return typeof field?.panelId !== "string" || typeof panelId !== "string" || field.panelId === panelId;
+        if (typeof field?.panelId === "string" && typeof panelId === "string" && field.panelId !== panelId) return false;
+        const visibleOptionKey = typeof field?.visibleOptionKey === "string" ? field.visibleOptionKey : "";
+        if (!visibleOptionKey) return true;
+        const optionDefinition = getObject(getObject(integration?.options)[visibleOptionKey]);
+        const currentValue = configuredOptions[visibleOptionKey] ?? optionDefinition.default ?? true;
+        if (Object.prototype.hasOwnProperty.call(field, "visibleOptionValue")) {
+            return String(currentValue) === String(field.visibleOptionValue);
+        }
+        return Boolean(currentValue);
     });
     for (const field of fields) {
         const line = buildPluginIntegrationTelemetryLine(stats, field);
@@ -815,13 +841,14 @@ export function buildPluginIntegrationService(plugin) {
                 panelSummaries: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.summary])),
             };
         },
-        getState: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {
+        getState: ({ selectedCenterPanel, homeScripts, telemetryByServiceId, options }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
             const running = isPanelRuntimeRunning(selectedCenterPanel, homeScripts);
             return getPluginIntegrationStateLines(integration, telemetryByServiceId?.[integration.serviceId] ?? null, {
                 running,
                 panelId: selectedCenterPanel,
                 runningLabel: getPanelRuntimeLabel(selectedCenterPanel),
+                configuredOptions: options,
             });
         },
         getSections: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {

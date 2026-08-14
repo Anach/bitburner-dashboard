@@ -1,11 +1,20 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "metadata",
     "serviceId": "system.playerStatus",
-    "menuGroup": "services",
+    "menuGroup": "overview",
     "menuLabel": "Player Status",
-    "menuVisible": false,
-    "description": "Publishes player state for metadata-driven dashboard HUD surfaces.",
+    "menuVisible": true,
+    "description": "Publishes player state for dashboard HUD surfaces. Singularity-powered Current Work telemetry is isolated behind a default-off feature toggle.",
     "daemon": true,
+    "managedScripts": ["dashboard/plugins/player-stats/player-stats-singularity.js"],
+    "options": {
+        "playerStatsCurrentWorkEnabled": { "default": false, "type": "boolean" },
+        "playerStatsCurrentWorkVisible": { "default": true, "type": "boolean" }
+    },
+    "actions": [
+        { "id": "toggle-singularity-api", "kind": "save-options", "label": "Singularity API", "tooltip": "Enable Singularity features: 9.60 GB at SF4.1; 2.10 GB at SF4.3.", "optionKey": "playerStatsCurrentWorkEnabled", "enabledTone": "success", "disabledTone": "neutral", "featureSize": true, "requiresRuntime": true, "order": 0 },
+        { "id": "toggle-current-work-ui", "kind": "save-options", "label": "Current Work UI", "tooltip": "Show or hide Singularity-powered Current Work telemetry in Player Status.", "optionKey": "playerStatsCurrentWorkVisible", "enabledTone": "success", "disabledTone": "neutral", "featureSize": true, "requiresRuntime": true, "order": 10 }
+    ],
     "requirements": [
         { "type": "api", "id": "singularity", "required": false }
     ],
@@ -15,7 +24,11 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "telemetry": {
         "path": "data/player_status.json",
         "fields": [
-            { "key": "generatedAt", "label": "Last Updated", "tone": "neutral", "format": "time", "panelId": "status" }
+            { "key": "generatedAt", "label": "Last Updated", "tone": "neutral", "format": "time", "panelId": "status" },
+            { "key": "hasSingularity", "label": "Singularity Access", "tone": "info", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
+            { "key": "currentWorkEnabled", "label": "Singularity API Enabled", "tone": "neutral", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
+            { "key": "work", "label": "Current Work", "tone": "info", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
+            { "key": "workDetail", "label": "Progress", "tone": "neutral", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" }
         ]
     },
     "viewWidgets": [
@@ -81,6 +94,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
             {
                 "id": "work",
                 "title": "Current Work",
+                "visibleOptionKey": "playerStatsCurrentWorkVisible",
                 "items": [
                     { "key": "work", "label": "Activity", "tone": "neutral", "themeColor": "combat" },
                     { "key": "workDetail", "label": "Progress", "tone": "neutral", "themeColor": "rep" }

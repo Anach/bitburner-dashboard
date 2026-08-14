@@ -1,8 +1,5 @@
-import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "dashboard/libs/action-ids.js";
-import { isValidManagedFilePath, normalizeFilePath } from "dashboard/libs/file-utils.js";
-
-export const DASHBOARD_ACTION_WORKER_SCRIPT = "dashboard/action-worker.js";
-export const DASHBOARD_ACTION_WORKER_RESULT_FILE = "data/dashboard_action_result.json";
+import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "./action-ids.js";
+import { isValidManagedFilePath, normalizeFilePath } from "./file-utils.js";
 
 const DASHBOARD_ACTIONS = new Set(Object.values(DASHBOARD_ACTION_IDS));
 const SCRIPT_ACTIONS = new Set([
@@ -23,12 +20,6 @@ const FILE_ACTIONS = new Set([
 
 function getObject(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function normalizeRequestId(value) {
-    const requestId = String(value ?? "").trim();
-    if (!/^[a-zA-Z0-9._-]{1,80}$/.test(requestId)) throw new Error("Invalid worker request ID.");
-    return requestId;
 }
 
 function normalizeScriptArgs(args) {
@@ -65,9 +56,6 @@ function normalizeDashboardCommand(rawCommand) {
     if (!DASHBOARD_ACTIONS.has(actionId)) throw new Error(`Unknown dashboard action: ${actionId || "(missing)"}`);
     const command = { kind: "dashboard", actionId };
     if (actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
-        const dashboardPid = Math.floor(Number(rawCommand.dashboardPid));
-        if (!(dashboardPid > 0)) throw new Error("Invalid dashboard PID.");
-        command.dashboardPid = dashboardPid;
         command.args = normalizeScriptArgs(rawCommand.args);
     }
     return command;
@@ -115,24 +103,10 @@ function normalizeFileCommand(rawCommand) {
     return command;
 }
 
-export function normalizeActionWorkerEnvelope(rawEnvelope) {
-    const envelope = typeof rawEnvelope === "string" ? JSON.parse(rawEnvelope) : rawEnvelope;
-    const source = getObject(envelope);
-    const requestId = normalizeRequestId(source.requestId);
-    const rawCommand = getObject(source.command);
-    if (rawCommand.kind === "dashboard") return { requestId, command: normalizeDashboardCommand(rawCommand) };
-    if (rawCommand.kind === "script") return { requestId, command: normalizeScriptCommand(rawCommand) };
-    if (rawCommand.kind === "file") return { requestId, command: normalizeFileCommand(rawCommand) };
-    throw new Error(`Unknown worker command kind: ${String(rawCommand.kind ?? "(missing)")}`);
-}
-
-export function parseActionWorkerResult(rawResult, expectedRequestId) {
-    if (!rawResult) return null;
-    try {
-        const result = getObject(JSON.parse(String(rawResult)));
-        if (result.requestId !== expectedRequestId || typeof result.ok !== "boolean") return null;
-        return result;
-    } catch (error) {
-        return null;
-    }
+export function normalizeDashboardActionCommand(rawCommand) {
+    const command = getObject(rawCommand);
+    if (command.kind === "dashboard") return normalizeDashboardCommand(command);
+    if (command.kind === "script") return normalizeScriptCommand(command);
+    if (command.kind === "file") return normalizeFileCommand(command);
+    throw new Error(`Unknown dashboard command kind: ${String(command.kind ?? "(missing)")}`);
 }

@@ -47,22 +47,23 @@ The dashboard itself does not require Singularity. An individual integration can
 
 ### RAM requirements
 
-Static RAM cost of each framework and included-plugin script, measured on Bitburner 3.0.2 (pre-SF4 save; figures with Source-File 4 unlocked will be lower for anything using `ns.singularity.*`, since Bitburner applies a 16x RAM penalty to those calls before SF4):
+Static RAM cost of each framework and included-plugin script, measured on Bitburner 3.0.2. Singularity calls use a 16x multiplier before SF4 and at SF4.1, 4x at SF4.2, and their normal listed cost at SF4.3; the two columns below show the 16x and fully-unlocked endpoints.
 
 | Component | Static RAM | Notes |
 | --- | ---: | --- |
-| `dashboard/automation-dashboard.jsx` | 4.90 GB | Required. The dashboard itself. |
+| `dashboard/automation-dashboard.jsx` | 8.30 GB | Required. Includes lifecycle, kill, restart, and File Manager action execution. |
 | `dashboard/service-supervisor.js` | 4.50 GB | Supervises daemon start/restart (optional). |
-| **Combined steady footprint** | **9.40 GB** | Dashboard + supervisor running together, the normal steady state. |
-| `dashboard/action-worker.js` | 8.50 GB | Transient only — a worker instance starts on demand for a script/kill/file action and exits immediately after, never part of the permanent footprint. |
+| **Combined steady footprint** | **12.80 GB** | Dashboard + supervisor running together, the normal steady state. No action-worker reserve is required. |
+| `dashboard/libs/temporary-script-launcher.js` | 4.20 GB | Transient only — reconciles optional managed children without adding stop/process APIs to their cheap parents. |
 
 Included plugins (each independently removable; only pay for what you keep installed):
 
-| Plugin runtime | Pre-SF4 RAM | With SF4 RAM | Notes |
+| Plugin runtime | 16x / SF4.1 RAM | Full SF4 RAM | Notes |
 | --- | ---: | ---: | --- |
-| Player Stats (`dashboard/plugins/player-stats/player-stats.js`) | 10.10 GB | 2.60 GB | Optional Singularity-backed player details account for the difference. |
+| Player Stats parent (`dashboard/plugins/player-stats/player-stats.js`) | 4.50 GB | 4.50 GB | Core HUD telemetry and accurate per-BitNode XP bars; Current Work is isolated so this parent has no Singularity RAM cost. |
+| Player Stats Current Work child (`dashboard/plugins/player-stats/player-stats-singularity.js`) | 9.60 GB | 2.10 GB | Default-off optional worker controlled by Player Status's **Singularity API** button. |
 | Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.20 GB | 9.20 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
-| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.60 GB** in the normal qualified state. |
+| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.60 GB** with full SF4 scaling. |
 |  Client Scanner (`dashboard/plugins/-client/-client-scanner.js`) | 5.25 GB | 5.25 GB | |
 |  Client Darknet Agent (`dashboard/plugins/-client/-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
 |  Client Reader (`dashboard/plugins/-client/-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
@@ -106,7 +107,7 @@ You can substitute a shorter name such as `dash` if preferred:
 alias dash="run dashboard/automation-dashboard.jsx"
 ```
 
-The dashboard opens its own tail and prevents duplicate dashboard instances. Its native title bar includes a dashboard Restart control immediately before Bitburner's Stop button, including while minimized. Restart uses the same transient action-worker handoff as the in-dashboard action and preserves the current startup arguments. By default it starts the integration supervisor automatically. To launch the dashboard process only, without starting the supervisor, use:
+The dashboard opens its own tail and prevents duplicate dashboard instances. Its native title bar includes a dashboard Restart control immediately before Bitburner's Stop button, including while minimized. Restart is handled directly by the dashboard and preserves the current startup arguments. By default it starts the integration supervisor automatically. To launch the dashboard process only, without starting the supervisor, use:
 
 ```text
 run dashboard/automation-dashboard.jsx --no-auto-start
@@ -118,7 +119,7 @@ To launch it before saved processes, set **Game Options → System → Autoexec 
 
 The integration supervisor checks the `home` file list periodically and reuses parsed descriptors while that list is unchanged. Each active cycle uses one process snapshot to start or restart eligible integrations declared with `"daemon": true`; integrations declared with `"daemon": false` remain on demand. Every daemon integration has its own **Autostart** toggle (visible next to its Start/Stop/Restart actions), so individual services can be excluded without touching the command line. The supervisor exits when no enabled daemon integration is discovered. Selecting **Start integrations** in the Plugin List starts the supervisor again after it has been stopped or after a daemon integration is installed.
 
-**Home Server → Options** provides two independent supervisor safeguards. **Transient RAM Reserve** is the minimum free `home` RAM that must remain after each service launch, preserving capacity for the action worker and other on-demand processes. **Service Startup RAM Limit** caps the combined RAM of running service entry scripts represented in the Start Order list; already-running listed services count toward the cap, and lowering it does not stop them. Child processes and manually started non-service scripts are outside that aggregate. A value of `0` disables the corresponding safeguard.
+**Home Server → Options** provides two independent supervisor safeguards. **Transient RAM Reserve** is the minimum free `home` RAM that must remain after each service launch, preserving capacity for on-demand and payload processes. Dashboard controls no longer require a separate RAM reserve. **Service Startup RAM Limit** caps the combined RAM of running service entry scripts represented in the Start Order list; already-running listed services count toward the cap, and lowering it does not stop them. Child processes and manually started non-service scripts are outside that aggregate. A value of `0` disables the corresponding safeguard.
 
 Runtime settings are written to:
 
@@ -128,7 +129,7 @@ data/dashboard_options.json
 
 Stopping the dashboard does not stop the supervisor or integrated automation scripts. The prominent kill controls are explicit exceptions and should be used deliberately.
 
-Script lifecycle commands, kill operations, dashboard restart, and File Manager mutations run through `dashboard/action-worker.js`. The dashboard starts one worker only when an action is requested, validates commands and file paths at both sides of the boundary, processes one action at a time, and correlates the worker result before showing status. Keep enough temporary `home` RAM available for the worker when using these controls.
+Script lifecycle commands, kill operations, dashboard restart, and File Manager mutations are validated and executed from the dashboard's main-loop action queue. React callbacks only enqueue commands; all Netscript calls remain in the safe loop context. The dashboard reuses its existing process and network APIs, so these controls remain available without launching a second process or reserving another block of Home RAM.
 
 ## Add an integration
 
@@ -485,6 +486,8 @@ The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin
 
 Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata, or to the normal workspace right pane through `workspaceWidgets`. Player Stats uses both contracts to add itself to System Overview and beside the service status panel in non-global system groups. Its dashboard option is also plugin-contributed, so removing Player Stats removes the widgets and option without leaving an empty surface or inactive control.
 
+HUD groups and telemetry fields may declare `visibleOptionKey` to let a plugin-owned boolean option show or hide them without dashboard-specific rendering code. The option definition supplies the default; an optional `visibleOptionValue` supports non-boolean choices.
+
 ## Beta notes
 
 - Preserve folder paths when syncing; Netscript imports are path-based.
@@ -494,7 +497,6 @@ Plugins may contribute widgets to a discovered view through JSON-compatible `vie
 - Keep telemetry files valid JSON. Invalid or missing snapshots fail closed and show telemetry as unavailable.
 - Port numbers are shared game-wide; integrations must not reuse ports unintentionally.
 - File-manager actions can move, archive, or delete files on `home`. Running and descriptor-protected files are blocked, but a save backup remains strongly recommended.
-- `dashboard/action-worker.js` and `data/dashboard_action_result.json` are framework-protected File Manager paths.
 - Metadata and view schemas are still beta contracts. Review [CHANGELOG.md](CHANGELOG.md) before updating an existing integration; entries marked **contract** are the ones that can affect a descriptor or runtime you already wrote.
 
 Bug reports should include the Bitburner version, the descriptor, a small telemetry sample, the dashboard log output, and reproduction steps.
