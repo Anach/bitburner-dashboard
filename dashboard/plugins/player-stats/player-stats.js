@@ -47,10 +47,17 @@ function calculateSkillExperience(level, multiplier) {
     return experience;
 }
 
-function readSkillProgress(ns, player, skill) {
+// The game computes the real skill level from exp using player.mults[skill] * the BitNode's own
+// level multiplier for that skill (Person.ts's gainHackingExp and friends, mirrored by the game's
+// own StatsProgressBar.tsx). Omitting the BitNode factor here was the bug: in any BitNode where a
+// skill's multiplier isn't 1 (e.g. BN2's HackingLevelMultiplier: 0.8), the level boundaries this
+// recomputes land in the wrong place, and the ratio can reach 1 well before the real in-game level
+// change - the bar pins at 100% and stays there through part of every level, even though the
+// underlying level count (read straight from player.skills, always correct) keeps climbing.
+function readSkillProgress(ns, player, skill, bitNodeSkillMultiplier) {
     const level = Math.max(1, Math.floor(Number(player?.skills?.[skill]) || 1));
     const experience = Math.max(0, Number(player?.exp?.[skill]) || 0);
-    const multiplier = Math.max(0.000001, Number(player?.mults?.[skill]) || 1);
+    const multiplier = Math.max(0.000001, (Number(player?.mults?.[skill]) || 1) * (Number(bitNodeSkillMultiplier) || 1));
     const levelStart = calculateSkillExperience(level, multiplier);
     const nextLevel = calculateSkillExperience(level + 1, multiplier);
     const required = Math.max(0, nextLevel - levelStart);
@@ -63,17 +70,64 @@ function readSkillProgress(ns, player, skill) {
     };
 }
 
-export function buildPlayerStatus(ns) {
+// The live way to read this is ns.getBitNodeMultipliers() - but that needs Source-File 5, which a
+// player in their first BitNode (exactly who most needs an accurate early-game XP bar) will not
+// have. So instead of gating this plugin's correctness behind an SF the target audience doesn't
+// have yet, the table is reproduced here: it's small, static per-BitNode game-balance data (source:
+// bitburner-src/src/BitNode/BitNode.tsx, getBitNodeMultipliers()) that only changes on a deliberate
+// game balance patch. BitNodes not listed (1, 4, 5, 8, and anything added in a future game version)
+// leave every skill at the default 1x - the same as today's pre-fix behavior, so an unlisted/unknown
+// BitNode degrades gracefully rather than guessing. BitNode 12 is excluded and handled specially
+// below; its multiplier isn't a fixed constant, it decays with replay count.
+const BITNODE_SKILL_MULTIPLIERS = {
+    2: { hacking: 0.8 },
+    3: { hacking: 0.8 },
+    6: { hacking: 0.35 },
+    7: { hacking: 0.35 },
+    9: { hacking: 0.5, strength: 0.45, defense: 0.45, dexterity: 0.45, agility: 0.45, charisma: 0.45 },
+    10: { hacking: 0.35, strength: 0.4, defense: 0.4, dexterity: 0.4, agility: 0.4, charisma: 0.4 },
+    11: { hacking: 0.6 },
+    13: { hacking: 0.25, strength: 0.7, defense: 0.7, dexterity: 0.7, agility: 0.7, charisma: 0.7 },
+    14: { hacking: 0.4, strength: 0.5, defense: 0.5, dexterity: 0.5, agility: 0.5 },
+    15: { hacking: 0.6, strength: 0.7, defense: 0.7, dexterity: 0.7, agility: 0.7, charisma: 1.1 },
+};
+
+// BitNode 12 ("The Recursion") scales every skill multiplier down by 1.02^lvl on each replay, where
+// lvl is that BitNode's own owned Source-File level + 1 (BitNode.tsx: `dec = 1 / Math.pow(1.02,
+// lvl)`). ownedSF is available unconditionally from ns.getResetInfo(), so this needs no extra access.
+function resolveBitNode12SkillMultiplier(ownedSF) {
+    const level = (Number(ownedSF?.get?.(12)) || 0) + 1;
+    return 1 / Math.pow(1.02, level);
+}
+
+// ns.getResetInfo() is a flat 1GB with no SF gate, unlike ns.getBitNodeMultipliers()'s flat 4GB
+// behind Source-File 5 - resolved once since a BitNode's multipliers cannot change mid-run, and this
+// daemon restarts on every reset anyway.
+function resolveBitNodeSkillMultipliers(ns) {
+    try {
+        const resetInfo = ns.getResetInfo();
+        const bitNodeN = Number(resetInfo?.currentNode);
+        if (bitNodeN === 12) {
+            const mult = resolveBitNode12SkillMultiplier(resetInfo?.ownedSF);
+            return { hacking: mult, strength: mult, defense: mult, dexterity: mult, agility: mult, charisma: mult };
+        }
+        return { ...BITNODE_SKILL_MULTIPLIERS[bitNodeN] };
+    } catch (error) {
+        return {};
+    }
+}
+
+export function buildPlayerStatus(ns, bitNodeSkillMultipliers = {}) {
     const player = ns.getPlayer();
     const work = readCurrentWork(ns);
     const skills = player?.skills ?? {};
     const hp = player?.hp ?? {};
-    const hackingProgress = readSkillProgress(ns, player, "hacking");
-    const strengthProgress = readSkillProgress(ns, player, "strength");
-    const defenseProgress = readSkillProgress(ns, player, "defense");
-    const dexterityProgress = readSkillProgress(ns, player, "dexterity");
-    const agilityProgress = readSkillProgress(ns, player, "agility");
-    const charismaProgress = readSkillProgress(ns, player, "charisma");
+    const hackingProgress = readSkillProgress(ns, player, "hacking", bitNodeSkillMultipliers.hacking);
+    const strengthProgress = readSkillProgress(ns, player, "strength", bitNodeSkillMultipliers.strength);
+    const defenseProgress = readSkillProgress(ns, player, "defense", bitNodeSkillMultipliers.defense);
+    const dexterityProgress = readSkillProgress(ns, player, "dexterity", bitNodeSkillMultipliers.dexterity);
+    const agilityProgress = readSkillProgress(ns, player, "agility", bitNodeSkillMultipliers.agility);
+    const charismaProgress = readSkillProgress(ns, player, "charisma", bitNodeSkillMultipliers.charisma);
     const intelligenceProgress = readSkillProgress(ns, player, "intelligence");
     return {
         generatedAt: Date.now(),
@@ -109,9 +163,10 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.tprint("[PLAYER] Player status telemetry started.");
     ns.print("[LIFECYCLE] Player status telemetry started.");
+    const bitNodeSkillMultipliers = resolveBitNodeSkillMultipliers(ns);
     let lastStatusSignature = "";
     while (true) {
-        const status = buildPlayerStatus(ns);
+        const status = buildPlayerStatus(ns, bitNodeSkillMultipliers);
         // Excludes generatedAt from the comparison - it always differs, which would defeat the
         // point. HP/money/XP genuinely change almost every tick during active play, so this
         // mostly helps during idle/AFK stretches, but it's the same signature-gating pattern
