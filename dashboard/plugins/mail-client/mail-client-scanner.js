@@ -118,7 +118,7 @@ function ensureRecord(messages, source, filename, originHostType) {
         subject: humanizeFilename(filename),
         content: null,
         firstSeenAt: Date.now(),
-        read: false,
+        ["read"]: false,
         readAt: null,
     };
     messages[id] = record;
@@ -225,16 +225,16 @@ function dedupeMessagesByFilenameAndContent(messages) {
         // well after an earlier copy was already read. Once either copy has been read, that id
         // must stay canonical permanently - otherwise a still-unread twin keeps "winning" the
         // firstSeenAt tie-break and silently undoes the read state the user already set.
-        const preferCanonical = canonical.read === record.read
+        const preferCanonical = canonical["read"] === record["read"]
             ? canonical.firstSeenAt <= record.firstSeenAt
-            : canonical.read;
+            : canonical["read"];
         const keep = preferCanonical ? canonical : record;
         const keepId = preferCanonical ? canonicalId : id;
         const drop = preferCanonical ? record : canonical;
         const dropId = preferCanonical ? id : canonicalId;
 
-        if (drop.read && !keep.read) {
-            keep.read = true;
+        if (drop["read"] && !keep["read"]) {
+            keep["read"] = true;
             keep.readAt = drop.readAt ?? keep.readAt;
         }
 
@@ -265,7 +265,7 @@ function drainCommands(ns, messages, queuedCommands = []) {
             const id = decodeURIComponent(command.slice("MarkRead:".length));
             const record = messages[id];
             if (record) {
-                record.read = true;
+                record["read"] = true;
                 record.readAt = Date.now();
                 lastCommand = { status: "success", message: `Marked as read: ${record.subject}`, timestamp: Date.now() };
             } else {
@@ -279,7 +279,7 @@ function drainCommands(ns, messages, queuedCommands = []) {
             const id = decodeURIComponent(command.slice("MarkUnread:".length));
             const record = messages[id];
             if (record) {
-                record.read = false;
+                record["read"] = false;
                 record.readAt = null;
                 lastCommand = { status: "success", message: `Marked as unread: ${record.subject}`, timestamp: Date.now() };
             } else {
@@ -294,9 +294,9 @@ function drainCommands(ns, messages, queuedCommands = []) {
             let count = 0;
             for (const record of Object.values(messages)) {
                 if (folder !== "Inbox" && record.folder !== folder) continue;
-                if (record.read) continue;
+                if (record["read"]) continue;
                 if (record.content === null) continue;
-                record.read = true;
+                record["read"] = true;
                 record.readAt = Date.now();
                 count += 1;
             }
@@ -331,7 +331,7 @@ function buildSnapshot(messages, lastCommand) {
 
     for (const record of records) {
         totalCounts[record.folder] += 1;
-        if (!record.read) {
+        if (!record["read"]) {
             folderCounts.Inbox += 1;
             folderCounts[record.folder] += 1;
         }

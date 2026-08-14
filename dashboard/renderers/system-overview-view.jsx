@@ -168,12 +168,12 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                     <HomeHealthRing counts={counts} />
                     <div style={alertPaneStyle}>
                         <div style={alertListStyle}>
-                            {visibleAlerts.length > 0 ? visibleAlerts.map((alert) => {
-                                const palette = getTonePalette(alert.level);
-                                const alertText = `${alert.label}${alert.summary ? ` — ${alert.summary}` : ""}`;
-                                return <div key={alert.id} title={useWideHealthLayout ? alertText : undefined} style={{ ...styles.homeAlert, borderColor: palette.border }}>
-                                    <span style={{ color: palette.accent, fontWeight: 800 }}>{alert.level === "danger" ? "!!" : "!"}</span>
-                                    <span style={alertTextStyle}><span style={{ color: palette.accent }}>{alert.label}</span>{alert.summary ? ` — ${alert.summary}` : ""}</span>
+                            {visibleAlerts.length > 0 ? visibleAlerts.map((alertItem) => {
+                                const palette = getTonePalette(alertItem.level);
+                                const alertText = `${alertItem.label}${alertItem.summary ? ` — ${alertItem.summary}` : ""}`;
+                                return <div key={alertItem.id} title={useWideHealthLayout ? alertText : undefined} style={{ ...styles.homeAlert, borderColor: palette.border }}>
+                                    <span style={{ color: palette.accent, fontWeight: 800 }}>{alertItem.level === "danger" ? "!!" : "!"}</span>
+                                    <span style={alertTextStyle}><span style={{ color: palette.accent }}>{alertItem.label}</span>{alertItem.summary ? ` — ${alertItem.summary}` : ""}</span>
                                 </div>;
                             }) : <div style={{ ...styles.homeAlert, borderColor: "rgba(110, 231, 168, 0.2)", color: "#8ef0b5" }}>
                                 <span>✓</span><span style={alertTextStyle}>No warnings or danger alerts.</span>

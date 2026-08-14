@@ -36,7 +36,7 @@ export function createMailClientWorkspaceController(initialSnapshot = null) {
             if (stopped) return false;
             stopped = true;
             pendingCommands.length = 0;
-            listeners.clear();
+            listeners["clear"]();
             return true;
         },
         subscribe(listener) {

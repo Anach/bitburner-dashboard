@@ -111,19 +111,19 @@ function discoverBareDaemonScripts(ns, normalizedFiles, managedFilenames) {
     return candidates;
 }
 
-export function calculateRunningManagedServiceRam(services, processes, getScriptRam) {
+export function calculateRunningManagedServiceRam(services, processes, resolveScriptRamGb) {
     const managedFilenames = new Set(
         (Array.isArray(services) ? services : [])
             .map((service) => service?.filename)
             .filter((filename) => typeof filename === "string" && filename.length > 0)
     );
-    if (managedFilenames.size === 0 || typeof getScriptRam !== "function") return 0;
+    if (managedFilenames.size === 0 || typeof resolveScriptRamGb !== "function") return 0;
 
     let totalRamGb = 0;
     for (const process of Array.isArray(processes) ? processes : []) {
         if (!managedFilenames.has(process?.filename)) continue;
         const threads = Number(process?.threads);
-        const scriptRamGb = Number(getScriptRam(process.filename));
+        const scriptRamGb = Number(resolveScriptRamGb(process.filename));
         if (!(threads > 0) || !(scriptRamGb > 0)) continue;
         totalRamGb += threads * scriptRamGb;
     }
@@ -160,7 +160,7 @@ function startManagedService(ns, service, runningFiles, ramLimits) {
     const reservedHomeRamGb = ramLimits?.reservedHomeRamGb ?? 0;
     const serviceStartupRamLimitGb = ramLimits?.serviceStartupRamLimitGb ?? 0;
     const ramLimitsEnabled = reservedHomeRamGb > 0 || serviceStartupRamLimitGb > 0;
-    const scriptRamGb = ramLimitsEnabled ? ramLimits.getScriptRam(script) : 0;
+    const scriptRamGb = ramLimitsEnabled ? ramLimits.resolveScriptRamGb(script) : 0;
     // Free RAM is checked fresh so each successive start sees the headroom consumed by services
     // started earlier in this pass. The aggregate service total is maintained separately because
     // it must also include listed services that were already running when this cycle began.
@@ -230,14 +230,14 @@ export async function main(ns) {
         const reservedHomeRamGb = normalizeDashboardRamSetting(options.reservedHomeRam);
         const serviceStartupRamLimitGb = normalizeDashboardRamSetting(options.serviceStartupRamLimit);
         const scriptRamByFilename = new Map();
-        const getScriptRam = (script) => {
+        const resolveScriptRamGb = (script) => {
             if (!scriptRamByFilename.has(script)) {
                 scriptRamByFilename.set(script, ns.getScriptRam(script, "home"));
             }
             return scriptRamByFilename.get(script) ?? 0;
         };
         let runningManagedServiceRamGb = serviceStartupRamLimitGb > 0
-            ? calculateRunningManagedServiceRam(services, runningProcesses, getScriptRam)
+            ? calculateRunningManagedServiceRam(services, runningProcesses, resolveScriptRamGb)
             : 0;
 
         for (const service of orderedServices) {
@@ -250,7 +250,7 @@ export async function main(ns) {
                 reservedHomeRamGb,
                 serviceStartupRamLimitGb,
                 runningManagedServiceRamGb,
-                getScriptRam,
+                resolveScriptRamGb,
             });
             if (result.status === "started" && serviceStartupRamLimitGb > 0) {
                 runningManagedServiceRamGb += result.scriptRamGb;

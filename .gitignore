@@ -55,7 +55,9 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
-tools
+
+# tools/ is local dev/staging tooling (machine-specific sync paths) and stays untracked
+tools/*
 NetscriptDefinitions.d.ts
 NetscriptGlobals.d.ts
 tsconfig.json

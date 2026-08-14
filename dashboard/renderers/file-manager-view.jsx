@@ -1135,15 +1135,15 @@ export function FileManagerView({
     const deleteActionLabel = deleteActionCount > 0 ? `Delete (${deleteActionCount})` : "Delete";
 
     const keyActions = [
-        { key: "F2", label: "Rescan", enabled: true, run: () => onFileAction?.({ actionId: "refresh" }) },
-        { key: "F3", label: "View", enabled: canView, run: () => showPreview(selectedEntry) },
-        { key: "F4", label: "Edit", enabled: canEdit, run: copyEditCommand },
-        { key: "F5", label: "Copy", enabled: canCopy, run: () => openTransferDialog("copy") },
-        { key: "F6", label: "Move", enabled: canMove, run: () => openTransferDialog("move") },
-        { key: "F7", label: "Archive", enabled: canArchive, run: openArchiveDialog },
-        { key: "F8", label: deleteActionLabel, enabled: canDelete, run: openDeleteDialog },
-        { key: "F9", label: "Cleanup", enabled: canCleanup, run: openCleanupDialog },
-        { key: "F10", label: "Close", enabled: true, run: onExit },
+        { key: "F2", label: "Rescan", enabled: true, execute: () => onFileAction?.({ actionId: "refresh" }) },
+        { key: "F3", label: "View", enabled: canView, execute: () => showPreview(selectedEntry) },
+        { key: "F4", label: "Edit", enabled: canEdit, execute: copyEditCommand },
+        { key: "F5", label: "Copy", enabled: canCopy, execute: () => openTransferDialog("copy") },
+        { key: "F6", label: "Move", enabled: canMove, execute: () => openTransferDialog("move") },
+        { key: "F7", label: "Archive", enabled: canArchive, execute: openArchiveDialog },
+        { key: "F8", label: deleteActionLabel, enabled: canDelete, execute: openDeleteDialog },
+        { key: "F9", label: "Cleanup", enabled: canCleanup, execute: openCleanupDialog },
+        { key: "F10", label: "Close", enabled: true, execute: onExit },
     ];
 
     const handleKeyDown = (event) => {
@@ -1229,7 +1229,7 @@ export function FileManagerView({
         const action = keyActions.find((candidate) => candidate.key === event.key);
         if (action) {
             event.preventDefault();
-            if (action.enabled) action.run?.();
+            if (action.enabled) action.execute?.();
         }
     };
 
@@ -1372,7 +1372,7 @@ export function FileManagerView({
                             ? "Cleanup requires a deployment manifest."
                             : `${action.key} ${action.label}`}
                         style={{ ...STYLES.keyButton, ...(!action.enabled ? STYLES.disabled : {}) }}
-                        onClick={() => action.enabled && action.run?.()}
+                        onClick={() => action.enabled && action.execute?.()}
                     >
                         <span style={STYLES.keyCap}>{action.key.slice(1)}</span>
                         <span style={STYLES.keyLabel}>{action.label}</span>

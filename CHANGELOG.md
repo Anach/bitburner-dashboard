@@ -10,6 +10,36 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-15
+
+### Added
+
+- **RAM-collision audit tooling**, not-contained in this repo (own `acorn`/`acorn-walk`/
+  `acorn-jsx-walk`/`@babel/standalone` in `tools/`, independent of the private sibling.
+  `tools/audit-ram-collisions.mjs` walks every `.js`/`.jsx` file and flags any identifier matching
+  `data/ns_api_functions.json` — the definitive Netscript API function-name list, generated from the
+  game's own `NetscriptDefinitions.d.ts` and committed here (regenerated from the private
+  `bitburner-src` repo when available). Documented as mandatory for new/significantly modified scripts in
+  `docs/DASHBOARD_DESIGN_PRINCIPLES.md`'s Performance Discipline section.
+
+### Fixed
+
+- First run (49 initial findings, narrowed to 30 real ones once the tool's own exemption logic was
+  taught to recognize `this.ns.method()` — a class storing its Netscript handle as an instance
+  property, not a collision) found and fixed real collisions across 7 files:
+  `service-supervisor.js`'s local `getScriptRam` wrapper (renamed `resolveScriptRamGb`),
+  `file-manager-view.jsx`'s keyboard-shortcut `run` fields (renamed `execute`),
+  `system-overview-view.jsx`'s alert-list `alert` map parameter (renamed `alertItem`), and native
+  `Map`/`Set` `.clear()` calls plus a mail message's `.read` flag across `mail-client-scanner.js`,
+  `mail-client-view.jsx`, `mail-client-workspace.js`, and `workspace-provider.js` (bracket notation,
+  since `.read` is a shared field-name contract between the scanner and the viewer's configurable
+  `fields.read` mapping — not safe to rename, and bracket-notation property access was never charged
+  in the first place). No measurable RAM change on any currently-reachable entry point: the
+  `getScriptRam` wrapper's own body already made the real, legitimately-charged call, and
+  `file-manager-view.jsx` turned out not to be part of any entry point's static import graph at all
+  (the plugin that renders it costs 1.60 GB base, no `ns.*` surface reachable through it) — this was
+  a correctness/hygiene pass, not a reclaim.
+
 ## 2026-08-14
 
 ### Added

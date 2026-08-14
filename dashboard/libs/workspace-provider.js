@@ -79,7 +79,7 @@ export function registerDashboardWorkspaceProvider(definition) {
                     // A broken host must not prevent the provider process from unregistering.
                 }
             }
-            hostDisposers.clear();
+            hostDisposers["clear"]();
             registry.providers.delete(id);
             notifyRegistry(registry);
             return true;
