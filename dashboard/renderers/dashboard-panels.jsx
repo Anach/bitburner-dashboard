@@ -23,18 +23,22 @@ function getReact() {
     return React;
 }
 
-export function Card({ title, accent, subtitle, children, widgetStyles }) {
+// No accent dot: it read as confusingly close to the service-status dots elsewhere in the
+// dashboard, once those existed. Every call site still passes an `accent` prop; it's simply
+// ignored now rather than stripped from ~12 call sites for a purely cosmetic change. The wrapper
+// div stretches (flex: 1 1 auto) so a title node with its own internal flex layout (e.g. the Start
+// Order card's title + right-aligned "Combined total" figure) can reach the card's true right edge.
+export function Card({ title, subtitle, children, widgetStyles }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
     return (
         <section data-dashboard-theme-role="card-frame" style={styles.card}>
             <div style={styles.cardHeader}>
-                <div>
+                <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                     <div data-dashboard-theme-role="data-heading" style={styles.cardTitle}>{title}</div>
                     {subtitle ? <div style={{ ...styles.muted, marginTop: "4px" }}>{subtitle}</div> : null}
                 </div>
-                <div style={{ ...styles.cardAccent, background: accent }} />
             </div>
             <div style={styles.cardBody}>{children}</div>
         </section>

@@ -121,6 +121,8 @@ The integration supervisor checks the `home` file list periodically and reuses p
 
 **Home Server → Options** provides two independent supervisor safeguards. **Transient RAM Reserve** is the minimum free `home` RAM that must remain after each service launch, preserving capacity for on-demand and payload processes. Dashboard controls no longer require a separate RAM reserve. **Service Startup RAM Limit** caps the combined RAM of running service entry scripts represented in the Start Order list; already-running listed services count toward the cap, and lowering it does not stop them. Child processes and manually started non-service scripts are outside that aggregate. A value of `0` disables the corresponding safeguard.
 
+The **Start Order** list itself shows each service's own RAM next to its entry, with a `(Children - X GB)` suffix when any of its declared `managedScripts` are found on `home` — the entry alone, plus that suffix, gives the service's own cost and its children's cost side by side. The card title shows **Combined total**, the sum of every listed service plus its children, regardless of whether each one (or an optional sub-toggle inside it) is currently switched on. This is a capacity-planning ceiling for "how much Home RAM would let everything run at once," not a live snapshot of what's running right now — the Service Startup RAM Limit above answers that question instead, and deliberately excludes children for the reason already stated.
+
 Runtime settings are written to:
 
 ```text
@@ -486,7 +488,7 @@ The supplied views are direct dashboard plugins under `dashboard/plugins/<plugin
 
 Plugins may contribute widgets to a discovered view through JSON-compatible `viewWidgets` metadata, or to the normal workspace right pane through `workspaceWidgets`. Player Stats uses both contracts to add itself to System Overview and beside the service status panel in non-global system groups. Its dashboard option is also plugin-contributed, so removing Player Stats removes the widgets and option without leaving an empty surface or inactive control.
 
-HUD groups and telemetry fields may declare `visibleOptionKey` to let a plugin-owned boolean option show or hide them without dashboard-specific rendering code. The option definition supplies the default; an optional `visibleOptionValue` supports non-boolean choices.
+HUD groups, telemetry fields, and configuration inputs may declare `visibleOptionKey` to let a plugin-owned option show or hide them without dashboard-specific rendering code. The option definition supplies the default; an optional `visibleOptionValue` supports non-boolean choices such as presenting one input for each selected limit mode.
 
 ## Beta notes
 

@@ -10,6 +10,36 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-16
+
+### Added
+
+- **Start Order now shows a capacity-planning ceiling, not just each service's own RAM.** Each row
+  keeps its own RAM figure exactly as before, with a `(Children - X GB)` suffix once any of its
+  declared `managedScripts` are found on `home` (hover for a note on what's included). The card
+  title gained a right-aligned **Combined total**, in the same style as the title itself, summing
+  every listed service plus its children — regardless of whether the service or one of its internal
+  sub-toggles is currently switched on. Answers "how much Home RAM would let everything run at
+  once," which the existing Service Startup RAM Limit safeguard deliberately doesn't (it counts only
+  running service entry scripts, excludes children by design, and reflects live state rather than
+  the maximum). Reuses `homeScripts`' already-computed live `ramPerThread` for every `.js`/`.jsx`
+  file on home (including children, which have no `DASHBOARD_SCRIPT_METADATA` of their own by
+  convention and so never appear elsewhere), so this needed no new `ns.*` calls: 8.30 GB, unchanged.
+
+### Removed
+
+- **`Card`'s accent dot** (`dashboard/renderers/dashboard-panels.jsx`), across every card in the
+  dashboard. It read as too easy to confuse with the service-status dots now used elsewhere, and its
+  removal also cleared the way for a title node to occupy the full header row and reach the card's
+  right edge (e.g. Start Order's title + right-aligned **Combined total** figure, added above) — a
+  title-row dot would otherwise have competed for that space. `accent` is still accepted by every
+  call site (~12 of them) but no longer rendered; left in place rather than stripped from each
+  caller for a purely cosmetic change. The now-fully-unused `cardAccent` style entry was removed.
+- **contract** — Plugin configuration inputs can now use the same `visibleOptionKey` and optional
+  `visibleOptionValue` metadata already supported by HUD groups and telemetry fields. This allows
+  an enum or toggle to present only the configuration field relevant to its current mode without
+  integration-specific dashboard rendering code.
+
 ## 2026-08-15
 
 ### Added

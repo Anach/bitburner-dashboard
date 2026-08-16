@@ -561,12 +561,6 @@ const WIDGET_STYLES = {
         letterSpacing: "0.08em",
         textTransform: "uppercase"
     },
-    cardAccent: {
-        width: "8px",
-        height: "8px",
-        borderRadius: "999px",
-        flex: "0 0 auto"
-    },
     list: {
         listStyle: "none",
         margin: 0,
@@ -1417,6 +1411,8 @@ function getDashboardStartOrderRenderSignature(homeScripts, themeSignature = "",
             serviceId: row.serviceId,
             label: row.label,
             ramPerThread: row.ramPerThread,
+            childrenRamGb: row.childrenRamGb,
+            totalRamGb: row.totalRamGb,
             description: row.description,
         }))
         .sort((left, right) => left.serviceId.localeCompare(right.serviceId));
@@ -1684,16 +1680,36 @@ function isDashboardCoreScript(filename) {
 }
 
 function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceRegistry()) {
-    return (Array.isArray(homeScripts) ? homeScripts : [])
+    const scripts = Array.isArray(homeScripts) ? homeScripts : [];
+    // Children (managedScripts) are deliberately looked up against the *unfiltered* catalogue, not
+    // the daemon-only rows below: most children (faction-manager-core.js, faction-manager-gangs.js,
+    // etc.) have no DASHBOARD_SCRIPT_METADATA of their own by design, so they'd never survive the
+    // daemon===true filter themselves even though buildHomeScriptCatalog() already computed a live
+    // ramPerThread for every .js/.jsx file on home regardless of metadata.
+    const ramByFilename = new Map(scripts.map((script) => [script?.filename, script?.ramPerThread ?? 0]));
+
+    return scripts
         .filter((script) => script?.daemon === true
             && !isDashboardCoreScript(script?.filename)
             && !String(script?.filename ?? "").startsWith("trashbin/"))
         .map((script) => {
             const matchedService = registry.services.find((service) => service.pluginFile === script.filename);
+            const managedScripts = Array.isArray(matchedService?.pluginMetadata?.managedScripts)
+                ? matchedService.pluginMetadata.managedScripts
+                : [];
+            const ownRamGb = script.ramPerThread ?? 0;
+            // Summed regardless of whether each child's own internal option/toggle currently has it
+            // running - this is the capacity-planning ceiling (every optional sub-feature enabled at
+            // once), not today's live total. A child missing from home entirely (not yet synced)
+            // silently contributes 0 rather than warning, matching this page's existing best-effort
+            // reporting.
+            const childrenRamGb = managedScripts.reduce((sum, childFile) => sum + (ramByFilename.get(childFile) ?? 0), 0);
             return {
                 serviceId: matchedService?.id || script.filename,
                 label: matchedService?.menuLabel || script.label || script.filename,
-                ramPerThread: script.ramPerThread ?? 0,
+                ramPerThread: ownRamGb,
+                childrenRamGb,
+                totalRamGb: ownRamGb + childrenRamGb,
                 // Bare daemon scripts (no -integration.js descriptor) have no description field
                 // to fall back to - leave it blank rather than showing something misleading.
                 description: matchedService?.description || "",
@@ -5204,8 +5220,20 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         // first placed) because the list itself is too wide for that column - the center column
         // only gets a menu entry (the "Order" subview button) for it.
         if (selectedItem === "global.startOrder" && panelId === "order") {
+            // Every declared service (regardless of whether it's currently toggled on) plus every
+            // declared child, summed - the capacity-planning ceiling for "buy enough Home RAM to run
+            // literally everything at once", not a live snapshot of what's running right now.
+            const maxCombinedRamGb = orderedServiceStartOrderRows.reduce((sum, row) => sum + (row.totalRamGb ?? row.ramPerThread ?? 0), 0);
+            const startOrderTitle = (
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "12px" }}>
+                    <span>Service Start Order</span>
+                    {orderedServiceStartOrderRows.length > 0
+                        ? <span title="Every listed service plus its children, regardless of whether each is currently switched on">Combined total: {formatRam(maxCombinedRamGb)}</span>
+                        : null}
+                </div>
+            );
             return (
-                <Card title="Service Start Order" accent="#6cb4ff" subtitle="Order the Integration Service Supervisor uses when RAM is scarce" widgetStyles={WIDGET_STYLES}>
+                <Card title={startOrderTitle} accent="#6cb4ff" subtitle="Order the Integration Service Supervisor uses when RAM is scarce" widgetStyles={WIDGET_STYLES}>
                     {getServiceStartOrder(options).length === 0 ? (
                         <div style={WIDGET_STYLES.smallMuted}>Not customized yet — using default (alphabetical) start order.</div>
                     ) : null}
@@ -5232,7 +5260,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             >
                                 <div style={{ ...WIDGET_STYLES.itemTitle, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
                                     <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.label}</span>
-                                    <span style={{ ...WIDGET_STYLES.itemDetail, fontWeight: 400, whiteSpace: "nowrap", flex: "0 0 auto" }}>{formatRam(row.ramPerThread)}</span>
+                                    <span
+                                        style={{ ...WIDGET_STYLES.itemDetail, fontWeight: 400, whiteSpace: "nowrap", flex: "0 0 auto" }}
+                                        title={row.childrenRamGb > 0
+                                            ? "Every declared child, whether or not its own toggle is currently on"
+                                            : undefined}
+                                    >
+                                        {formatRam(row.ramPerThread)}{row.childrenRamGb > 0 ? ` (Children - ${formatRam(row.childrenRamGb)})` : ""}
+                                    </span>
                                 </div>
                                 <div style={{ ...WIDGET_STYLES.itemDetail, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", minWidth: 0 }}>
                                     <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8e8e8e" }} title={row.description}>{row.description}</span>

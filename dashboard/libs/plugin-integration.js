@@ -15,6 +15,17 @@ function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
 }
 
+function isOptionControlledEntryVisible(entry, integration, configuredOptions) {
+    const visibleOptionKey = typeof entry?.visibleOptionKey === "string" ? entry.visibleOptionKey : "";
+    if (!visibleOptionKey) return true;
+    const optionDefinition = getObject(getObject(integration?.options)[visibleOptionKey]);
+    const currentValue = configuredOptions[visibleOptionKey] ?? optionDefinition.default ?? true;
+    if (Object.prototype.hasOwnProperty.call(entry, "visibleOptionValue")) {
+        return String(currentValue) === String(entry.visibleOptionValue);
+    }
+    return Boolean(currentValue);
+}
+
 // A merged integration's option-carrying siblings (faction-manager-gangs.js, faction-manager-boost.js,
 // server-manager-cloud.js, hacking-ops-beginner.js, etc.) can be autostarted and running entirely on
 // their own, independent of whether the integration's own paired script (scriptPath) is running -
@@ -340,7 +351,9 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
     const locked = isLocked(integration, safeStats);
     const idPrefix = context.idPrefix ?? integration?.id ?? "plugin";
 
-    return (integration?.inputs ?? []).map((rawInput) => {
+    return (integration?.inputs ?? []).filter(
+        (rawInput) => isOptionControlledEntryVisible(rawInput, integration, safeOptions),
+    ).map((rawInput) => {
         const input = getObject(rawInput);
         const optionKey = input.optionKey;
         const optionDefinition = getObject(getObject(integration?.options)[optionKey]);
@@ -516,7 +529,7 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
             label: field.label,
             value: formatTelemetryFieldValue(configuredOptions[field.key], field.format),
             tone: field.tone ?? "neutral",
-        });
+    });
     }
 
     if (!stats || typeof stats !== "object") {
@@ -527,14 +540,7 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
     let hasKnownStats = false;
     const fields = (integration?.telemetry?.fields ?? []).filter((field) => {
         if (typeof field?.panelId === "string" && typeof panelId === "string" && field.panelId !== panelId) return false;
-        const visibleOptionKey = typeof field?.visibleOptionKey === "string" ? field.visibleOptionKey : "";
-        if (!visibleOptionKey) return true;
-        const optionDefinition = getObject(getObject(integration?.options)[visibleOptionKey]);
-        const currentValue = configuredOptions[visibleOptionKey] ?? optionDefinition.default ?? true;
-        if (Object.prototype.hasOwnProperty.call(field, "visibleOptionValue")) {
-            return String(currentValue) === String(field.visibleOptionValue);
-        }
-        return Boolean(currentValue);
+        return isOptionControlledEntryVisible(field, integration, configuredOptions);
     });
     for (const field of fields) {
         const line = buildPluginIntegrationTelemetryLine(stats, field);
