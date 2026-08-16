@@ -40,6 +40,22 @@ integration.
   an enum or toggle to present only the configuration field relevant to its current mode without
   integration-specific dashboard rendering code.
 
+### Changed
+
+- Player Status's **Singularity API** toggle relabeled **Current Work Tracking**
+  (`playerStatsCurrentWorkEnabled`, unchanged) - `player-stats-singularity.js` does exactly one
+  thing (polls `ns.singularity.getCurrentWork()` and formats it for display), so the new label
+  names that directly rather than the generic API it happens to use. Distinguishes it clearly from
+  the sibling **Current Work UI** toggle (`playerStatsCurrentWorkVisible`), which only shows/hides
+  the result without touching this RAM-costing background process - "Tracking" runs the daemon,
+  "UI" decides whether its output is displayed. Action id renamed `toggle-singularity-api` →
+  `toggle-current-work-tracking`; telemetry field `currentWorkEnabled` relabeled **Singularity API
+  Enabled** → **Current Work Tracking Enabled** to match. No behavior or RAM change - metadata only.
+- **[SF-4] Current Work Tracking** - label prefixed so the Source-File 4 requirement is visible at
+  a glance without opening the tooltip. The four equivalent toggles in the private
+  `bitburner-scripts` repo (Server Manager, Faction Manager, Hacking Engine, Progression Report)
+  got the same prefix.
+
 ## 2026-08-15
 
 ### Added
