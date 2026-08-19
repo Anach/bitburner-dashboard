@@ -1,6 +1,7 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "metadata",
     "serviceId": "system.playerStatus",
+    "manualFile": "player-stats",
     "menuGroup": "overview",
     "menuLabel": "Player Status",
     "menuVisible": true,

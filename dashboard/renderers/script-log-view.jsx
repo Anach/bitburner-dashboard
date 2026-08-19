@@ -11,6 +11,7 @@ import {
     runDashboardFrameControlClick,
     runDashboardFrameControlMouseDown,
 } from "dashboard/libs/frame-controls.js";
+import { normalizeManualSections } from "dashboard/libs/manual-strings.js";
 
 let React = null;
 let rawReact = null;
@@ -199,6 +200,29 @@ const STYLES = {
     },
 };
 
+// Small local render helper rather than a shared component - each full-window/workspace view wires
+// its own Manual button into its own existing chrome (confirmed placement varies per view), so only
+// the plain-data normalizer (normalizeManualSections) is shared; the actual JSX stays local to each
+// renderer's own visual style.
+function renderManualSections(manual, label) {
+    const sections = normalizeManualSections(manual);
+    if (sections.length === 0) {
+        return <div style={STYLES.empty}>A written manual for {label} hasn't been authored yet.</div>;
+    }
+    return (
+        <div style={{ padding: "12px" }}>
+            {sections.map((section, index) => (
+                <div key={index} style={{ marginBottom: "14px" }}>
+                    {section.title ? (
+                        <div style={{ color: COLORS.green, fontWeight: 800, marginBottom: "6px" }}>{section.title}</div>
+                    ) : null}
+                    <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{section.body}</div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function entryMatches(entry, query, filter) {
     if (filter !== "all" && entry.status !== filter) return false;
     const normalizedQuery = query.trim().toLowerCase();
@@ -215,6 +239,7 @@ export function ScriptLogView({
     onStateChange,
     onInputFocusChange,
     onExit,
+    manual,
 }) {
     const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
@@ -243,6 +268,11 @@ export function ScriptLogView({
     ));
     const [scrollTop, setScrollTop] = React.useState(() => Math.max(0, Number(savedState.scrollTop) || 0));
     const [listScrollTop, setListScrollTop] = React.useState(() => Math.max(0, Number(savedState.listScrollTop) || 0));
+    // Persisted the same way as query/filter/autoFollow/etc. below, not a bare useState: this
+    // view's whole React tree remounts on every dashboard refresh tick, so a bare useState here
+    // reset to false almost immediately after being toggled on.
+    const hasManual = normalizeManualSections(manual).length > 0;
+    const [showManual, setShowManual] = React.useState(() => hasManual && Boolean(savedState.showManual));
     const logRef = React.useRef(null);
     const listRef = React.useRef(null);
     const visibleEntries = entries.filter((entry) => entryMatches(entry, query, filter));
@@ -253,8 +283,8 @@ export function ScriptLogView({
     }, [selectedEntry?.id, selectedId]);
 
     React.useEffect(() => {
-        onStateChange?.({ selectedId: selectedEntry?.id ?? "", selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop });
-    }, [selectedEntry?.id, selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop]);
+        onStateChange?.({ selectedId: selectedEntry?.id ?? "", selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop, showManual });
+    }, [selectedEntry?.id, selectionDefaultVersion, query, filter, autoFollow, autoFollowDefaultVersion, scrollTop, listScrollTop, showManual]);
 
     React.useLayoutEffect(() => {
         const element = logRef.current;
@@ -383,10 +413,21 @@ export function ScriptLogView({
                                 Auto-scroll {autoFollow ? "On" : "Off"}
                             </button>
                             <button type="button" style={{ ...STYLES.filterButton, flex: "0 0 auto" }} onClick={copyLogs}>Copy</button>
+                            {hasManual ? (
+                                <button
+                                    type="button"
+                                    style={{ ...STYLES.filterButton, ...(showManual ? STYLES.filterActive : {}), flex: "0 0 auto" }}
+                                    onClick={() => setShowManual((current) => !current)}
+                                >
+                                    {showManual ? "Back" : "Manual"}
+                                </button>
+                            ) : null}
                         </div>
                     </div>
                     <div ref={logRef} style={STYLES.logViewport} onScroll={handleLogScroll}>
-                        {!selectedEntry ? (
+                        {showManual ? (
+                            renderManualSections(manual, "Script Log")
+                        ) : !selectedEntry ? (
                             <div style={STYLES.empty}>Select one script to load its retained output.</div>
                         ) : selectedEntry.logs.length ? selectedEntry.logs.map((line, index) => (
                             <div key={`${index}:${line}`} style={STYLES.logLine}>{line || " "}</div>

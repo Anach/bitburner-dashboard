@@ -1,0 +1,3 @@
+{
+    "manual": "Dashboard-wide presentation and behavior settings - text size, window startup mode, unlock glyphs, and which scripts/folders stay hidden from the Script List. These are separate from any individual service's own Options tab; changes here affect the dashboard shell itself, not what any particular automation does.\n\nPlugin discovery and service behavior are unaffected by anything on this page - hiding a script from the Script List only changes what's visible here, it doesn't stop or disable it."
+}

@@ -1,0 +1,12 @@
+{
+    "manual": [
+        {
+            "title": "Status",
+            "body": "Aggregates every installed integration's own declared port assignments - Port Registry itself never imports or names any of them; each integration just adds a serviceTables entry in its own metadata targeting global.portRegistry's 'ports' table, and this page discovers those contributions automatically at merge time, preserving the plugin boundary between services. Assigned Ports and Contributors summarize the merged table; Next Free Port is the highest assigned port plus one, handy when wiring up a new integration's own command port; Conflicts counts how many distinct port numbers have more than one contributor - a real collision, not just a coincidence, since two integrations both listening on the same Netscript port will corrupt each other's messages."
+        },
+        {
+            "title": "Registry",
+            "body": "The full merged table, sorted by port number ascending. Any row sharing its port number with another row is flagged as a conflict directly in that row, not just counted in the Status aggregate above - if you ever add a new integration's own port assignment by hand, check here for a highlighted collision before assuming the number you picked is actually free."
+        }
+    ]
+}

@@ -30,6 +30,7 @@ import {
     normalizeFileManifest,
     normalizeFilePath,
 } from "dashboard/libs/file-utils.js";
+import { normalizeManualSections } from "dashboard/libs/manual-strings.js";
 
 let React = null;
 let rawReact = null;
@@ -729,6 +730,28 @@ function FileDialog({ dialog, onChangeTarget, onConfirm, onClose, onInputFocusCh
     );
 }
 
+// Small local render helper, not a shared component - each full-window/workspace view wires its own
+// Manual button into its own existing chrome (placement varies per view); only the plain-data
+// normalizer (normalizeManualSections) is shared.
+function renderManualSections(manual, label) {
+    const sections = normalizeManualSections(manual);
+    if (sections.length === 0) {
+        return <div style={{ color: COLORS.muted, padding: "12px" }}>A written manual for {label} hasn't been authored yet.</div>;
+    }
+    return (
+        <div style={{ padding: "12px", overflowY: "auto" }}>
+            {sections.map((section, index) => (
+                <div key={index} style={{ marginBottom: "14px" }}>
+                    {section.title ? (
+                        <div style={{ color: COLORS.green, fontWeight: 800, marginBottom: "6px" }}>{section.title}</div>
+                    ) : null}
+                    <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{section.body}</div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 export function FileManagerView({
     view,
     snapshot,
@@ -743,6 +766,7 @@ export function FileManagerView({
     onInputFocusChange,
     onExit,
     headerActions,
+    manual,
 }) {
     const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
@@ -784,6 +808,8 @@ export function FileManagerView({
         ? savedState.showHidden
         : layout.showHiddenDefault !== false);
     const [dialog, setDialog] = React.useState(null);
+    const hasManual = normalizeManualSections(manual).length > 0;
+    const [showManual, setShowManual] = React.useState(() => hasManual && Boolean(savedState.showManual));
     const [notice, setNotice] = React.useState("");
     const [noticeTone, setNoticeTone] = React.useState("success");
     const shellRef = React.useRef(null);
@@ -854,8 +880,9 @@ export function FileManagerView({
             statusFilter,
             leftScrollTop: paneScrollTops.left,
             rightScrollTop: paneScrollTops.right,
+            showManual,
         });
-    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showHidden, query, statusFilter, paneScrollTops.left, paneScrollTops.right]);
+    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showHidden, query, statusFilter, paneScrollTops.left, paneScrollTops.right, showManual]);
 
     React.useEffect(() => {
         shellRef.current?.focus?.();
@@ -1312,9 +1339,23 @@ export function FileManagerView({
                 >
                     Show Hidden
                 </button>
+                {hasManual ? (
+                    <button
+                        type="button"
+                        style={{ ...STYLES.filterButton, ...(showManual ? STYLES.filterButtonActive : {}) }}
+                        onClick={() => setShowManual((current) => !current)}
+                    >
+                        {showManual ? "Back" : "Manual"}
+                    </button>
+                ) : null}
                 <span style={{ ...STYLES.manifestState, color: normalizedManifest.available ? COLORS.green : COLORS.amber }}>{manifestLabel}</span>
             </div>
 
+            {showManual ? (
+                <div style={{ ...STYLES.panes, gridTemplateColumns: "1fr" }}>
+                    {renderManualSections(manual, "File Manager")}
+                </div>
+            ) : (
             <div style={STYLES.panes}>
                 <FilePane
                     id="left"
@@ -1353,6 +1394,7 @@ export function FileManagerView({
                     getSelectionModifiers={getSelectionModifiers}
                 />
             </div>
+            )}
 
             <footer style={STYLES.footer}>
                 <div style={{ minWidth: 0 }}>

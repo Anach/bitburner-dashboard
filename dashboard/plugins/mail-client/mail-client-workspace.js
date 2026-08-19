@@ -47,7 +47,7 @@ export function createMailClientWorkspaceController(initialSnapshot = null) {
     };
 }
 
-export function MailClientWorkspace({ controller, dashboardTheme, onInputFocusChange }) {
+export function MailClientWorkspace({ controller, dashboardTheme, onInputFocusChange, manual }) {
     const React = globalThis.React;
     const [telemetry, setTelemetry] = React.useState(controller.getSnapshot);
     React.useEffect(() => controller.subscribe(setTelemetry), [controller]);
@@ -59,5 +59,6 @@ export function MailClientWorkspace({ controller, dashboardTheme, onInputFocusCh
         embedded: true,
         onCommand: (_serviceId, command) => controller.enqueueCommand(command),
         onInputFocusChange,
+        manual,
     });
 }

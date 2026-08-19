@@ -1,6 +1,7 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "static",
     "serviceId": "global.portRegistry",
+    "manualFile": "port-registry",
     "menuGroup": "configuration",
     "menuLabel": "Port Registry",
     "description": "Lists the Netscript ports declared by installed dashboard and script integrations.",

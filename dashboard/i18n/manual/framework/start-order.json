@@ -1,0 +1,3 @@
+{
+    "manual": "Controls the priority order the Integration Service Supervisor uses when available Home RAM can't start every eligible service at once - move services up or down to decide which ones win limited capacity first.\n\nThe Combined total figure above the list is a capacity-planning ceiling, not a live snapshot: every listed service plus its children, summed, regardless of whether each one (or an optional sub-toggle inside it) is currently switched on. It answers \"how much Home RAM would let everything run at once,\" which is a different question from what's actually running right now - see Home Server's own Service Startup RAM Limit for that."
+}

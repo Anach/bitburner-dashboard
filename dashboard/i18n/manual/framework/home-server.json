@@ -1,0 +1,3 @@
+{
+    "manual": "Home RAM capacity and the two safeguards that protect it. Transient RAM Reserve keeps a minimum amount of Home RAM free for on-demand actions and payload processes, so a dashboard control or a manually started script always has somewhere to run. Service Startup RAM Limit separately caps the combined RAM of running service entry scripts represented in the Start Order list - already-running listed services count toward the cap, and lowering it does not stop them.\n\nBoth apply independently of each other and of any individual service's own RAM usage; set either to 0 to disable it."
+}

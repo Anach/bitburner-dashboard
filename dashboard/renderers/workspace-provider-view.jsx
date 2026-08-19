@@ -62,7 +62,7 @@ function WorkspaceStatus({ title, message, tone = "neutral" }) {
     </div>;
 }
 
-function PersistentWorkspaceProvider({ provider, dashboardTheme, onInputFocusChange }) {
+function PersistentWorkspaceProvider({ provider, dashboardTheme, onInputFocusChange, manual }) {
     const mountRef = React.useRef(null);
     const host = getDashboardPersistentWorkspaceHost(provider);
     const ProviderComponent = provider.component;
@@ -76,13 +76,14 @@ function PersistentWorkspaceProvider({ provider, dashboardTheme, onInputFocusCha
                 dashboardTheme={dashboardTheme}
                 host="dashboard"
                 onInputFocusChange={onInputFocusChange}
+                manual={manual}
             />
         </WorkspaceProviderErrorBoundary>);
         host.restoreFocus();
         // Detach, but deliberately do not unmount, on dashboard refresh or navigation. Provider
         // unregister owns final disposal; the next dashboard tree reattaches this same live root.
         return () => host.prepareDetach();
-    }, [host, provider, dashboardTheme, onInputFocusChange, resetKey]);
+    }, [host, provider, dashboardTheme, onInputFocusChange, manual, resetKey]);
 
     if (!host) return <WorkspaceStatus
         tone="danger"
@@ -102,7 +103,7 @@ function PersistentWorkspaceProvider({ provider, dashboardTheme, onInputFocusCha
     }} />;
 }
 
-export function WorkspaceProviderView({ providerId, dashboardTheme, onInputFocusChange }) {
+export function WorkspaceProviderView({ providerId, dashboardTheme, onInputFocusChange, manual }) {
     if (!React || !WorkspaceProviderErrorBoundary) return null;
     const [, setRegistryRevision] = React.useState(getDashboardWorkspaceProviderRegistryRevision);
     React.useEffect(() => subscribeDashboardWorkspaceProviders(setRegistryRevision), []);
@@ -141,6 +142,7 @@ export function WorkspaceProviderView({ providerId, dashboardTheme, onInputFocus
             provider={provider}
             dashboardTheme={dashboardTheme}
             onInputFocusChange={onInputFocusChange}
+            manual={manual}
         />;
     }
     return <WorkspaceProviderErrorBoundary resetKey={resetKey}>
@@ -149,6 +151,7 @@ export function WorkspaceProviderView({ providerId, dashboardTheme, onInputFocus
             dashboardTheme={dashboardTheme}
             host="dashboard"
             onInputFocusChange={onInputFocusChange}
+            manual={manual}
         />
     </WorkspaceProviderErrorBoundary>;
 }

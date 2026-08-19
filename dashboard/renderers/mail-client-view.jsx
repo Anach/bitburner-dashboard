@@ -16,6 +16,7 @@ import {
     getDashboardViewValue,
     saveDashboardViewInteractionState,
 } from "dashboard/libs/dashboard-view-state.js";
+import { normalizeManualSections } from "dashboard/libs/manual-strings.js";
 
 let React = null;
 let rawReact = null;
@@ -438,7 +439,29 @@ function capitalize(value) {
     return text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
-export function MailClientView({ view, telemetry, dashboardTheme, embedded = false, onCommand, onInputFocusChange, onExit, headerActions }) {
+// Small local render helper, not a shared component - each full-window/workspace view wires its own
+// Manual button into its own existing chrome (placement varies per view); only the plain-data
+// normalizer (normalizeManualSections) is shared.
+function renderManualSections(manual, label) {
+    const sections = normalizeManualSections(manual);
+    if (sections.length === 0) {
+        return <div style={{ color: COLORS.muted, padding: "12px" }}>A written manual for {label} hasn't been authored yet.</div>;
+    }
+    return (
+        <div style={{ padding: "12px", overflowY: "auto" }}>
+            {sections.map((section, index) => (
+                <div key={index} style={{ marginBottom: "14px" }}>
+                    {section.title ? (
+                        <div style={{ color: COLORS.green, fontWeight: 800, marginBottom: "6px" }}>{section.title}</div>
+                    ) : null}
+                    <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{section.body}</div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+export function MailClientView({ view, telemetry, dashboardTheme, embedded = false, onCommand, onInputFocusChange, onExit, headerActions, manual }) {
     const nextRawReact = globalThis.React ?? rawReact;
     if (nextRawReact && nextRawReact !== rawReact) {
         rawReact = nextRawReact;
@@ -482,6 +505,8 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
     const [searchQuery, setSearchQuery] = React.useState("");
     const [isSearchFocused, setIsSearchFocused] = React.useState(false);
     const [hoveredShortcut, setHoveredShortcut] = React.useState("");
+    const hasManual = normalizeManualSections(manual).length > 0;
+    const [showManual, setShowManual] = React.useState(false);
 
     const shellRef = React.useRef(null);
     const detailBodyElRef = React.useRef(null);
@@ -727,6 +752,7 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
         { id: "delete", key: "d", label: "Delete", onClick: () => deleteMessage(activeTargetId()) },
         { id: "read-toggle", key: "m", label: readToggleLabel, onClick: () => toggleReadMessage(activeTargetId()) },
         { id: "mark-all", key: "a", label: "Mark all", onClick: markAllRead },
+        ...(hasManual ? [{ id: "manual", key: "?", label: showManual ? "Back" : "Manual", onClick: () => setShowManual((current) => !current) }] : []),
         ...(!embedded && onExit ? [{ id: "close", key: "q", label: "Close", onClick: onExit }] : []),
     ];
 
@@ -826,6 +852,8 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                 </aside>
 
                 <section data-dashboard-theme-role="control-frame" style={STYLES.mainPane}>
+                    {showManual ? renderManualSections(manual, "Mail Client") : (
+                    <>
                     {selectedMessage ? <div style={STYLES.indexToolbar} title={paneStatus}>{paneStatus}</div> : null}
                     {!selectedMessage ? (
                         <div style={STYLES.indexColumnHeader}>
@@ -901,6 +929,8 @@ export function MailClientView({ view, telemetry, dashboardTheme, embedded = fal
                                 {visibleMessages.length === 0 ? <div style={STYLES.empty}>No messages in this folder.</div> : null}
                             </div>
                         </>
+                    )}
+                    </>
                     )}
                 </section>
             </div>

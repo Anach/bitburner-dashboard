@@ -9,6 +9,7 @@
 // comments, no trailing commas, string keys only.
 export const DASHBOARD_VIEW_METADATA = {
     "id": "network",
+    "manualFile": "network-map",
     "renderer": "network-map",
     "menuGroup": "software",
     "menuLabel": "Network Map",

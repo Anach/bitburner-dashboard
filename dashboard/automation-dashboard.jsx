@@ -142,6 +142,7 @@ import {
     getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
+import { loadManualStrings, normalizeManualSections } from "dashboard/libs/manual-strings.js";
 import {
     getScriptListDetailEmptyMessage,
     getScriptLifecycleLabel,
@@ -490,6 +491,15 @@ const WIDGET_STYLES = {
     smallMuted: {
         color: "#8db08d",
         fontSize: "11px"
+    },
+    // Only style in the dashboard built for readable, paragraph-preserving prose rather than
+    // compact single-line data rows - used by the Manual tab. Mirrors mail-client-view.jsx's local
+    // readerBody style (the only other place in the codebase that preserves line breaks).
+    manualProse: {
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        lineHeight: 1.5,
+        maxWidth: "760px"
     },
     hero: {
         ...getDashboardFrameHeaderStyle(),
@@ -2044,6 +2054,7 @@ const DASHBOARD_PINNED_MENU_GROUPS = [
 const DASHBOARD_SERVICES = [
     {
         id: "hardware.home",
+        manualFile: "home-server",
         menuGroup: "hardware",
         menuGroupLabel: "Hardware",
         menuLabel: "Home Server",
@@ -2126,6 +2137,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.dashboardOptions",
+        manualFile: "dashboard-options",
         menuGroup: "configuration",
         menuOrder: -100,
         menuLabel: "Dashboard Options",
@@ -2254,6 +2266,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.startOrder",
+        manualFile: "start-order",
         menuGroup: "services",
         menuLabel: "Start Order",
         description: "Controls the order the Integration Service Supervisor uses when available RAM cannot start every eligible service.",
@@ -2268,6 +2281,7 @@ const DASHBOARD_SERVICES = [
     },
     {
         id: "global.coreModules",
+        manualFile: "core-modules",
         menuGroup: "services",
         menuLabel: "Core Modules",
         alwaysVisible: true,
@@ -2745,6 +2759,25 @@ function getCenterPanelsForItem(selectedItem, homeScripts = []) {
     }
 
     return [{ id: "core-stats", label: "Core stats" }];
+}
+
+// Standing tab-order convention: whichever panel a service declares first (its primary/status view -
+// already load-bearing elsewhere as the defaultCenterPanel fallback, so "first declared" already
+// means "primary" in this codebase) stays pinned at the top; Options stays pinned at the very
+// bottom; Manual is pinned directly above Options (not left to fall wherever it lands
+// alphabetically - on a long panel list like Progression Report's 14, that could bury it far from
+// Options); everything else sorts alphabetically by label in between. A single-panel list is
+// returned unchanged - nothing to sort.
+function sortServiceCenterPanels(panels) {
+    if (!Array.isArray(panels) || panels.length <= 1) return panels;
+    const [first, ...rest] = panels;
+    const optionsPanel = rest.find((panel) => panel.id === "options") ?? null;
+    const manualPanel = rest.find((panel) => panel.id === "manual") ?? null;
+    const middle = rest
+        .filter((panel) => panel.id !== "options" && panel.id !== "manual")
+        .sort((a, b) => String(a.label ?? a.id).trim().localeCompare(String(b.label ?? b.id).trim()));
+    const tail = [...(manualPanel ? [manualPanel] : []), ...(optionsPanel ? [optionsPanel] : [])];
+    return [first, ...middle, ...tail];
 }
 
 function getServicePanelMeta(service, panelId, fallbackMeta) {
@@ -3324,7 +3357,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     };
 }
 
-function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused }) {
+function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused }) {
     const [uiState, setUiState] = React.useState(loadUiState);
     const [options, setOptions] = React.useState(() => persistedOptions ?? getDefaultOptions());
     const gameThemeSignature = getGameThemeSignature(gameTheme);
@@ -3673,9 +3706,35 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     const serviceCenterPanels = getCenterPanelsForItem(selectedItem, centerPanelSource);
     const isPluginService = Boolean(selectedService?.pluginFile);
-    const centerPanels = isPluginService && !serviceCenterPanels.some((panel) => panel.id === "options")
-        ? [...serviceCenterPanels, { id: "options", label: "Options" }]
-        : serviceCenterPanels;
+    // Manual is strictly opt-in: a service only gets the tab if its own descriptor (or, for the
+    // four framework-owned global entries, its DASHBOARD_SERVICES literal) declares a non-empty
+    // manualFile name AND that named file actually resolved to real content via loadManualStrings -
+    // no more "every plugin gets an empty placeholder tab" fallback. The four isGlobalListMenuItem
+    // entries (Core Modules included) are excluded here even when they do declare a manual: their
+    // centerPanels is a dynamic list of scripts, not a small fixed tab set, so injecting a "manual"
+    // entry into it would show up as a confusing extra list item rather than a tab - Core Modules
+    // gets its own bespoke Manual button instead, next to its "Start Integrations" action, in the
+    // selectedItem === "global.coreModules" render branch below.
+    const isManualEligible = !isGlobalListMenuItem(selectedItem)
+        && Boolean(selectedService?.pluginMetadata?.manualFile || selectedService?.manualFile)
+        && Boolean(manualStrings?.[selectedService?.id]?.manual);
+    // Both injected behind their own gate, then the whole list is sorted (first panel pinned top,
+    // Options pinned bottom, alphabetical between - see sortServiceCenterPanels). Safe for
+    // "workspace"-adapter services too (Mail Client, Network Map): they also satisfy isPluginService,
+    // but selectedWorkspaceService routes rendering entirely into <WorkspaceProviderView> before
+    // centerPanels ever reaches renderSubWidgets(), so the injected entries here are computed but
+    // never rendered for them - exactly how the existing Options entry already behaved for them
+    // before this change.
+    const centerPanelsWithExtras = [
+        ...serviceCenterPanels,
+        ...(isPluginService && !serviceCenterPanels.some((panel) => panel.id === "options")
+            ? [{ id: "options", label: "Options" }]
+            : []),
+        ...(isManualEligible && !serviceCenterPanels.some((panel) => panel.id === "manual")
+            ? [{ id: "manual", label: "Manual" }]
+            : []),
+    ];
+    const centerPanels = sortServiceCenterPanels(centerPanelsWithExtras);
     const savedCenterPanel = uiState.centerPanels?.[selectedItem];
     const defaultCenterPanel = centerPanels.some((panel) => panel.id === selectedService?.defaultPanelId)
         ? selectedService.defaultPanelId
@@ -4052,9 +4111,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 // Same rationale as the save-options branch above: persist the toggle's new value
                 // to the options store (not just the live port command) so a full relaunch
                 // re-primes the freshly (re)started script with this choice instead of the
-                // options file's stale default.
+                // options file's stale default. clearedOptionOverrides (mutual-exclusion pairs -
+                // see plugin-integration.js's buildPluginIntegrationActions) merges in the same way.
                 optionsDirtyRef.current = true;
-                setOptions((current) => ({ ...current, [action.optionKey]: action.optionValue }));
+                setOptions((current) => ({
+                    ...current,
+                    [action.optionKey]: action.optionValue,
+                    ...action.clearedOptionOverrides,
+                }));
             }
             enqueueDashboardAction({
                 kind: "plugin-command",
@@ -4087,6 +4151,16 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 actionId: action.actionId,
                 filename: action.filename,
             });
+        }
+        if (action.kind === "select-panel") {
+            // Purely local UI state, same as clicking a tab button - no enqueueDashboardAction,
+            // since nothing here touches ns.*. Used by Core Modules' Manual button: its own
+            // centerPanels is a dynamic script list rather than a small fixed tab set, so Manual
+            // can't be one of the normal injected tabs there (see isManualEligible's
+            // isGlobalListMenuItem exclusion) and needs a plain action button instead.
+            if (typeof action.panelId === "string" && action.panelId.length > 0) {
+                selectCenterPanel(action.panelId);
+            }
         }
     };
 
@@ -4723,9 +4797,20 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // other half just duplicated each other's semantics. Replaced with one global Kill Local/
     // Kill Remote pair under Dashboard Options (see that service's getActions above). Core
     // Modules keeps only its "Start integrations" action here.
-    const coreModulesTopActions = buildDashboardActions([DASHBOARD_ACTION_IDS.START_INTEGRATIONS], {
-        disabledActionIds: serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : [],
-    });
+    const coreModulesTopActions = [
+        ...buildDashboardActions([DASHBOARD_ACTION_IDS.START_INTEGRATIONS], {
+            disabledActionIds: serviceSupervisorRunning ? [DASHBOARD_ACTION_IDS.START_INTEGRATIONS] : [],
+        }),
+        // Plain local panel-switch, not a real dispatched command - see runServiceAction's
+        // "select-panel" branch. Routed through the same renderServiceActions() as Start
+        // Integrations above so it gets identical tone/padding/pressed-state styling instead of a
+        // hand-rolled button missing pieces of that recipe. Only added once Core Modules' own
+        // DASHBOARD_SERVICES entry declares a manualFile that actually resolved to content - opt-in,
+        // same as every other Manual surface.
+        ...(Boolean(manualStrings?.["global.coreModules"]?.manual)
+            ? [{ id: "manual", label: "Manual", kind: "select-panel", panelId: "manual", tone: "neutral" }]
+            : []),
+    ];
 
     const renderScriptButtons = (panels, renderOptions = {}) => {
         const selectable = renderOptions.selectable !== false;
@@ -5210,8 +5295,88 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         );
     };
 
+    // Bespoke, same reasoning as Start Order below: an extended-documentation view built from raw
+    // descriptor content (pluginMetadata.actions/.inputs directly, plus the separate manualStrings
+    // lookup) doesn't fit the generic getState/getInputs/getActions machinery, since getInputs()/
+    // getServiceActions() are themselves gated to only return content when selectedCenterPanel ===
+    // "options" (plugin-integration.js / script-plugin.js) and would return [] here.
+    const renderManualPanel = () => {
+        const manualEntry = manualStrings?.[selectedService?.id];
+        const sections = normalizeManualSections(manualEntry?.manual);
+        const actions = Array.isArray(selectedService?.pluginMetadata?.actions)
+            ? [...selectedService.pluginMetadata.actions].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
+            : [];
+        const inputs = Array.isArray(selectedService?.pluginMetadata?.inputs) ? selectedService.pluginMetadata.inputs : [];
+
+        return (
+            <Card
+                title={`${selectedService?.menuLabel ?? "Service"} Manual`}
+                accent="#6ee7a8"
+                subtitle="What this does and how to use it"
+                widgetStyles={WIDGET_STYLES}
+            >
+                {sections.length > 0 ? (
+                    sections.map((section, index) => (
+                        <div key={`manual-section-${index}`} style={{ marginBottom: "14px" }}>
+                            {section.title ? (
+                                <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.heading}>{section.title}</div>
+                            ) : null}
+                            <div data-dashboard-theme-role="data-value" style={WIDGET_STYLES.manualProse}>{section.body}</div>
+                        </div>
+                    ))
+                ) : (
+                    <div style={WIDGET_STYLES.smallMuted}>
+                        A written manual for {selectedService?.menuLabel ?? "this service"} hasn't been authored yet -
+                        the controls below are still fully documented from their own tooltips.
+                    </div>
+                )}
+
+                {actions.length > 0 ? (
+                    <div style={{ marginTop: "16px" }}>
+                        <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.heading}>Controls</div>
+                        <ul style={{ ...WIDGET_STYLES.list, minWidth: 0 }}>
+                            {actions.map((action, index) => (
+                                <li key={`manual-action-${action.id ?? index}`} style={WIDGET_STYLES.item}>
+                                    <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.itemTitle}>{action.label}</div>
+                                    <div data-dashboard-theme-role="data-value" style={{ ...WIDGET_STYLES.itemDetail, ...WIDGET_STYLES.manualProse }}>
+                                        {action.tooltip || "Not documented yet."}
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                ) : null}
+
+                {inputs.length > 0 ? (
+                    <div style={{ marginTop: "16px" }}>
+                        <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.heading}>Settings</div>
+                        <ul style={{ ...WIDGET_STYLES.list, minWidth: 0 }}>
+                            {inputs.map((input, index) => {
+                                const groupLabel = typeof input.group === "string" && input.group.length > 0 ? input.group : "";
+                                return (
+                                    <li key={`manual-input-${input.id ?? index}`} style={WIDGET_STYLES.item}>
+                                        <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.itemTitle}>
+                                            {groupLabel ? `${groupLabel} - ${input.label}` : input.label}
+                                        </div>
+                                        <div data-dashboard-theme-role="data-value" style={{ ...WIDGET_STYLES.itemDetail, ...WIDGET_STYLES.manualProse }}>
+                                            {input.tooltip || input.description || "Not documented yet."}
+                                        </div>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </div>
+                ) : null}
+            </Card>
+        );
+    };
+
     const renderStandardServicePanel = () => {
         const panelId = selectedCenterPanel ?? selectedService?.defaultPanelId ?? "core-stats";
+
+        if (panelId === "manual" && isManualEligible) {
+            return renderManualPanel();
+        }
 
         // Bespoke, same reasoning as Kill Controls in the center column: a reorderable list
         // doesn't fit the generic getState/getInputs/getActions machinery this function drives
@@ -5433,6 +5598,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const renderGlobalOptions = () => {
+        // Core Modules' own Manual button (next to Start Integrations, see renderSubWidgets) sets
+        // selectedCenterPanel to "manual" directly - resolveSelectedScriptPanel below would never
+        // match that against a real script id, so it's checked first rather than falling through to
+        // the empty-selection state.
+        if (selectedItem === "global.coreModules" && selectedCenterPanel === "manual") {
+            return renderManualPanel();
+        }
         const listMetaConfig = GLOBAL_LIST_META[selectedItem];
         const sourceScripts = listMetaConfig ? listMetaConfig.sourceScripts : nonPluginScripts;
         const selectedScript = resolveSelectedScriptPanel(selectedCenterPanel, sourceScripts);
@@ -5598,6 +5770,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     closeControl={networkMapCloseControl}
                     minimizeControl={networkMapMinimizeControl}
                     widgetStyles={WIDGET_STYLES}
+                    manual={manualStrings?.[activeView.id]?.manual}
                 />
             ) : activeView?.renderer === "file-manager" ? (
                 <FileManagerView
@@ -5622,6 +5795,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
                     headerActions={<>{minimizeControl}{windowControl}</>}
+                    manual={manualStrings?.[activeView.id]?.manual}
                 />
             ) : activeView?.renderer === "script-log" ? (
                 <ScriptLogView
@@ -5633,6 +5807,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     onInputFocusChange={setOptionsInputFocus}
                     onExit={() => setActiveView("")}
                     headerActions={<>{minimizeControl}{windowControl}</>}
+                    manual={manualStrings?.[activeView.id]?.manual}
                 />
             ) : (
             <>
@@ -5911,6 +6086,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 providerId={selectedWorkspaceProviderId}
                                 dashboardTheme={dashboardTheme}
                                 onInputFocusChange={setOptionsInputFocus}
+                                manual={manualStrings?.[selectedWorkspaceProviderId]?.manual}
                             />
                         </div>
                         {visibleWorkspaceWidgets.length > 0 ? (
@@ -6362,6 +6538,23 @@ export async function main(ns) {
             cycleSnapshot.fileSignature,
             () => buildCapabilitySnapshot(ns, cycleSnapshot.homeFiles)
         );
+        // Manual-tab narrative text - static content, re-read only on the same cadence/signature
+        // basis as capabilities above (fileSignature already changes if any manual file is re-synced
+        // with edited content). Declarations are collected fresh every time this factory runs (cheap
+        // - no ns.* calls, just walking already-loaded registries) so a newly-added manualFile field
+        // is picked up on the very next 30s refresh with no separate cache to invalidate.
+        const manualStrings = dashboardSnapshotCoordinator.getOrCreate(
+            "manual-strings",
+            cycleSnapshot.now,
+            30000,
+            cycleSnapshot.fileSignature,
+            () => loadManualStrings(ns, [
+                ...getDashboardServiceRegistry().services
+                    .map((service) => ({ id: service.id, manualFile: service.pluginMetadata?.manualFile || service.manualFile })),
+                ...getDashboardViewRegistry().views
+                    .map((view) => ({ id: view.id, manualFile: view.manualFile })),
+            ])
+        );
         const requirementsSignature = JSON.stringify(getDashboardServiceRegistry().services.map((service) => ({
             id: service.id,
             requirements: service.requirements,
@@ -6511,6 +6704,7 @@ export async function main(ns) {
                 layoutSnapshot,
                 activeDashboardTheme.signature,
                 autostartPaused,
+                manualStrings,
             ];
             const canSkipRender = Array.isArray(lastRenderedSignature)
                 && renderSignature.length === lastRenderedSignature.length
@@ -6529,6 +6723,7 @@ export async function main(ns) {
                         runningProcessSnapshot={runningProcessSnapshot}
                         telemetryByServiceId={telemetryByServiceId}
                         pluginRequirements={pluginRequirements}
+                        manualStrings={manualStrings}
                         fileManagerSnapshots={fileManagerSnapshots}
                         scriptLogSnapshots={scriptLogSnapshots}
                         layoutSnapshot={layoutSnapshot}

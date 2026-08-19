@@ -19,6 +19,7 @@ import {
     setDashboardViewDragActiveState,
 } from "dashboard/libs/dashboard-view-state.js";
 import { formatNetworkMapMetric } from "dashboard/libs/network-map-utils.js";
+import { normalizeManualSections } from "dashboard/libs/manual-strings.js";
 
 let React = null;
 let rawReact = null;
@@ -39,6 +40,28 @@ function getReact() {
     return React;
 }
 
+// Small local render helper, not a shared component - each full-window/workspace view wires its own
+// Manual button into its own existing chrome (placement varies per view); only the plain-data
+// normalizer (normalizeManualSections) is shared. Uses the same shared WIDGET_STYLES tokens
+// (manualProse, heading, muted) automation-dashboard.jsx's own renderManualPanel uses, since this
+// view already receives that same styles object via configureNetworkMapView's getStyles.
+function renderManualSections(manual, label, styles) {
+    const sections = normalizeManualSections(manual);
+    if (sections.length === 0) {
+        return <div style={styles.muted}>A written manual for {label} hasn't been authored yet.</div>;
+    }
+    return (
+        <div>
+            {sections.map((section, index) => (
+                <div key={index} style={{ marginBottom: "14px" }}>
+                    {section.title ? <div style={styles.heading}>{section.title}</div> : null}
+                    <div style={styles.manualProse}>{section.body}</div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function getHomeTonePalette(tone = "neutral") {
     const palettes = {
         neutral: { accent: "#9ab0cc", border: "rgba(125, 160, 212, 0.2)", glow: "rgba(125, 160, 212, 0.08)" },
@@ -49,7 +72,7 @@ function getHomeTonePalette(tone = "neutral") {
     };
     return palettes[tone] ?? palettes.neutral;
 }
-export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl, closeControl, minimizeControl, widgetStyles }) {
+export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onInputFocusChange, onExit, windowControl, closeControl, minimizeControl, widgetStyles, manual }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
@@ -141,6 +164,8 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         : []);
     const [searchText, setSearchText] = React.useState(() => String(savedInteraction?.searchText ?? ""));
     const [detailsScrollTop, setDetailsScrollTop] = React.useState(() => Math.max(0, Number(savedInteraction?.detailsScrollTop) || 0));
+    const hasManual = normalizeManualSections(manual).length > 0;
+    const [showManual, setShowManual] = React.useState(() => hasManual && Boolean(savedInteraction?.showManual));
     const [isPanning, setIsPanning] = React.useState(false);
     const [clipboardNotice, setClipboardNotice] = React.useState("");
     const nodes = showCloudControl
@@ -250,8 +275,9 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             searchText,
             detailsScrollTop,
             viewportBounds: lastViewportBoundsRef.current,
+            showManual,
         });
-    }, [view?.id, activeModeId, transform.x, transform.y, transform.scale, selectedId, stepTargetId, showCloud, modeMenuOpen, filtersOpen, selectedFilterIds.join("|"), searchText, detailsScrollTop]);
+    }, [view?.id, activeModeId, transform.x, transform.y, transform.scale, selectedId, stepTargetId, showCloud, modeMenuOpen, filtersOpen, selectedFilterIds.join("|"), searchText, detailsScrollTop, showManual]);
 
     React.useLayoutEffect(() => {
         const element = detailsRef.current;
@@ -812,6 +838,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                 <button type="button" title="Zoom out" style={styles.actionButton} onClick={() => zoomBy(0.82)}>−</button>
                 <button type="button" title="Fit current map" style={styles.actionButton} onClick={fitView}>Fit</button>
                 <button type="button" title="Zoom in" style={styles.actionButton} onClick={() => zoomBy(1.22)}>+</button>
+                <span style={{ ...styles.smallMuted, padding: "0 4px" }}>{Math.round(transform.scale * 100)}%</span>
                 {actionConfig.refreshCommand ? (
                     <button type="button" title="Refresh map telemetry" style={styles.actionButton} onClick={() => sendCommand(actionConfig.refreshCommand)}>Refresh</button>
                 ) : null}
@@ -832,17 +859,31 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                         {showCloud ? "Hide" : "Show"} {filterConfig.cloudLabel ?? "Filtered"} ({cloudCount})
                     </button>
                 ) : null}
-                <span style={{ ...styles.smallMuted, padding: "0 4px" }}>{Math.round(transform.scale * 100)}%</span>
+                {hasManual ? (
+                    <button
+                        type="button"
+                        title={showManual ? "Back to the Network Map" : "Show the Network Map manual"}
+                        style={{
+                            ...styles.actionButton,
+                            ...(showManual ? { color: "#8fc5ff", borderColor: "rgba(108, 180, 255, 0.55)", background: "rgba(10, 24, 38, 0.95)" } : {}),
+                        }}
+                        onClick={() => setShowManual((current) => !current)}
+                    >
+                        {showManual ? "Back" : "Manual"}
+                    </button>
+                ) : null}
             </div>
 
             <aside
                 ref={detailsRef}
                 data-network-control="true"
-                style={{ ...styles.networkDetails, width: `${inspectorWidth}px`, display: selectedNode ? "block" : "none" }}
+                style={{ ...styles.networkDetails, width: `${inspectorWidth}px`, display: (selectedNode || showManual) ? "block" : "none" }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onScroll={(event) => setDetailsScrollTop(Math.max(0, event.currentTarget.scrollTop))}
             >
-                {selectedNode ? (
+                {showManual ? (
+                    renderManualSections(manual, "Network Map", styles)
+                ) : selectedNode ? (
                     <>
                         <div style={{ ...styles.homePanelTitle, color: "#8fc5ff" }}>{selectionLabel}</div>
                         <div style={{ ...styles.homeTitle, marginTop: "5px", fontSize: "15px", textTransform: "none" }}>

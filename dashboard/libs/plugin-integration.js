@@ -463,6 +463,17 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ? String(getTelemetryFieldValue(safeStats, action.textKey) ?? "")
             : "";
         const isClipboard = action.kind === "clipboard";
+        const nextOptionValue = hasExplicitOptionValue ? action.optionValue : !enabled;
+        // Mutual-exclusion pair: a toggle turning ITSELF on (never off) can force one or more other,
+        // unrelated services' own option keys to false in the same options-store write - e.g. two
+        // automations that would otherwise fight over the same in-game "current work" slot every
+        // cycle if both were enabled at once. Each service's own launcher already polls the shared
+        // options store live (loadDashboardOptionsState) to decide whether to run, so persisting the
+        // other key's new value here is sufficient - no cross-service command-port call needed.
+        const clearsOptionKeys = nextOptionValue && Array.isArray(action.clearsOptionKeys)
+            ? action.clearsOptionKeys.filter((key) => typeof key === "string" && key.length > 0)
+            : [];
+        const clearedOptionOverrides = Object.fromEntries(clearsOptionKeys.map((key) => [key, false]));
         return {
             id: `${idPrefix}-${action.id}`,
             label: variant?.label ?? action.label,
@@ -487,11 +498,15 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // persist it alongside the live port command. Plain toggles derive the inverse boolean;
             // enum/mode buttons declare their exact optionValue in metadata.
             ...(isPersistedAction
-                ? { optionKey: action.optionKey, optionValue: hasExplicitOptionValue ? action.optionValue : !enabled }
+                ? { optionKey: action.optionKey, optionValue: nextOptionValue }
                 : {}),
             ...(isSaveOptions && isPersistedAction
-                ? { optionOverrides: { [action.optionKey]: hasExplicitOptionValue ? action.optionValue : !enabled } }
+                ? { optionOverrides: { [action.optionKey]: nextOptionValue, ...clearedOptionOverrides } }
                 : {}),
+            // Same clearedOptionOverrides, exposed ungated by kind so a "plugin-command" toggle
+            // (which persists its own optionKey/optionValue through a different path in
+            // runServiceAction, not optionOverrides) can merge it in too.
+            ...(isPersistedAction && clearsOptionKeys.length > 0 ? { clearedOptionOverrides } : {}),
             // A clipboard action copies telemetry, so it is gated on having something to copy
             // rather than on the integration's own script running - the whole point of these is to
             // work while the Singularity-gated worker is stopped.

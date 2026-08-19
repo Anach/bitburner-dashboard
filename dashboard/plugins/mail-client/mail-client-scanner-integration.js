@@ -1,6 +1,7 @@
 export const DASHBOARD_PLUGIN_METADATA = {
     "adapter": "workspace",
     "serviceId": "mail.mailbox",
+    "manualFile": "mail-client",
     "workspaceId": "mail.mailbox",
     "menuGroup": "software",
     "menuLabel": "Mail Client",

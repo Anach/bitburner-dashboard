@@ -78,6 +78,15 @@ export function resolveSelectedCenterPanel({ selectedItem, centerPanels = [], sa
         return savedCenterPanel;
     }
 
+    // Core Modules' own centerPanels is a dynamic list of core scripts, not a small fixed tab set -
+    // "manual" deliberately never appears as one of its entries (see automation-dashboard.jsx's
+    // isManualEligible / the Core Module Controls "Manual" action), so the generic membership check
+    // above always misses it. Without this, selecting it silently fell through to
+    // defaultCenterPanel - the first listed core script - instead of showing the manual.
+    if (selectedItem === "global.coreModules" && savedCenterPanel === "manual") {
+        return "manual";
+    }
+
     if ((selectedItem === "global.options" || selectedItem === "global.coreModules"
         || selectedItem === "global.integrations" || selectedItem === "global.plugins") && savedCenterPanel === "") {
         return "";
