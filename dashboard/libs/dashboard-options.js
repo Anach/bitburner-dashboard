@@ -22,6 +22,13 @@ import {
     normalizeScriptFolders,
     parseScriptFolders,
 } from "dashboard/libs/script-folders.js";
+import {
+    DASHBOARD_RAM_OPTIONS_SCHEMA_VERSION,
+    normalizeDashboardRamSetting,
+    resolveReservedHomeRamSetting,
+} from "dashboard/libs/dashboard-ram-settings.js";
+
+export { normalizeDashboardRamSetting };
 
 export const DEFAULT_HIDDEN_SCRIPT_FOLDERS = ["dashboard", "libs", "trashbin"];
 export const DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION = normalizeScriptFolders(DEFAULT_HIDDEN_SCRIPT_FOLDERS);
@@ -96,13 +103,6 @@ export function sortByServiceStartOrder(items, options) {
         .map((entry) => entry.item);
 }
 
-export function normalizeDashboardRamSetting(value, fallback = 0) {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric);
-    const fallbackNumeric = Number(fallback);
-    return Number.isFinite(fallbackNumeric) && fallbackNumeric >= 0 ? Math.floor(fallbackNumeric) : 0;
-}
-
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_NONE = "None";
 export const HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY = "Singularity";
 export const HIDE_UNQUALIFIED_PLUGINS_MODES = [HIDE_UNQUALIFIED_PLUGINS_MODE_NONE, HIDE_UNQUALIFIED_PLUGINS_MODE_SINGULARITY];
@@ -152,6 +152,7 @@ function getObject(value) {
 
 export function getDefaultDashboardOptions(services = []) {
     const defaults = {
+        dashboardRamOptionsSchemaVersion: DASHBOARD_RAM_OPTIONS_SCHEMA_VERSION,
         // Was 1024 while this option was purely decorative (displayed, never enforced). Now that
         // service-supervisor.js actually respects it as an autostart RAM headroom floor, a huge
         // default would silently block every autostart daemon on any realistic home RAM size.
@@ -209,7 +210,8 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         // menu-visibility flags, per-bare-script autostart flags keyed by filename, etc.) -
         // otherwise every save silently drops anything not enumerated below.
         ...rawOptions,
-        reservedHomeRam: normalizeDashboardRamSetting(rawOptions.reservedHomeRam, defaults.reservedHomeRam),
+        dashboardRamOptionsSchemaVersion: DASHBOARD_RAM_OPTIONS_SCHEMA_VERSION,
+        reservedHomeRam: resolveReservedHomeRamSetting(rawOptions, defaults.reservedHomeRam),
         serviceStartupRamLimit: normalizeDashboardRamSetting(rawOptions.serviceStartupRamLimit, defaults.serviceStartupRamLimit),
         dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),

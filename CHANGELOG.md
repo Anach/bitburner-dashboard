@@ -10,6 +10,21 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-25
+
+### Fixed
+
+- **`buildTargetSnapshot()` could crash a calling script on non-normal network hosts** -
+  (`dashboard/libs/topology.js`) this is the shared BFS-target-eligibility helper the paired
+  `bitburner-scripts` repo's Hacking Ops profiles consume (Money already used it; Beginner and XP
+  were switched over to it in the same fix - see that repo's changelog). It used to call
+  `ns.getServerRequiredHackingLevel()`/`ns.getServerMaxMoney()` directly with no guard; Bitburner 3.0
+  throws when those hacking-only APIs receive a non-normal host, such as a BN9 Hacknet Server - such
+  hosts can still contribute executor RAM to a batcher, they just can never be hacking targets. Both
+  calls are now wrapped in a try/catch that skips (and simply omits from `eligibleServers`/
+  `xpFarmServers`) any host that throws, instead of crashing the entire caller. No RAM change (pure
+  control-flow change, same API calls either way).
+
 ## 2026-08-16
 
 ### Added

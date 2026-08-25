@@ -5,6 +5,7 @@ import {
     normalizeDashboardRamSetting,
     sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
+import { resolveReservedHomeRamSetting } from "dashboard/libs/dashboard-ram-settings.js";
 import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -12,6 +13,9 @@ export const DASHBOARD_SCRIPT_METADATA = {
 };
 
 const SUPERVISOR_INTERVAL_MS = 30000;
+const NETWORK_CHILD_RECONCILE_INTERVAL_MS = 1000;
+const NETWORK_CHILD_SUPERVISOR_SCRIPT = "dashboard/libs/network-child-supervisor.js";
+const NETWORK_CHILD_REQUEST_DIRECTORY = "data/network-child-requests/";
 const EXCLUDED_RUNTIME_FOLDERS = ["dashboard", "libs", "trashbin"];
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
@@ -187,6 +191,19 @@ function startManagedService(ns, service, runningFiles, ramLimits) {
     return { status: "started", pid, scriptRamGb };
 }
 
+function queueNetworkChildReconciliation(ns) {
+    const hasRequests = (ns.ls("home", NETWORK_CHILD_REQUEST_DIRECTORY) ?? [])
+        .some((filename) => typeof filename === "string" && filename.endsWith(".json"));
+    if (!hasRequests) return "idle";
+    if (!ns.fileExists(NETWORK_CHILD_SUPERVISOR_SCRIPT, "home")) return "missing";
+
+    const pid = ns.run(
+        NETWORK_CHILD_SUPERVISOR_SCRIPT,
+        { threads: 1, temporary: true, preventDuplicates: true },
+    );
+    return pid > 0 ? "queued" : "pending";
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -194,8 +211,34 @@ export async function main(ns) {
     ns.print("[LIFECYCLE] Integration Service Supervisor started.");
 
     const previousIssues = new Map();
+    let nextServiceReconcileAt = 0;
+    let previousNetworkChildIssue = "";
 
     while (true) {
+        try {
+            const status = queueNetworkChildReconciliation(ns);
+            const issue = status === "missing" ? "reconciler script is missing"
+                : status === "pending" ? "reconciler is waiting for Home RAM"
+                : "";
+            if (issue && issue !== previousNetworkChildIssue) {
+                ns.print(`[NETWORK CHILD] ${issue}.`);
+            }
+            previousNetworkChildIssue = issue;
+        } catch (error) {
+            const message = error?.message ?? String(error);
+            if (message !== previousNetworkChildIssue) {
+                ns.print(`[NETWORK CHILD] Reconciliation failed: ${message}`);
+                previousNetworkChildIssue = message;
+            }
+        }
+
+        const now = Date.now();
+        if (now < nextServiceReconcileAt) {
+            await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
+            continue;
+        }
+        nextServiceReconcileAt = now + SUPERVISOR_INTERVAL_MS;
+
         const homeFiles = ns.ls("home") ?? [];
         const integrationServices = discoverManagedServices(ns, homeFiles);
         const normalizedFiles = homeFiles.filter((filename) => typeof filename === "string");
@@ -211,7 +254,7 @@ export async function main(ns) {
 
         if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) {
             ns.print("[LIFECYCLE] Autostart is paused (Kill All Scripts); skipping this cycle.");
-            await ns.sleep(SUPERVISOR_INTERVAL_MS);
+            await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
             continue;
         }
 
@@ -227,7 +270,7 @@ export async function main(ns) {
         // aggregate RAM of service entry scripts represented in the Start Order list. Both are
         // disabled at 0 for backward compatibility. Existing services count toward the aggregate
         // limit so the 30-second supervisor loop cannot bypass the cap one launch at a time.
-        const reservedHomeRamGb = normalizeDashboardRamSetting(options.reservedHomeRam);
+        const reservedHomeRamGb = resolveReservedHomeRamSetting(options);
         const serviceStartupRamLimitGb = normalizeDashboardRamSetting(options.serviceStartupRamLimit);
         const scriptRamByFilename = new Map();
         const resolveScriptRamGb = (script) => {
@@ -258,6 +301,6 @@ export async function main(ns) {
             reportLaunchIssue(ns, script, result.status, previousIssues);
         }
 
-        await ns.sleep(SUPERVISOR_INTERVAL_MS);
+        await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
     }
 }
