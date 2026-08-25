@@ -116,9 +116,12 @@ async function syncInputFilesToHost(ns, host, inputFiles) {
 
 async function syncOutputFilesToHome(ns, host, outputFiles) {
     if (host === "home" || outputFiles.length === 0) return { ok: true, detail: "" };
-    const available = outputFiles.filter((filename) => ns.fileExists(filename, host));
-    if (available.length === 0) return { ok: true, detail: "" };
     try {
+        // The Cloud buyer can rename the purchased server it is currently running on. Its old
+        // hostname then disappears between reconciles, so even fileExists() must live inside the
+        // guard rather than assuming the previously tracked host is still addressable.
+        const available = outputFiles.filter((filename) => ns.fileExists(filename, host));
+        if (available.length === 0) return { ok: true, detail: "" };
         const copied = await ns.scp(available, "home", host);
         return copied
             ? { ok: true, detail: "" }
