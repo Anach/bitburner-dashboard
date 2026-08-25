@@ -160,3 +160,14 @@ export function buildDashboardLayoutSnapshot(raw = {}) {
     cachedDashboardLayoutSnapshot = next;
     return next;
 }
+
+export function shouldFocusCurrentWorkForDashboard(layoutSnapshot) {
+    return Boolean(layoutSnapshot?.maximized) && !Boolean(layoutSnapshot?.minimized);
+}
+
+export function resolveDashboardCurrentWorkFocusRequest(layoutSnapshot, enabled, lastRequestedFocus = null) {
+    if (enabled === true) return shouldFocusCurrentWorkForDashboard(layoutSnapshot);
+    // If this feature focused the work, disabling it must release that work once. Otherwise
+    // Disabled means fully dormant: do not spend transient RAM just to restate background mode.
+    return lastRequestedFocus === true ? false : null;
+}

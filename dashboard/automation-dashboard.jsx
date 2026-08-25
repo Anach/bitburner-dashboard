@@ -58,6 +58,7 @@ import {
     normalizeDashboardStartupMode,
     normalizeDashboardWindowMode,
     normalizeViewport,
+    resolveDashboardCurrentWorkFocusRequest,
     resolveDashboardStartupWindowMode,
     tailGeometryDiffers,
 } from "dashboard/libs/tail-layout.js";
@@ -148,7 +149,7 @@ import {
     getPluginMenuRequirementBadgeBudget,
     getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
-import { buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
+import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
 import { loadManualStrings, normalizeManualSections } from "dashboard/libs/manual-strings.js";
 import {
     getScriptListDetailEmptyMessage,
@@ -198,6 +199,7 @@ const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
+const CURRENT_WORK_FOCUS_SCRIPT = "dashboard/current-work-focus.js";
 const DASHBOARD_VIEW_ITEM_PREFIX = "dashboard.view:";
 const PLAYER_STATS_WIDGET_WIDTH = 360;
 const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_HIDDEN_SCRIPT_FOLDERS;
@@ -218,6 +220,7 @@ const scriptCatalogEntryCache = new Map();
 let latestHomeProcessFilenames = new Set();
 let previousHomeProcessFilenames = new Set();
 let lastOptionReplayServiceRegistry = null;
+let lastRequestedCurrentWorkFocus = null;
 
 const dashboardTailLayoutState = {
     initialized: false,
@@ -2236,6 +2239,16 @@ const DASHBOARD_SERVICES = [
                     type: "select",
                     options: DASHBOARD_STARTUP_MODES,
                     value: options.dashboardWindowStartupMode,
+                    group: "Window",
+                },
+                {
+                    id: "dashboard-current-work-focus-enabled",
+                    label: "Focus current work when maximized",
+                    tooltip: "Requires Source-File 4. Maximizing focuses the current task; restoring or minimizing returns it to background mode. The Singularity helper runs only during a transition.",
+                    optionKey: "dashboardCurrentWorkFocusEnabled",
+                    type: "boolean-select",
+                    value: options.dashboardCurrentWorkFocusEnabled,
+                    group: "Window",
                 },
                 {
                     id: "dashboard-text-size-mode",
@@ -2327,6 +2340,7 @@ const DASHBOARD_SERVICES = [
             return [
                 { label: "Text size", value: normalizeDashboardTextSizeMode(options.dashboardTextSizeMode), tone: "info" },
                 { label: "Window startup", value: normalizeDashboardStartupMode(options.dashboardWindowStartupMode), tone: "info" },
+                { label: "Maximized work focus", value: options.dashboardCurrentWorkFocusEnabled === true ? "Enabled" : "Disabled", tone: "info" },
                 { label: "Hide unqualified plugins", value: normalizeHideUnqualifiedPluginsMode(options.hideUnqualifiedPluginsMode), tone: "info" },
                 { label: "Unlock glyphs", value: options.menuUnlockGlyphsEnabled === false ? "Hidden" : normalizeMenuUnlockGlyphScope(options.menuUnlockGlyphScope), tone: "info" },
                 { label: "Glyph limit", value: `${normalizeMenuUnlockGlyphMaxCount(options.menuUnlockGlyphMaxCount)}`, tone: "neutral" },
@@ -6458,6 +6472,39 @@ function syncDashboardTailLayout(ns, options = getDefaultOptions()) {
     });
 }
 
+function syncDashboardCurrentWorkFocus(ns, layoutSnapshot, capabilitySnapshot, enabled) {
+    const focused = resolveDashboardCurrentWorkFocusRequest(
+        layoutSnapshot,
+        enabled,
+        lastRequestedCurrentWorkFocus
+    );
+    if (focused === null) {
+        lastRequestedCurrentWorkFocus = null;
+        return;
+    }
+    if (focused === lastRequestedCurrentWorkFocus) return;
+
+    if (!isCapabilityRequirementMet({ type: "api", id: "singularity" }, capabilitySnapshot)) {
+        // Source-File access cannot change until a reset, which restarts this dashboard. Remember
+        // the state so an unavailable helper is not pointlessly retried every UI tick.
+        lastRequestedCurrentWorkFocus = enabled === true ? focused : null;
+        return;
+    }
+
+    try {
+        const pid = ns.run(
+            CURRENT_WORK_FOCUS_SCRIPT,
+            { threads: 1, temporary: true },
+            focused ? "focused" : "background"
+        );
+        // A zero PID means Home RAM is temporarily full. Leave the previous state untouched so
+        // the next dashboard tick retries rather than silently losing this window transition.
+        if (pid !== 0) lastRequestedCurrentWorkFocus = enabled === true ? focused : null;
+    } catch (error) {
+        // A partially synced installation may not have the helper yet. Retry on the next tick.
+    }
+}
+
 function ensureSingleDashboardInstance(ns) {
     if (!ns) return true;
 
@@ -6518,6 +6565,7 @@ export async function main(ns) {
     latestHomeProcessFilenames = new Set();
     previousHomeProcessFilenames = new Set();
     lastOptionReplayServiceRegistry = null;
+    lastRequestedCurrentWorkFocus = null;
 
     setDashboardViewDragActiveState(false);
     rememberDashboardFileManagerRender("", "");
@@ -6628,6 +6676,12 @@ export async function main(ns) {
             30000,
             cycleSnapshot.fileSignature,
             () => buildCapabilitySnapshot(ns, cycleSnapshot.homeFiles)
+        );
+        syncDashboardCurrentWorkFocus(
+            ns,
+            layoutSnapshot,
+            capabilitySnapshot,
+            persistedOptions.dashboardCurrentWorkFocusEnabled
         );
         // Manual-tab narrative text - static content, re-read only on the same cadence/signature
         // basis as capabilities above (fileSignature already changes if any manual file is re-synced

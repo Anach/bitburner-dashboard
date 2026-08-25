@@ -10,6 +10,19 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-26
+
+### Added
+
+- **Optional current-work focus follows the dashboard window state.** Dashboard Options now includes
+  a default-off **Focus current work when maximized** setting for Source-File 4 saves. When enabled,
+  maximizing the dashboard focuses the active task; restoring to windowed mode or minimizing returns
+  it to background mode. A one-shot `dashboard/current-work-focus.js` helper owns the Singularity
+  call and exits immediately, so it consumes RAM only during a transition. Leaving the option off
+  launches no helper; disabling it after the feature focused a task performs one final background
+  transition and then becomes dormant. The dashboard remains 9.30 GB, while the helper measures
+  3.20 GB at SF4.1 and 1.70 GB at SF4.3.
+
 ## 2026-08-25
 
 ### Added

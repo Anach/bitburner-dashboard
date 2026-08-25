@@ -51,10 +51,11 @@ Static RAM cost of each framework and included-plugin script, measured on Bitbur
 
 | Component | Static RAM | Notes |
 | --- | ---: | --- |
-| `dashboard/automation-dashboard.jsx` | 8.30 GB | Required. Includes lifecycle, kill, restart, and File Manager action execution. |
+| `dashboard/automation-dashboard.jsx` | 9.30 GB | Required. Includes lifecycle, kill, restart, File Manager action execution, and optional current-work focus transition dispatch. |
 | `dashboard/service-supervisor.js` | 4.50 GB | Supervises daemon start/restart (optional). |
-| **Combined steady footprint** | **12.80 GB** | Dashboard + supervisor running together, the normal steady state. No action-worker reserve is required. |
+| **Combined steady footprint** | **13.80 GB** | Dashboard + supervisor running together, the normal steady state. No action-worker reserve is required. |
 | `dashboard/libs/temporary-script-launcher.js` | 4.20 GB | Transient only — reconciles optional managed children without adding stop/process APIs to their cheap parents. |
+| `dashboard/current-work-focus.js` | 3.20 GB at SF4.1; 1.70 GB at SF4.3 | Default-off, one-shot helper for the maximize/restore focus option. It exits immediately after a transition and is never launched while the option is disabled. |
 
 Included plugins (each independently removable; only pay for what you keep installed):
 
@@ -113,7 +114,7 @@ The dashboard opens its own tail and prevents duplicate dashboard instances. Its
 run dashboard/automation-dashboard.jsx --no-auto-start
 ```
 
-Dashboard Restart preserves whether `--no-auto-start` was active. Starting without the flag starts (or leaves alone, if already running) the supervisor. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, unlock-glyph presentation, Player Stats visibility, and Script List exclusions can be changed under **Configuration → Dashboard Options**.
+Dashboard Restart preserves whether `--no-auto-start` was active. Starting without the flag starts (or leaves alone, if already running) the supervisor. No `init` script is required; users may launch the dashboard from their own startup script if desired. Its theme, text size, startup window mode, default-off Source-File 4 current-work focus behavior, unlock-glyph presentation, Player Stats visibility, and Script List exclusions can be changed under **Configuration → Dashboard Options**.
 
 To launch it before saved processes, set **Game Options → System → Autoexec Script + Args** to `dashboard/automation-dashboard.jsx` (or append `--no-auto-start` to suppress integration auto-start). Bitburner marks autoexec processes temporary and launches them before saved scripts. The dashboard treats this as an idempotent, silent launch: a restored duplicate exits without terminal output, the autoexec instance does not print its normal startup line, and stopping the daemon closes its tail so the next launch cannot leave a second window beside a stale stopped dashboard.
 
