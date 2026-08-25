@@ -12,6 +12,73 @@ integration.
 
 ## 2026-08-25
 
+### Added
+
+- **contract** — **New Network Child Supervisor: any script can now request that a companion worker
+  run somewhere else on the network instead of always on Home.** Previously every "temporary
+  disposable worker" pattern in the paired `bitburner-scripts` repo (`ensureTemporaryHomeScripts`)
+  only ever launched on Home, so Home's free RAM was the hard ceiling for how many Singularity-heavy
+  workers could run at once, no matter how much RAM sat idle across the rest of the network.
+  - **`dashboard/libs/network-child-request.js`** (new, 1.70 GB) — the request-side API a script
+    calls to declare a desired child: `publishNetworkChildRequest(ns, request)` writes a normalized
+    request file (`data/network-child-requests/<id>.json`, `normalizeNetworkChildRequest()` validates
+    `id`/`script`/`ownerScript`, fills in `dependencies`/`inputFiles`/`outputFiles`/`lifecycle`
+    (`"one-shot"` or `"persistent"`)/`preferRemote` (defaults `true`)/`reserveRamGb`/`label`, and an
+    `expiresAt` from a default 15s TTL); `cancelNetworkChildRequest()` publishes the same request with
+    `desired: false`; `readNetworkChildStatus(ns, id)` reads back that child's live status. Requests
+    are a lease, not a one-time launch — the owner must keep re-publishing on its own cadence or the
+    request expires and the supervisor tears the child down automatically.
+  - **`dashboard/libs/network-child-supervisor.js`** (new, 5.55 GB) — the reconciler, launched
+    on-demand by `service-supervisor.js` whenever a request file is pending. Picks a host via
+    `getCandidateHosts()` (sorts by a `preferRemote`-driven Home penalty, then most free RAM, then
+    hostname), `scp`s the worker and its declared `dependencies` there, launches it, and republishes
+    an aggregate status file (`data/network_child_status.json`, throttled to one write per 5s unless
+    forced) that `readNetworkChildStatus()` reads back. For `lifecycle: "persistent"` children it also
+    syncs `inputFiles` from Home to the remote host and `outputFiles` back from the remote host to
+    Home every reconcile pass, so a remotely-running worker's dashboard-options/telemetry files stay
+    live on Home exactly as if it had run there.
+  - **`dashboard/service-supervisor.js`** — main loop restructured around two independent cadences: a
+    new `queueNetworkChildReconciliation()` check runs every `NETWORK_CHILD_RECONCILE_INTERVAL_MS`
+    (1000ms) and launches the supervisor above only when a request file actually needs attention
+    (`ns.run(..., {preventDuplicates: true})`), while the original service-scan/autostart logic keeps
+    its existing `SUPERVISOR_INTERVAL_MS` (30000ms) cadence via a new `nextServiceReconcileAt` gate —
+    network-child leases needed a much tighter loop than full service reconciliation ever did.
+  - **`dashboard/libs/dashboard-ram-settings.js`** (new) — fixes a real latent bug surfaced by making
+    `reservedHomeRam` load-bearing for the first time: it used to default to a purely decorative
+    `1024` GB (displayed but never enforced anywhere). `resolveReservedHomeRamSetting()` uses a new
+    `dashboardRamOptionsSchemaVersion` marker to tell a stale inherited `1024` apart from a deliberate
+    user choice of exactly `1024` now that the value actually gates candidate-host selection —
+    without it, every existing save would have silently reserved 1024 GB of Home RAM the instant this
+    shipped. `dashboard-options.js`'s `normalizeDashboardRamSetting` moved into this file and is
+    re-exported for compatibility.
+  - **Host-rename and output-safety hardening**, two fast follow-up fixes once real Cloud-purchased
+    workers started using this: the Cloud buyer can rename its own host mid-run, so
+    `syncOutputFilesToHome()`'s `ns.fileExists(file, host)` check now lives *inside* the try/catch
+    rather than assuming a previously-tracked hostname is still addressable; and a file declared as
+    both an `inputFile` and an `outputFile` (e.g. a persistent worker's own counters/history) was
+    being blindly overwritten with the stale Home copy every reconcile before its live output synced
+    back — `outputFileSet` is now excluded from the live-input re-sync so only genuinely Home-owned
+    inputs (like the dashboard options file) get re-copied each cycle.
+  - First consumers are the paired `bitburner-scripts` repo's `libs/script-actions.js` (new
+    `placement: "network"` target option) and 12 individual daemon offloads — see that repo's
+    changelog for the full list.
+
+- **contract** — **Home Server's two RAM safeguards now support either an exact amount or a
+  percentage of total Home RAM.** `Transient RAM Reserve` and `Service Startup RAM Limit` each use
+  the same compact selector-and-active-value row as Faction Manager and Hacking Ops: choose
+  `Exact GB` or `Percentage`, then edit only that mode's value. Existing saves remain in Exact GB
+  mode; both configured values are retained when switching modes, percentages are clamped to
+  0–100%, and the effective GB amount is recalculated from live total Home RAM after an upgrade.
+  Zero keeps its established meaning (`Disabled` for the reserve, `Unlimited` for the startup
+  limit), and lowering the startup limit still only blocks future service starts rather than
+  stopping services already running. The Infrastructure summary shows both the selected percentage
+  and its effective GB value.
+  - `dashboard/libs/dashboard-ram-settings.js` now owns the shared mode/value normalization and
+    effective-limit resolution; `dashboard-options.js` persists the new mode and percentage fields.
+  - `service-supervisor.js` applies the resolved startup limit during admission, while
+    `network-child-supervisor.js` applies the resolved transient reserve before falling back to
+    Home, so both safeguards follow Home RAM upgrades without requiring the options to be re-saved.
+
 ### Fixed
 
 - **`buildTargetSnapshot()` could crash a calling script on non-normal network hosts** -

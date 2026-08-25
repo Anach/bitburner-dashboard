@@ -23,7 +23,10 @@ import {
     parseScriptFolders,
 } from "dashboard/libs/script-folders.js";
 import {
+    DASHBOARD_RAM_LIMIT_MODE_GB,
     DASHBOARD_RAM_OPTIONS_SCHEMA_VERSION,
+    normalizeDashboardRamLimitMode,
+    normalizeDashboardRamPercent,
     normalizeDashboardRamSetting,
     resolveReservedHomeRamSetting,
 } from "dashboard/libs/dashboard-ram-settings.js";
@@ -160,9 +163,13 @@ export function getDefaultDashboardOptions(services = []) {
         // user opts in with a higher value, consistent with this project's autostart-is-opt-in
         // convention elsewhere.
         reservedHomeRam: 0,
+        reservedHomeRamLimitMode: DASHBOARD_RAM_LIMIT_MODE_GB,
+        reservedHomeRamPercent: 0,
         // Aggregate RAM ceiling for service entry scripts managed by the supervisor. Zero keeps
         // the historical unlimited behavior until the user deliberately sets a budget.
         serviceStartupRamLimit: 0,
+        serviceStartupRamLimitMode: DASHBOARD_RAM_LIMIT_MODE_GB,
+        serviceStartupRamLimitPercent: 0,
         dashboardThemeMode: DASHBOARD_THEME_MODE_GAME,
         dashboardTextSizeMode: DASHBOARD_TEXT_SIZE_COMFORTABLE,
         dashboardWindowStartupMode: DASHBOARD_STARTUP_MODE_REMEMBER,
@@ -212,7 +219,23 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         ...rawOptions,
         dashboardRamOptionsSchemaVersion: DASHBOARD_RAM_OPTIONS_SCHEMA_VERSION,
         reservedHomeRam: resolveReservedHomeRamSetting(rawOptions, defaults.reservedHomeRam),
+        reservedHomeRamLimitMode: normalizeDashboardRamLimitMode(
+            rawOptions.reservedHomeRamLimitMode,
+            defaults.reservedHomeRamLimitMode,
+        ),
+        reservedHomeRamPercent: normalizeDashboardRamPercent(
+            rawOptions.reservedHomeRamPercent,
+            defaults.reservedHomeRamPercent,
+        ),
         serviceStartupRamLimit: normalizeDashboardRamSetting(rawOptions.serviceStartupRamLimit, defaults.serviceStartupRamLimit),
+        serviceStartupRamLimitMode: normalizeDashboardRamLimitMode(
+            rawOptions.serviceStartupRamLimitMode,
+            defaults.serviceStartupRamLimitMode,
+        ),
+        serviceStartupRamLimitPercent: normalizeDashboardRamPercent(
+            rawOptions.serviceStartupRamLimitPercent,
+            defaults.serviceStartupRamLimitPercent,
+        ),
         dashboardThemeMode: normalizeDashboardThemeMode(rawOptions.dashboardThemeMode ?? defaults.dashboardThemeMode),
         dashboardTextSizeMode: normalizeDashboardTextSizeMode(rawOptions.dashboardTextSizeMode ?? defaults.dashboardTextSizeMode),
         dashboardWindowStartupMode: normalizeDashboardStartupMode(rawOptions.dashboardWindowStartupMode ?? defaults.dashboardWindowStartupMode),

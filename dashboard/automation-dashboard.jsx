@@ -63,6 +63,13 @@ import {
 } from "dashboard/libs/tail-layout.js";
 import { buildDashboardTailTitle } from "dashboard/libs/tail-title.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
+import {
+    DASHBOARD_RAM_LIMIT_MODE_GB,
+    DASHBOARD_RAM_LIMIT_MODE_PERCENT,
+    DASHBOARD_RAM_LIMIT_MODES,
+    resolveReservedHomeRamLimit,
+    resolveServiceStartupRamLimit,
+} from "dashboard/libs/dashboard-ram-settings.js";
 import { getDashboardRestartArgs, parseDashboardLaunchOptions, shouldAutoStartServiceSupervisor } from "dashboard/libs/startup-policy.js";
 import { normalizeDashboardActionCommand } from "dashboard/libs/action-command.js";
 import { executeDashboardAction } from "dashboard/libs/action-executor.js";
@@ -2051,6 +2058,14 @@ const DASHBOARD_PINNED_MENU_GROUPS = [
     { id: "services", title: "Services", order: 1100 },
 ];
 
+function formatHomeRamLimit(limit, zeroLabel) {
+    if (!(limit?.effectiveLimit > 0)) return zeroLabel;
+    const effective = formatRam(limit.effectiveLimit);
+    return limit.mode === DASHBOARD_RAM_LIMIT_MODE_PERCENT
+        ? `${limit.percent}% (${effective})`
+        : effective;
+}
+
 const DASHBOARD_SERVICES = [
     {
         id: "hardware.home",
@@ -2061,6 +2076,7 @@ const DASHBOARD_SERVICES = [
         menuOrder: -100,
         description: "Home RAM capacity and safeguards for dashboard-managed service startup.",
         rendererKey: "hardware.home",
+        inputLayout: "wrap-180",
         defaultPanelId: "infrastructure",
         subviews: [
             { id: "infrastructure", label: "Infrastructure" },
@@ -2076,7 +2092,7 @@ const DASHBOARD_SERVICES = [
                 title: "Home Options",
                 accent: "#6ee7a8",
                 subtitle: "Protect transient capacity and bound service autostart RAM",
-                description: "The Transient RAM Reserve keeps capacity free for transient and on-demand processes. The Service Startup RAM Limit separately caps the combined RAM of service entry scripts in the Start Order list.",
+                description: "The Transient RAM Reserve keeps capacity free for transient and on-demand processes. The Service Startup RAM Limit separately caps the combined RAM of service entry scripts in the Start Order list. Each safeguard can use an exact size or a percentage of total Home RAM.",
             },
         },
         getHealth: ({ homeRamStatus }) => {
@@ -2103,32 +2119,90 @@ const DASHBOARD_SERVICES = [
             if (selectedCenterPanel !== "options") return [];
             return [
                 {
+                    id: "reserved-home-ram-limit-mode",
+                    label: "Transient RAM Reserve",
+                    description: "Choose one reserve method.",
+                    tooltip: "Percentage mode is recalculated from total Home RAM, so Home upgrades take effect automatically.",
+                    optionKey: "reservedHomeRamLimitMode",
+                    type: "select",
+                    options: DASHBOARD_RAM_LIMIT_MODES,
+                    value: options.reservedHomeRamLimitMode,
+                    group: "Transient RAM Reserve",
+                },
+                {
                     id: "reserved-home-ram",
-                    label: "Transient RAM Reserve (GB)",
-                    description: "Home RAM the supervisor must leave free for dashboard actions and other on-demand processes.",
-                    tooltip: "Minimum free Home RAM remaining after each dashboard-managed service launch. This does not reserve RAM from manually started scripts. Set to 0 to disable.",
+                    label: "Exact Transient RAM Reserve (GB)",
+                    tooltip: "Used only in Exact GB mode. Minimum free Home RAM remaining after each dashboard-managed service launch. This does not reserve RAM from manually started scripts. Set to 0 to disable.",
                     optionKey: "reservedHomeRam",
                     type: "number",
                     value: options.reservedHomeRam,
                     min: 0,
+                    step: 1,
+                    group: "Transient RAM Reserve",
+                    visibleOptionKey: "reservedHomeRamLimitMode",
+                    visibleOptionValue: DASHBOARD_RAM_LIMIT_MODE_GB,
+                },
+                {
+                    id: "reserved-home-ram-percent",
+                    label: "Percentage Transient RAM Reserve (%)",
+                    tooltip: "Used only in Percentage mode. Set to 0 to disable the reserve.",
+                    optionKey: "reservedHomeRamPercent",
+                    type: "number",
+                    value: options.reservedHomeRamPercent,
+                    min: 0,
+                    max: 100,
+                    step: 1,
+                    group: "Transient RAM Reserve",
+                    visibleOptionKey: "reservedHomeRamLimitMode",
+                    visibleOptionValue: DASHBOARD_RAM_LIMIT_MODE_PERCENT,
+                },
+                {
+                    id: "service-startup-ram-limit-mode",
+                    label: "Service Startup RAM Limit",
+                    description: "Choose one limit method.",
+                    tooltip: "Percentage mode is recalculated from total Home RAM, so Home upgrades take effect automatically.",
+                    optionKey: "serviceStartupRamLimitMode",
+                    type: "select",
+                    options: DASHBOARD_RAM_LIMIT_MODES,
+                    value: options.serviceStartupRamLimitMode,
+                    group: "Service Startup RAM Limit",
                 },
                 {
                     id: "service-startup-ram-limit",
-                    label: "Service Startup RAM Limit (GB)",
-                    description: "Maximum combined RAM for running service entry scripts represented in the Start Order list.",
-                    tooltip: "The supervisor counts already-running listed services, then starts more in order only while their combined entry-script RAM stays within this limit. Running services are not stopped, and child processes are not included. Set to 0 for unlimited.",
+                    label: "Exact Service RAM Limit (GB)",
+                    tooltip: "Used only in Exact GB mode. The supervisor counts already-running listed services, then starts more in order only while their combined entry-script RAM stays within this limit. Running services are not stopped, and child processes are not included. Set to 0 for unlimited.",
                     optionKey: "serviceStartupRamLimit",
                     type: "number",
                     value: options.serviceStartupRamLimit,
                     min: 0,
+                    step: 1,
+                    group: "Service Startup RAM Limit",
+                    visibleOptionKey: "serviceStartupRamLimitMode",
+                    visibleOptionValue: DASHBOARD_RAM_LIMIT_MODE_GB,
+                },
+                {
+                    id: "service-startup-ram-limit-percent",
+                    label: "Percentage Service RAM Limit (%)",
+                    tooltip: "Used only in Percentage mode. Running services are not stopped, and child processes are not included. Set to 0 for unlimited.",
+                    optionKey: "serviceStartupRamLimitPercent",
+                    type: "number",
+                    value: options.serviceStartupRamLimitPercent,
+                    min: 0,
+                    max: 100,
+                    step: 1,
+                    group: "Service Startup RAM Limit",
+                    visibleOptionKey: "serviceStartupRamLimitMode",
+                    visibleOptionValue: DASHBOARD_RAM_LIMIT_MODE_PERCENT,
                 },
             ];
         },
         getState: ({ selectedCenterPanel, options, homeRamStatus }) => {
             if (selectedCenterPanel !== "infrastructure") return [];
+            const reservedHomeRam = resolveReservedHomeRamLimit(homeRamStatus.total, options);
+            const serviceStartupRamLimit = resolveServiceStartupRamLimit(homeRamStatus.total, options);
             return [
-                { label: "Transient Reserve", value: `${options.reservedHomeRam} GB`, tone: "info" },
-                { label: "Service RAM Limit", value: options.serviceStartupRamLimit > 0 ? `${options.serviceStartupRamLimit} GB` : "Unlimited", tone: "info" },
+                { label: "Transient Reserve", value: formatHomeRamLimit(reservedHomeRam, "Disabled"), tone: "info" },
+                { label: "Service RAM Limit", value: formatHomeRamLimit(serviceStartupRamLimit, "Unlimited"), tone: "info" },
                 { label: "Used RAM", value: formatRam(homeRamStatus.used), tone: getRamHealthLevel(homeRamStatus) },
                 { label: "Total RAM", value: formatRam(homeRamStatus.total), tone: "neutral" },
                 { label: "Utilization", value: formatUtilizationPercent(homeRamStatus.ratio), tone: getRamHealthLevel(homeRamStatus) },
@@ -2815,6 +2889,20 @@ function getServiceSections(service, context) {
     ];
 }
 
+function isServiceInputVisible(service, input, options = {}) {
+    const optionKey = typeof input?.visibleOptionKey === "string" ? input.visibleOptionKey : "";
+    if (!optionKey) return true;
+    const optionDefinition = service?.pluginMetadata?.options?.[optionKey];
+    const fallback = optionDefinition && typeof optionDefinition === "object"
+        ? optionDefinition.default
+        : true;
+    const currentValue = options?.[optionKey] ?? fallback;
+    if (Object.prototype.hasOwnProperty.call(input, "visibleOptionValue")) {
+        return String(currentValue) === String(input.visibleOptionValue);
+    }
+    return Boolean(currentValue);
+}
+
 function getServiceInputs(service, context) {
     if (typeof service?.getInputs !== "function") {
         return [];
@@ -2844,7 +2932,8 @@ function getServiceInputs(service, context) {
             if (typeof normalizedInput.group === "string" && normalizedInput.group.length > 0) return normalizedInput;
             const metadataGroup = metadataGroupByOptionKey.get(normalizedInput.optionKey);
             return metadataGroup ? { ...normalizedInput, group: metadataGroup } : normalizedInput;
-        });
+        })
+        .filter((input) => isServiceInputVisible(service, input, context?.options));
 }
 
 function getServiceHealth(service, context) {
@@ -5534,7 +5623,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const panelHealthSummary = isPluginOptionsPanel || isStandalonePanel
             ? ""
             : selectedServiceHealth?.panelSummaries?.[panelId] ?? selectedServiceHealth?.summary ?? "";
-        const inputLayout = isPluginOptionsPanel ? "wrap-180" : "default";
+        const inputLayout = isPluginOptionsPanel
+            ? "wrap-180"
+            : (selectedService?.inputLayout ?? "default");
         const resolvedPanelMeta = getPanelMeta(panelId, fallbackMeta);
         const panelMeta = isPluginOptionsPanel
             ? {

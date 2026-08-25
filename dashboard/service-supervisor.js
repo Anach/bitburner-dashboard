@@ -2,10 +2,12 @@ import { areCapabilityRequirementsMet, buildCapabilitySnapshot } from "dashboard
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import {
     isServiceAutostartEnabled,
-    normalizeDashboardRamSetting,
     sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
-import { resolveReservedHomeRamSetting } from "dashboard/libs/dashboard-ram-settings.js";
+import {
+    resolveReservedHomeRamLimit,
+    resolveServiceStartupRamLimit,
+} from "dashboard/libs/dashboard-ram-settings.js";
 import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -270,8 +272,9 @@ export async function main(ns) {
         // aggregate RAM of service entry scripts represented in the Start Order list. Both are
         // disabled at 0 for backward compatibility. Existing services count toward the aggregate
         // limit so the 30-second supervisor loop cannot bypass the cap one launch at a time.
-        const reservedHomeRamGb = resolveReservedHomeRamSetting(options);
-        const serviceStartupRamLimitGb = normalizeDashboardRamSetting(options.serviceStartupRamLimit);
+        const totalHomeRamGb = ns.getServerMaxRam("home");
+        const reservedHomeRamGb = resolveReservedHomeRamLimit(totalHomeRamGb, options).effectiveLimit;
+        const serviceStartupRamLimitGb = resolveServiceStartupRamLimit(totalHomeRamGb, options).effectiveLimit;
         const scriptRamByFilename = new Map();
         const resolveScriptRamGb = (script) => {
             if (!scriptRamByFilename.has(script)) {

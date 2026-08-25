@@ -5,6 +5,7 @@ import {
     getNetworkChildRequestPath,
     normalizeNetworkChildRequest,
 } from "dashboard/libs/network-child-request.js";
+import { resolveReservedHomeRamLimit } from "dashboard/libs/dashboard-ram-settings.js";
 
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const STATUS_HEARTBEAT_MS = 5000;
@@ -62,7 +63,7 @@ function readReservedHomeRam(ns) {
     try {
         if (!ns.fileExists(DASHBOARD_OPTIONS_FILE, "home")) return 0;
         const parsed = JSON.parse(ns.read(DASHBOARD_OPTIONS_FILE) || "{}");
-        return Math.max(0, Number(parsed?.reservedHomeRam) || 0);
+        return resolveReservedHomeRamLimit(ns.getServerMaxRam("home"), parsed).effectiveLimit;
     } catch (error) {
         return 0;
     }
