@@ -27,18 +27,23 @@ export function normalizeNetworkChildRequest(value, now = Date.now()) {
     const ownerScript = typeof value.ownerScript === "string" ? value.ownerScript.trim() : "";
     if (!id || !script || !ownerScript) return null;
 
+    const dependencies = normalizeStringList(value.dependencies).filter((dependency) => dependency !== script);
+    const inputFiles = normalizeStringList(value.inputFiles);
+    const outputFiles = normalizeStringList(value.outputFiles);
     const requestedAt = Number.isFinite(Number(value.requestedAt)) ? Number(value.requestedAt) : now;
     const ttlMs = Math.max(1000, Number(value.ttlMs) || DEFAULT_NETWORK_CHILD_REQUEST_TTL_MS);
     const suppliedExpiry = Number(value.expiresAt);
     return {
-        version: 1,
+        version: 2,
         id,
         desired: value.desired !== false,
         script,
         ownerScript,
         ownerHost: typeof value.ownerHost === "string" && value.ownerHost ? value.ownerHost : "home",
         args: Array.isArray(value.args) ? value.args : [],
-        dependencies: normalizeStringList(value.dependencies).filter((dependency) => dependency !== script),
+        dependencies,
+        inputFiles,
+        outputFiles,
         lifecycle: value.lifecycle === "persistent" ? "persistent" : "one-shot",
         preferRemote: value.preferRemote !== false,
         reserveRamGb: Math.max(0, Number(value.reserveRamGb) || 0),

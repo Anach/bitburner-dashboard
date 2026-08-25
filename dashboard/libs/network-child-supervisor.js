@@ -34,6 +34,8 @@ export function loadNetworkChildSupervisorState(ns) {
                 host: status.host,
                 pid: status.pid,
                 ramRequired: status.ramRequired,
+                lifecycle: status.lifecycle === "persistent" ? "persistent" : "one-shot",
+                outputFiles: Array.isArray(status.outputFiles) ? status.outputFiles : [],
             });
         }
         state.lastStatusSignature = JSON.stringify(parsed?.children ?? {});
@@ -96,6 +98,36 @@ function stopRunningCopies(ns, hosts, script) {
     return stopped;
 }
 
+async function syncInputFilesToHost(ns, host, inputFiles) {
+    if (host === "home" || inputFiles.length === 0) return { ok: true, detail: "" };
+    const missing = inputFiles.filter((filename) => !ns.fileExists(filename, "home"));
+    if (missing.length > 0) {
+        return { ok: false, detail: `Missing Home input: ${missing.join(", ")}.` };
+    }
+    try {
+        const copied = await ns.scp(inputFiles, host, "home");
+        return copied
+            ? { ok: true, detail: "" }
+            : { ok: false, detail: `Could not synchronize Home input to ${host}.` };
+    } catch (error) {
+        return { ok: false, detail: `Could not synchronize Home input to ${host}.` };
+    }
+}
+
+async function syncOutputFilesToHome(ns, host, outputFiles) {
+    if (host === "home" || outputFiles.length === 0) return { ok: true, detail: "" };
+    const available = outputFiles.filter((filename) => ns.fileExists(filename, host));
+    if (available.length === 0) return { ok: true, detail: "" };
+    try {
+        const copied = await ns.scp(available, "home", host);
+        return copied
+            ? { ok: true, detail: "" }
+            : { ok: false, detail: `Could not synchronize output from ${host}.` };
+    } catch (error) {
+        return { ok: false, detail: `Could not synchronize output from ${host}.` };
+    }
+}
+
 function getCandidateHosts(ns, hosts, request, requiredRam, reservedHomeRam) {
     const candidates = [];
     for (const host of hosts) {
@@ -126,7 +158,7 @@ async function publishStatuses(ns, state, now, force = false) {
     state.lastStatusWriteAt = now;
 }
 
-function refreshTrackedChildren(ns, state, now) {
+async function refreshTrackedChildren(ns, state, now) {
     let changed = false;
     const completedIds = new Set();
     for (const [id, tracked] of [...state.tracked.entries()]) {
@@ -135,16 +167,22 @@ function refreshTrackedChildren(ns, state, now) {
             running = (ns.ps(tracked.host) ?? []).some((process) => process?.pid === tracked.pid);
         } catch (error) { }
         if (running) continue;
+        const outputSync = await syncOutputFilesToHome(ns, tracked.host, tracked.outputFiles ?? []);
         state.tracked.delete(id);
-        completedIds.add(id);
+        const oneShot = tracked.lifecycle !== "persistent";
+        if (oneShot) completedIds.add(id);
         changed = setChildStatus(state, id, {
             script: tracked.script,
             label: tracked.label,
-            status: "completed",
+            status: oneShot ? "completed" : "stopped",
             host: tracked.host,
             pid: 0,
             ramRequired: tracked.ramRequired,
-            detail: "Last one-shot run completed.",
+            lifecycle: tracked.lifecycle,
+            outputFiles: tracked.outputFiles ?? [],
+            detail: outputSync.ok
+                ? oneShot ? "Last one-shot run completed." : "Persistent child stopped; awaiting relaunch."
+                : outputSync.detail,
         }, now) || changed;
     }
     return { changed, completedIds };
@@ -153,7 +191,7 @@ function refreshTrackedChildren(ns, state, now) {
 /** @param {NS} ns */
 export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
     const supervisorState = state ?? createNetworkChildSupervisorState();
-    const refreshed = refreshTrackedChildren(ns, supervisorState, now);
+    const refreshed = await refreshTrackedChildren(ns, supervisorState, now);
     let changed = refreshed.changed;
     const requestFiles = (ns.ls("home", NETWORK_CHILD_REQUEST_DIRECTORY) ?? [])
         .filter((filename) => typeof filename === "string" && filename.endsWith(".json"))
@@ -187,6 +225,12 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
             .some((process) => process.host === request.ownerHost);
         const expired = now > request.expiresAt;
         if (!request.desired || !ownerRunning || expired) {
+            const runningBeforeStop = collectRunningCopies(ns, resolveHosts(), request.script);
+            let outputSync = { ok: true, detail: "" };
+            for (const process of runningBeforeStop) {
+                const result = await syncOutputFilesToHome(ns, process.host, request.outputFiles);
+                if (!result.ok) outputSync = result;
+            }
             const stopped = stopRunningCopies(ns, resolveHosts(), request.script);
             supervisorState.tracked.delete(request.id);
             changed = setChildStatus(supervisorState, request.id, {
@@ -196,22 +240,53 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
                 host: "",
                 pid: 0,
                 ramRequired: 0,
-                detail: stopped > 0 ? `Stopped ${stopped} managed process(es).` : "No managed process was running.",
+                lifecycle: request.lifecycle,
+                outputFiles: request.outputFiles,
+                detail: !outputSync.ok
+                    ? outputSync.detail
+                    : stopped > 0 ? `Stopped ${stopped} managed process(es).` : "No managed process was running.",
             }, now) || changed;
             ns.rm(requestFile, "home");
             continue;
         }
 
         const runningCopies = collectRunningCopies(ns, resolveHosts(), request.script);
-        if (runningCopies.length > 0) {
-            const running = runningCopies[0];
+        const previouslyTracked = supervisorState.tracked.get(request.id);
+        const running = runningCopies.find((process) => (
+            process.host === previouslyTracked?.host && process.pid === previouslyTracked?.pid
+        ));
+        if (running) {
+            for (const duplicate of runningCopies) {
+                if (duplicate.host === running.host && duplicate.pid === running.pid) continue;
+                try { ns.kill(duplicate.pid); } catch (error) { }
+            }
             const ramRequired = Math.max(0, Number(ns.getScriptRam(request.script, "home")) || 0);
+            const inputSync = await syncInputFilesToHost(ns, running.host, request.inputFiles);
+            if (!inputSync.ok) {
+                try { ns.kill(running.pid); } catch (error) { }
+                supervisorState.tracked.delete(request.id);
+                changed = setChildStatus(supervisorState, request.id, {
+                    script: request.script,
+                    label: request.label,
+                    status: "sync-failed",
+                    host: running.host,
+                    pid: 0,
+                    ramRequired,
+                    lifecycle: request.lifecycle,
+                    outputFiles: request.outputFiles,
+                    detail: inputSync.detail,
+                }, now) || changed;
+                continue;
+            }
+            const outputSync = await syncOutputFilesToHome(ns, running.host, request.outputFiles);
             supervisorState.tracked.set(request.id, {
                 script: request.script,
                 label: request.label,
                 host: running.host,
                 pid: running.pid,
                 ramRequired,
+                lifecycle: request.lifecycle,
+                outputFiles: request.outputFiles,
             });
             changed = setChildStatus(supervisorState, request.id, {
                 script: request.script,
@@ -220,12 +295,23 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
                 host: running.host,
                 pid: running.pid,
                 ramRequired,
-                detail: "Managed child is already running.",
+                lifecycle: request.lifecycle,
+                outputFiles: request.outputFiles,
+                detail: outputSync.ok ? "Managed child is already running." : outputSync.detail,
             }, now) || changed;
             continue;
         }
 
-        const requiredFiles = [request.script, ...request.dependencies];
+        // A copy which predates this request has no scheduler ownership record. Stop it once so a
+        // newly-migrated persistent child can actually move off Home; subsequent Home fallback
+        // copies are tracked in the status file and are therefore preserved across reconciler runs.
+        for (const unmanaged of runningCopies) {
+            await syncOutputFilesToHome(ns, unmanaged.host, request.outputFiles);
+            try { ns.kill(unmanaged.pid); } catch (error) { }
+        }
+        supervisorState.tracked.delete(request.id);
+
+        const requiredFiles = [...new Set([request.script, ...request.dependencies, ...request.inputFiles])];
         const missing = requiredFiles.filter((filename) => !ns.fileExists(filename, "home"));
         const requiredRam = Math.max(0, Number(ns.getScriptRam(request.script, "home")) || 0);
         if (missing.length > 0 || !(requiredRam > 0)) {
@@ -296,6 +382,8 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
             host: launched.host,
             pid: launched.pid,
             ramRequired: requiredRam,
+            lifecycle: request.lifecycle,
+            outputFiles: request.outputFiles,
         });
         changed = setChildStatus(supervisorState, request.id, {
             script: request.script,
@@ -304,6 +392,8 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
             host: launched.host,
             pid: launched.pid,
             ramRequired: requiredRam,
+            lifecycle: request.lifecycle,
+            outputFiles: request.outputFiles,
             detail: `Launched with ${launched.freeRam.toFixed(2)} GB available.`,
         }, now) || changed;
         ns.print(`[NETWORK CHILD] Started ${request.label} on ${launched.host} (PID ${launched.pid}).`);
