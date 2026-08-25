@@ -264,7 +264,14 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
                 try { ns.kill(duplicate.pid); } catch (error) { }
             }
             const ramRequired = Math.max(0, Number(ns.getScriptRam(request.script, "home")) || 0);
-            const inputSync = await syncInputFilesToHost(ns, running.host, request.inputFiles);
+            // A file declared in both directions is seeded from Home with requiredFiles before
+            // launch, then owned by the child until it stops. Re-copying the stale Home version
+            // into a running child immediately before its output sync would erase live counters,
+            // history, or partial one-shot progress. Non-output inputs (dashboard options/control
+            // files) remain live and continue to refresh every reconcile.
+            const outputFileSet = new Set(request.outputFiles);
+            const liveInputFiles = request.inputFiles.filter((filename) => !outputFileSet.has(filename));
+            const inputSync = await syncInputFilesToHost(ns, running.host, liveInputFiles);
             if (!inputSync.ok) {
                 try { ns.kill(running.pid); } catch (error) { }
                 supervisorState.tracked.delete(request.id);
