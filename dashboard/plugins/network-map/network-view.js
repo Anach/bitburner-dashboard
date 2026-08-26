@@ -39,6 +39,7 @@ export const DASHBOARD_VIEW_METADATA = {
         "current": "connected",
         "direct": "directConnect",
         "cloud": "cloud",
+        "hacknet": "hacknet",
         "group": "group",
         "variant": "variant",
         "selectable": "selectable",
@@ -86,8 +87,10 @@ export const DASHBOARD_VIEW_METADATA = {
         "timestamp": "timestamp"
     },
     "filters": {
-        "showCloudDefault": false,
-        "cloudLabel": "Cloud servers",
+        "visibilityToggles": [
+            { "id": "cloud", "label": "Cloud servers", "fieldKey": "cloud", "defaultShown": false },
+            { "id": "hacknet", "label": "Hacknet servers", "fieldKey": "hacknet", "defaultShown": false }
+        ],
         "nodeFilters": [
             { "id": "rooted", "label": "Rooted", "key": "hasRoot", "accent": "#8ef0b5" },
             { "id": "backdoored", "label": "Backdoored", "key": "backdoorInstalled", "accent": "#6cb4ff" },
@@ -105,7 +108,7 @@ export const DASHBOARD_VIEW_METADATA = {
         "currentKey": "current",
         "layoutKey": "layout",
         "routesKey": "showRoutes",
-        "cloudKey": "showCloud",
+        "visibilityTogglesKey": "showVisibilityToggles",
         "filtersKey": "showNodeFilters",
         "stateSetKey": "stateSet",
         "metricSetKey": "metricSet",

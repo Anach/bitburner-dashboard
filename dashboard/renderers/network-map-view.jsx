@@ -108,11 +108,12 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const activeTelemetry = modeMaps ? (modeMaps[activeModeId] ?? null) : telemetry;
     const layoutStrategy = String(getDashboardViewValue(activeModeOption, modeSelector.layoutKey) ?? "layered");
     const showRoutes = getDashboardViewValue(activeModeOption, modeSelector.routesKey) !== false;
-    const showCloudControl = getDashboardViewValue(activeModeOption, modeSelector.cloudKey) !== false;
+    const showVisibilityToggles = getDashboardViewValue(activeModeOption, modeSelector.visibilityTogglesKey) !== false;
     const showNodeFilters = getDashboardViewValue(activeModeOption, modeSelector.filtersKey) !== false;
     const stateSetId = String(getDashboardViewValue(activeModeOption, modeSelector.stateSetKey) ?? "");
     const metricSetId = String(getDashboardViewValue(activeModeOption, modeSelector.metricSetKey) ?? "");
     const filterDefinitions = Array.isArray(filterConfig.nodeFilters) ? filterConfig.nodeFilters : [];
+    const visibilityToggleDefinitions = Array.isArray(filterConfig.visibilityToggles) ? filterConfig.visibilityToggles : [];
     const stateDefinitions = Array.isArray(view?.stateSets?.[stateSetId])
         ? view.stateSets[stateSetId]
         : Array.isArray(view?.states) ? view.states : [];
@@ -154,9 +155,19 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const [transform, setTransform] = React.useState(() => savedInteraction?.transform ?? { x: 24, y: 70, scale: 1 });
     const [selectedId, setSelectedId] = React.useState(() => String(savedInteraction?.selectedId ?? ""));
     const [stepTargetId, setStepTargetId] = React.useState(() => String(savedInteraction?.stepTargetId ?? ""));
-    const [showCloud, setShowCloud] = React.useState(() => typeof savedInteraction?.showCloud === "boolean"
-        ? savedInteraction.showCloud
-        : Boolean(filterConfig.showCloudDefault));
+    // Keyed by each visibilityToggles[].id (e.g. "cloud", "hacknet") - a generic N-toggle version
+    // of what used to be a single hardcoded showCloud boolean, so a view descriptor can declare any
+    // number of independent "hide this category of node" controls, not just one.
+    const [visibilityToggleState, setVisibilityToggleState] = React.useState(() => {
+        const saved = savedInteraction?.visibilityToggleState;
+        const state = {};
+        for (const toggle of visibilityToggleDefinitions) {
+            state[toggle.id] = saved && typeof saved[toggle.id] === "boolean"
+                ? saved[toggle.id]
+                : Boolean(toggle.defaultShown);
+        }
+        return state;
+    });
     const [modeMenuOpen, setModeMenuOpen] = React.useState(() => Boolean(savedInteraction?.modeMenuOpen));
     const [filtersOpen, setFiltersOpen] = React.useState(() => Boolean(savedInteraction?.filtersOpen));
     const [selectedFilterIds, setSelectedFilterIds] = React.useState(() => Array.isArray(savedInteraction?.selectedFilterIds)
@@ -168,10 +179,15 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const [showManual, setShowManual] = React.useState(() => hasManual && Boolean(savedInteraction?.showManual));
     const [isPanning, setIsPanning] = React.useState(false);
     const [clipboardNotice, setClipboardNotice] = React.useState("");
-    const nodes = showCloudControl
-        ? allNodes.filter((node) => showCloud || !Boolean(getDashboardViewValue(node, fields.cloud)))
+    const nodes = showVisibilityToggles
+        ? allNodes.filter((node) => visibilityToggleDefinitions.every((toggle) => (
+            visibilityToggleState[toggle.id] || !Boolean(getDashboardViewValue(node, fields[toggle.fieldKey]))
+        )))
         : allNodes;
-    const cloudCount = allNodes.filter((node) => Boolean(getDashboardViewValue(node, fields.cloud))).length;
+    const visibilityToggleCounts = Object.fromEntries(visibilityToggleDefinitions.map((toggle) => [
+        toggle.id,
+        allNodes.filter((node) => Boolean(getDashboardViewValue(node, fields[toggle.fieldKey]))).length,
+    ]));
     const layout = layoutStrategy === "grouped"
         ? buildGroupedNetworkLayout(nodes, fields, layoutConfig)
         : buildLayeredNetworkLayout(nodes, fields, layoutConfig);
@@ -202,7 +218,10 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     const overlayInsetRight = Math.max(0, Number(layoutConfig.overlayInsetRight) || 0);
     const inspectorWidth = Math.max(240, Number(layoutConfig.inspectorWidth) || 286);
     const inspectorLabelWidth = Math.max(90, Math.min(inspectorWidth - 100, Number(layoutConfig.inspectorLabelWidth) || 120));
-    const previousShowCloudRef = React.useRef(showCloud);
+    // A compact string fingerprint of every toggle's current on/off state - lets the fit-on-toggle
+    // effect below detect "something changed" generically, without one ref per toggle id.
+    const visibilityToggleStateKey = visibilityToggleDefinitions.map((toggle) => (visibilityToggleState[toggle.id] ? "1" : "0")).join("");
+    const previousVisibilityToggleStateKeyRef = React.useRef(visibilityToggleStateKey);
     const previousDetailsSelectedIdRef = React.useRef(selectedId);
 
     React.useEffect(() => {
@@ -224,14 +243,14 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
     };
 
     React.useLayoutEffect(() => {
-        const cloudVisibilityChanged = previousShowCloudRef.current !== showCloud;
-        if ((!cloudVisibilityChanged && fittedRef.current === activeModeId) || !viewportRef.current || nodes.length === 0) return;
+        const visibilityChanged = previousVisibilityToggleStateKeyRef.current !== visibilityToggleStateKey;
+        if ((!visibilityChanged && fittedRef.current === activeModeId) || !viewportRef.current || nodes.length === 0) return;
         const bounds = viewportRef.current.getBoundingClientRect();
         lastViewportBoundsRef.current = { width: bounds.width, height: bounds.height };
         setTransform(fitNetworkLayout(layout, getUsableViewportWidth(bounds), bounds.height, layoutConfig));
         fittedRef.current = activeModeId;
-        previousShowCloudRef.current = showCloud;
-    }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length]);
+        previousVisibilityToggleStateKeyRef.current = visibilityToggleStateKey;
+    }, [view?.id, activeModeId, visibilityToggleStateKey, layout.width, layout.height, nodes.length]);
 
     React.useLayoutEffect(() => {
         const element = viewportRef.current;
@@ -251,7 +270,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         });
         observer.observe(element);
         return () => observer.disconnect();
-    }, [view?.id, activeModeId, showCloud, layout.width, layout.height, nodes.length, Boolean(selectedNode)]);
+    }, [view?.id, activeModeId, visibilityToggleStateKey, layout.width, layout.height, nodes.length, Boolean(selectedNode)]);
 
     // useLayoutEffect (not useEffect) so this save is synchronous with the click that caused it.
     // The dashboard's outer main loop can remount this whole tree via a fresh ns.printRaw() call
@@ -267,7 +286,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             fittedModeId: fittedRef.current,
             selectedId,
             stepTargetId,
-            showCloud,
+            visibilityToggleState,
             selectedModeId: activeModeId,
             modeMenuOpen,
             filtersOpen,
@@ -277,7 +296,7 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
             viewportBounds: lastViewportBoundsRef.current,
             showManual,
         });
-    }, [view?.id, activeModeId, transform.x, transform.y, transform.scale, selectedId, stepTargetId, showCloud, modeMenuOpen, filtersOpen, selectedFilterIds.join("|"), searchText, detailsScrollTop, showManual]);
+    }, [view?.id, activeModeId, transform.x, transform.y, transform.scale, selectedId, stepTargetId, visibilityToggleStateKey, modeMenuOpen, filtersOpen, selectedFilterIds.join("|"), searchText, detailsScrollTop, showManual]);
 
     React.useLayoutEffect(() => {
         const element = detailsRef.current;
@@ -415,13 +434,14 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
         // reacts to activeModeId changing - covers both this click path and initial mount.
     };
 
-    const toggleCloudServers = () => {
-        const nextShowCloud = !showCloud;
-        if (!nextShowCloud) {
-            if (selectedNode && Boolean(getDashboardViewValue(selectedNode, fields.cloud))) setSelectedId("");
-            if (stepTargetNode && Boolean(getDashboardViewValue(stepTargetNode, fields.cloud))) setStepTargetId("");
+    const toggleVisibility = (toggle) => {
+        const nextShown = !visibilityToggleState[toggle.id];
+        if (!nextShown) {
+            const fieldName = fields[toggle.fieldKey];
+            if (selectedNode && Boolean(getDashboardViewValue(selectedNode, fieldName))) setSelectedId("");
+            if (stepTargetNode && Boolean(getDashboardViewValue(stepTargetNode, fieldName))) setStepTargetId("");
         }
-        setShowCloud(nextShowCloud);
+        setVisibilityToggleState((current) => ({ ...current, [toggle.id]: nextShown }));
     };
 
     const toggleNodeFilter = (filterId) => {
@@ -842,23 +862,27 @@ export function NetworkMapView({ view, telemetry, serviceStatus, onCommand, onIn
                 {actionConfig.refreshCommand ? (
                     <button type="button" title="Refresh map telemetry" style={styles.actionButton} onClick={() => sendCommand(actionConfig.refreshCommand)}>Refresh</button>
                 ) : null}
-                {showCloudControl && fields.cloud ? (
-                    <button
-                        type="button"
-                        title={`${showCloud ? "Hide" : "Show"} ${filterConfig.cloudLabel ?? "filtered servers"}`}
-                        style={{
-                            ...styles.actionButton,
-                            ...(showCloud ? {
-                            color: "#8fc5ff",
-                            borderColor: "rgba(108, 180, 255, 0.55)",
-                            background: "rgba(10, 24, 38, 0.95)",
-                        } : {}),
-                        }}
-                        onClick={toggleCloudServers}
-                    >
-                        {showCloud ? "Hide" : "Show"} {filterConfig.cloudLabel ?? "Filtered"} ({cloudCount})
-                    </button>
-                ) : null}
+                {showVisibilityToggles ? visibilityToggleDefinitions.filter((toggle) => fields[toggle.fieldKey]).map((toggle) => {
+                    const shown = Boolean(visibilityToggleState[toggle.id]);
+                    return (
+                        <button
+                            key={toggle.id}
+                            type="button"
+                            title={`${shown ? "Hide" : "Show"} ${toggle.label ?? "filtered servers"}`}
+                            style={{
+                                ...styles.actionButton,
+                                ...(shown ? {
+                                color: "#8fc5ff",
+                                borderColor: "rgba(108, 180, 255, 0.55)",
+                                background: "rgba(10, 24, 38, 0.95)",
+                            } : {}),
+                            }}
+                            onClick={() => toggleVisibility(toggle)}
+                        >
+                            {shown ? "Hide" : "Show"} {toggle.label ?? "Filtered"} ({visibilityToggleCounts[toggle.id] ?? 0})
+                        </button>
+                    );
+                }) : null}
                 {hasManual ? (
                     <button
                         type="button"

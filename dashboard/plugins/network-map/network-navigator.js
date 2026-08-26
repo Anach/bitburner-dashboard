@@ -279,6 +279,14 @@ function buildCityMap(ns, city, networkNodes, player, singularityAvailable, last
     };
 }
 
+// No NS-exposed flag distinguishes a Hacknet Server from a normal one (ns.getServer() returns the
+// same plain shape for both) - the engine itself reserves this hostname prefix, refusing to let any
+// normal or purchased server collide with it, so it's a reliable signal. "hacknet-node-" covers the
+// pre-BN9-upgrade name; "hacknet-server-" is what it becomes after upgrading to a Hacknet Server.
+function isHacknetServerHostname(hostname) {
+    return hostname.startsWith("hacknet-server-") || hostname.startsWith("hacknet-node-");
+}
+
 function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastCommand, activeModeId, xpPerSecondByHost, companyProgressByCity, singularityLastCommand) {
     const player = ns.getPlayer();
     const hackingLevel = Number(player?.skills?.hacking) || 0;
@@ -334,6 +342,7 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
             backdoorInstalled: Boolean(server.backdoorInstalled),
             purchased: Boolean(server.purchasedByPlayer),
             cloud: cloudServers.has(server.hostname),
+            hacknet: isHacknetServerHostname(server.hostname),
             hasContract,
             contractCount,
             story: STORY_SERVERS.has(server.hostname) || hasStoryFile,
@@ -358,11 +367,12 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
         };
     });
 
-    // Rooted normal-network fleet only - excludes home and cloud/purchased servers, since those
-    // already get their own dedicated Capacity gauges (hardware.home:ram, serverBuyer:cloud-ram)
-    // and would otherwise be double-counted here.
+    // Rooted normal-network fleet only - excludes home, cloud/purchased servers, and Hacknet
+    // servers, since those already get their own dedicated Capacity gauges (hardware.home:ram,
+    // serverBuyer:cloud-ram, reports.infrastructure:hacknet-ram) and would otherwise be
+    // double-counted here.
     const rootedNetworkRam = nodes.reduce((totals, node) => {
-        if (!node.hasRoot || node.purchased || node.cloud || node.id === "home") return totals;
+        if (!node.hasRoot || node.purchased || node.cloud || node.hacknet || node.id === "home") return totals;
         totals.used += node.ramUsed;
         totals.total += node.ramMax;
         return totals;
@@ -399,7 +409,7 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
         current: false,
         layout: "layered",
         showRoutes: true,
-        showCloud: true,
+        showVisibilityToggles: true,
         showNodeFilters: true,
         stateSet: "network",
         metricSet: "network",
@@ -423,7 +433,7 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
             current,
             layout: "grouped",
             showRoutes: false,
-            showCloud: false,
+            showVisibilityToggles: false,
             showNodeFilters: false,
             stateSet: "city",
             metricSet: "city",

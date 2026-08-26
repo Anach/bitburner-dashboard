@@ -14,6 +14,36 @@ integration.
 
 ### Added
 
+- **contract — Network Navigator's map can now hide Hacknet servers, alongside the existing Cloud
+  servers toggle** (`dashboard/plugins/network-map/network-navigator.js`,
+  `dashboard/plugins/network-map/network-view.js`, `dashboard/renderers/network-map-view.jsx`). The
+  previous mechanism only had room for one such toggle, hardcoded end-to-end as "cloud"
+  (`filters.showCloudDefault`/`cloudLabel`, `modeSelector.cloudKey`, a single `showCloud` React
+  state) - adding a second category meant either duplicating that whole chain or generalizing it, so
+  the `network-map` view schema (a documented, third-party-usable renderer) now declares
+  `filters.visibilityToggles`, an array of `{ id, label, fieldKey, defaultShown }` entries instead of
+  the single hardcoded slot; `modeSelector.cloudKey` is renamed `modeSelector.visibilityTogglesKey`
+  and the per-mode gate field it points at is renamed `showCloud` -> `showVisibilityToggles` (still a
+  single boolean per mode - city views hide every visibility toggle at once, exactly as before, just
+  no longer only the one). The renderer's own state generalizes the same way: one `showCloud` boolean
+  became a `visibilityToggleState` object keyed by each declared toggle's `id`, one hardcoded button
+  became a loop over `filterConfig.visibilityToggles`, and the fit-on-toggle effect now keys off a
+  compact fingerprint string of every toggle's state (`visibilityToggleStateKey`) instead of a single
+  `previousShowCloudRef`. Network Navigator declares both toggles today
+  (`{ id: "cloud", fieldKey: "cloud" }`, `{ id: "hacknet", fieldKey: "hacknet" }`); a third-party
+  plugin using the same `network-map` renderer can declare any number of its own.
+  Detecting a Hacknet server needed its own fix: Bitburner exposes no NS-level flag for it
+  (`ns.getServer()` returns the same shape for a Hacknet Server as a normal one) - the reliable
+  signal is the engine-reserved hostname prefix (`hacknet-server-`/`hacknet-node-`, confirmed against
+  `bitburner-src`, which refuses to let any normal or purchased server collide with either). New
+  `isHacknetServerHostname()` in `network-navigator.js` tags each node's `hacknet` field with it.
+  While there, fixed a related double-count: the "Rooted normal-network fleet" RAM tally already
+  excluded home and cloud/purchased servers because they have their own dedicated Capacity gauges
+  (`hardware.home:ram`, `serverBuyer:cloud-ram`) - it was still counting Hacknet servers into that
+  same total despite `reports.infrastructure:hacknet-ram` already covering them. No RAM change on
+  `network-navigator.js` (8.20 GB, unchanged - the new hostname check is pure string comparison, no
+  new `ns.*` call) or on the renderer (0 `ns.*` surface either way, pure React state/control-flow).
+
 - **contract — Service Supervisor now publishes one shared capability snapshot before admitting
   managed services.** `dashboard/libs/capabilities.js` exposes the normalized
   `data/dashboard_capabilities.json` contract plus a freshness-checked reader. Lightweight
