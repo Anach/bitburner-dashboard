@@ -1,7 +1,7 @@
 import { CITY_NAMES, getCityLocations } from "dashboard/plugins/network-map/city-locations.js";
 import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
 import { startHomeScript } from "dashboard/libs/runtime-actions.js";
-import { hasApiAccess } from "dashboard/libs/capabilities.js";
+import { readApiAccessSnapshot } from "dashboard/libs/capabilities.js";
 import { NETWORK_NAVIGATOR_COMMAND_PORT } from "dashboard/libs/port-registry.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
@@ -453,10 +453,11 @@ export async function main(ns) {
     let lastSnapshotSignature = "";
     while (true) {
         const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
-        // This launcher only needs two gates, so avoid the full capability snapshot's unrelated
-        // Stock API probes. fileExists() is already in this script's static call graph through
-        // startHomeScript(), while hasApiAccess() adds only getResetInfo().
-        const singularityAvailable = hasApiAccess(ns, "singularity");
+        // This launcher only needs two gates. Reuse the Service Supervisor's shared Singularity
+        // result rather than retaining another getResetInfo() call; fileExists() is already in
+        // this script's static call graph through startHomeScript().
+        const singularityCapability = readApiAccessSnapshot(ns, "singularity");
+        const singularityAvailable = singularityCapability.available && singularityCapability.hasAccess;
         const formulasAvailable = ns.fileExists("Formulas.exe", "home");
 
         // Launcher duties: start each gated worker once its own capability is cheaply detected.

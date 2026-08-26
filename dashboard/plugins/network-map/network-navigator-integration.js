@@ -4,7 +4,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "menuGroup": "software",
     "menuLabel": "Network Telemetry",
     "menuVisible": false,
-    "description": "Publishes normal-network topology and city locations, and handles dashboard navigation requests.",
+    "description": "Publishes normal-network topology and city locations, and queues Singularity navigation requests through transient network action workers.",
     "requirements": [
         { "type": "api", "id": "singularity", "required": false }
     ],

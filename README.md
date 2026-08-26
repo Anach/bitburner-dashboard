@@ -19,7 +19,8 @@ The framework discovers declarative integration descriptors, reads JSON telemetr
 - A native dashboard theme and an adapter that follows the active game theme.
 - Metadata-discovered services with no service-specific imports in dashboard core.
 - Generic start, stop, restart, edit, option, action, and requirement controls.
-- A metadata-driven supervisor for integrated daemon services.
+- A metadata-driven supervisor for integrated daemon services, including one shared capability
+  snapshot that lightweight launchers can reuse instead of duplicating API-unlock probes.
 - JSON telemetry fields, quick statistics, gauges, history graphs, lists, and resource cards.
 - Metadata-driven full-window overview, network-map, file-manager, and script-log views, plus retained embedded workspaces such as Mail Client.
 - Health filtering and daemon/on-demand lifecycle presentation.
@@ -63,8 +64,10 @@ Included plugins (each independently removable; only pay for what you keep insta
 | --- | ---: | ---: | --- |
 | Player Stats parent (`dashboard/plugins/player-stats/player-stats.js`) | 4.50 GB | 4.50 GB | Core HUD telemetry and accurate per-BitNode XP bars; Current Work is isolated so this parent has no Singularity RAM cost. |
 | Player Stats Current Work child (`dashboard/plugins/player-stats/player-stats-singularity.js`) | 9.60 GB | 2.10 GB | Default-off optional worker controlled by Player Status's **Singularity API** button. |
-| Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 9.20 GB | 9.20 GB | Owns network telemetry and launches the capability-gated child when Singularity is available. |
-| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 230.40 GB | 20.40 GB | Not normally launched without Singularity access. Parent + child cost **29.60 GB** with full SF4 scaling. |
+| Network Navigator parent (`dashboard/plugins/network-map/network-navigator.js`) | 8.20 GB | 8.20 GB | Owns network telemetry, reuses Service Supervisor's capability snapshot, and launches the gated child when Singularity is available. |
+| Network Navigator Singularity child (`dashboard/plugins/network-map/network-navigator-singularity.js`) | 33.70 GB | 3.70 GB | Persistent company reputation/favor telemetry only. Parent + child cost **11.90 GB** with full SF4 scaling. |
+| Network Navigator connect action (`dashboard/plugins/network-map/network-navigator-connect-action.js`) | 33.80 GB | 3.80 GB | Transient one-shot worker for direct/hop/route commands; may run on any eligible rooted host. |
+| Network Navigator location action (`dashboard/plugins/network-map/network-navigator-location-action.js`) | 162.10 GB | 12.10 GB | Transient one-shot worker for travel, open-location, and focused company-work commands. |
 |  Client Scanner (`dashboard/plugins/-client/-client-scanner.js`) | 5.25 GB | 5.25 GB | |
 |  Client Darknet Agent (`dashboard/plugins/-client/-client-darknet-agent.js`) | 7.65 GB | 7.65 GB | Self-propagates onto darknet servers via `ns.exec`; not a persistent daemon on `home`. |
 |  Client Reader (`dashboard/plugins/-client/-client-reader.js`) | 1.85 GB | 1.85 GB | One-shot helper, `ns.exec`'d onto reachable network hosts as needed; not a persistent daemon. |
@@ -381,6 +384,10 @@ Each `actions` entry renders one button. The default kind sends `command` over t
 
 **Placement.** An action with a `panelId` appears only on that panel. An action without one appears on the auto-injected Options panel, which is the right home for configuration toggles. Use `panelId` to put a button beside the data it acts on rather than in the settings tab.
 
+By default, panel-scoped actions render after that panel's state, telemetry sections, and inputs. Set
+`"actionsFirst": true` on a panel descriptor when its actions should form a toolbar above the panel
+content instead, such as a bulk action that applies to the resource-card list below it.
+
 **`kind: "clipboard"`** copies a string to the clipboard instead of dispatching anything. The payload comes from telemetry via `textKey` (a dotted path, resolved the same way telemetry `fields` are), so it tracks live game state. Because it sends no command, it is *not* gated on the runtime being alive — it stays usable while a capability-gated worker is stopped, which is the point: it exists for workflows the player must perform manually until an API unlocks. The button disables itself when the resolved text is empty, and if the browser refuses clipboard access the raw text is displayed instead so it can still be copied by hand.
 
 ### Declare requirements
@@ -415,6 +422,14 @@ declare its own `"requirements"` array; those requirements appear only in that p
 prevent the parent service from starting. When a panel represents a separately running child,
 set `"runtimeScript"` to its Home-relative path so the panel reports the child's actual running
 state rather than inheriting the parent service's state.
+
+These declarations are the dashboard's lifecycle and display contract. Service Supervisor also
+publishes its evaluated API state to `data/dashboard_capabilities.json` before admitting managed
+services. A lightweight launcher that is only supported under supervisor management may use
+`readApiAccessSnapshot()` to share that result; the reader rejects snapshots older than 90 seconds
+and fails closed when the file or requested API result is missing. This creates an intentional
+dependency on the optional supervisor, so a runtime that is also supported as a standalone entry
+point should retain its own capability probe instead.
 
 ## Metadata capabilities
 

@@ -14,6 +14,22 @@ integration.
 
 ### Added
 
+- **contract — Service Supervisor now publishes one shared capability snapshot before admitting
+  managed services.** `dashboard/libs/capabilities.js` exposes the normalized
+  `data/dashboard_capabilities.json` contract plus a freshness-checked reader. Lightweight
+  launchers can consume an API boolean without each retaining its own `ns.getResetInfo()` call;
+  missing, stale, or incomplete snapshots fail closed with a distinct waiting state. The paired
+  scripts repository migrates Corp Manager, Faction Manager, Server Manager, Augment Manager, and
+  Hacking Engine, while bundled Network Navigator is the sixth consumer—an exact 6.00 GB combined
+  steady-state saving.
+
+- **Network Navigator now runs navigation and city actions in specialized one-shot network
+  workers.** Port 25, command names, and result telemetry remain unchanged. The persistent
+  Singularity child now owns only company reputation/favor telemetry (3.70 GB at SF4.3; 33.70 GB at
+  SF4.1). Connect/route actions briefly use 3.80/33.80 GB, while travel/open-location/company-work
+  actions briefly use 12.10/162.10 GB and release it immediately. Actions queue serially and expose
+  the network-child supervisor's waiting-for-RAM feedback instead of silently failing.
+
 - **Optional current-work focus follows the dashboard window state.** Dashboard Options now includes
   a default-off **Focus current work when maximized** setting for Source-File 4 saves. When enabled,
   maximizing the dashboard focuses the active task; restoring to windowed mode or minimizing returns
@@ -93,6 +109,18 @@ integration.
     Home, so both safeguards follow Home RAM upgrades without requiring the options to be re-saved.
 
 ### Fixed
+
+- **Network Navigator carried a phantom 4.00 GB `sleeve.travel` charge.** A local command result
+  variable named `travel` was indistinguishable from the nested Netscript method to Bitburner's
+  static analyzer. Renaming it to `travelResult` reduced the pre-split worker from 20.40/230.40 GB
+  to 16.40/226.40 GB. The collision audits now supplement their generated top-level API list with
+  this confirmed nested method name, and the one-shot validator guards the replacement workers.
+
+- **contract** - Plugin panels can now place scoped actions above their content with
+  `"actionsFirst": true`. The default remains unchanged: non-Options panel actions render after
+  state, telemetry sections, and inputs. This lets bulk or toolbar-style controls lead the list they
+  operate on without adding integration-specific UI code; Augment Manager's Buy panel is the first
+  consumer in the paired scripts repository.
 
 - **`buildTargetSnapshot()` could crash a calling script on non-normal network hosts** -
   (`dashboard/libs/topology.js`) this is the shared BFS-target-eligibility helper the paired

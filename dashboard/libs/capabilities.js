@@ -9,6 +9,9 @@ const API_SOURCE_FILES = {
     hacknetServers: 9,
 };
 
+export const CAPABILITY_SNAPSHOT_FILE = "data/dashboard_capabilities.json";
+export const CAPABILITY_SNAPSHOT_MAX_AGE_MS = 90 * 1000;
+
 function getMapValue(mapLike, key) {
     if (mapLike instanceof Map) return Number(mapLike.get(key)) || 0;
     if (mapLike && typeof mapLike === "object") return Number(mapLike[key]) || 0;
@@ -35,6 +38,50 @@ export function hasApiAccess(ns, apiId) {
         return hasApiAccessFromResetInfo(ns.getResetInfo(), apiId);
     } catch (error) {
         return false;
+    }
+}
+
+export function createCapabilitySnapshotTelemetry(snapshot, generatedAt = Date.now()) {
+    const source = snapshot && typeof snapshot === "object" ? snapshot : {};
+    return {
+        generatedAt,
+        currentNode: Number(source.currentNode) || 0,
+        lastNodeReset: Number(source.lastNodeReset) || 0,
+        apis: Object.fromEntries(Object.keys(API_SOURCE_FILES).map((apiId) => [
+            apiId,
+            isCapabilityRequirementMet({ type: "api", id: apiId }, source),
+        ])),
+    };
+}
+
+// Cheap launcher-side access: the Service Supervisor already pays for the complete capability
+// snapshot, so managed services consume its fresh boolean instead of each retaining its own
+// getResetInfo() call. Missing/stale/malformed data fails closed and remains distinguishable from
+// a confirmed locked API, allowing launchers to report that they are waiting for the supervisor.
+export function readApiAccessSnapshot(ns, apiId, now = Date.now()) {
+    try {
+        if (!ns.fileExists(CAPABILITY_SNAPSHOT_FILE, "home")) {
+            return { available: false, hasAccess: false, status: "Waiting for Service Supervisor capabilities" };
+        }
+        const raw = ns.read(CAPABILITY_SNAPSHOT_FILE);
+        const snapshot = raw ? JSON.parse(raw) : null;
+        const generatedAt = Number(snapshot?.generatedAt) || 0;
+        if (!snapshot || now - generatedAt > CAPABILITY_SNAPSHOT_MAX_AGE_MS) {
+            return { available: false, hasAccess: false, status: "Waiting for fresh Service Supervisor capabilities" };
+        }
+        if (!snapshot.apis || typeof snapshot.apis[apiId] !== "boolean") {
+            return { available: false, hasAccess: false, status: "Waiting for complete Service Supervisor capabilities" };
+        }
+        return {
+            available: true,
+            hasAccess: snapshot.apis[apiId],
+            status: snapshot.apis[apiId] ? "Available" : "Locked",
+            generatedAt,
+            currentNode: Number(snapshot.currentNode) || 0,
+            lastNodeReset: Number(snapshot.lastNodeReset) || 0,
+        };
+    } catch (error) {
+        return { available: false, hasAccess: false, status: "Waiting for valid Service Supervisor capabilities" };
     }
 }
 
@@ -84,6 +131,7 @@ export function buildCapabilitySnapshot(ns, knownHomeFiles) {
 
     return {
         currentNode: Number(resetInfo.currentNode) || 0,
+        lastNodeReset: Number(resetInfo.lastNodeReset) || 0,
         ownedSourceFiles: resetInfo.ownedSF,
         ownedAugmentations: resetInfo.ownedAugs,
         homeFiles,

@@ -1,4 +1,9 @@
-import { areCapabilityRequirementsMet, buildCapabilitySnapshot } from "dashboard/libs/capabilities.js";
+import {
+    CAPABILITY_SNAPSHOT_FILE,
+    areCapabilityRequirementsMet,
+    buildCapabilitySnapshot,
+    createCapabilitySnapshotTelemetry,
+} from "dashboard/libs/capabilities.js";
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import {
     isServiceAutostartEnabled,
@@ -254,6 +259,16 @@ export async function main(ns) {
             return;
         }
 
+        // Publish before any launch decision so every managed service started in this pass sees a
+        // fresh, reset-specific capability view on its first cycle. This one existing
+        // getResetInfo()-backed snapshot replaces per-launcher probes throughout the service tree.
+        const capabilities = buildCapabilitySnapshot(ns, homeFiles);
+        await ns.write(
+            CAPABILITY_SNAPSHOT_FILE,
+            JSON.stringify(createCapabilitySnapshotTelemetry(capabilities, now)),
+            "w",
+        );
+
         if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) {
             ns.print("[LIFECYCLE] Autostart is paused (Kill All Scripts); skipping this cycle.");
             await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
@@ -262,7 +277,6 @@ export async function main(ns) {
 
         const runningProcesses = ns.ps("home") ?? [];
         const runningFiles = new Set(runningProcesses.map((process) => process.filename));
-        const capabilities = buildCapabilitySnapshot(ns);
         const options = readDashboardOptions(ns);
         // The persisted order is the admission order for every eligible autostart service. This
         // lets cheap or important daemons win limited Home capacity ahead of expensive ones; any

@@ -5663,7 +5663,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             actionsSectionKey: `${selectedItem}:${panelId}:actions`,
             actionsSectionLabel: "Script Controls",
             collapsibleActions: false,
-            actionsFirst: isPluginOptionsPanel,
+            actionsFirst: isPluginOptionsPanel || resolvedPanelMeta?.actionsFirst === true,
             actionLayout: isPluginOptionsPanel ? "feature-row" : "default",
             inputLayout,
         });
