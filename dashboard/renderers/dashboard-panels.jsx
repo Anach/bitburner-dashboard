@@ -45,14 +45,26 @@ export function Card({ title, subtitle, children, widgetStyles }) {
     );
 }
 
+// Matches the same success/warn/danger hues this component already borders itself with, plus every
+// other "warn" surface in the dashboard (renderHealthBadge, menuItemButtonActiveWarn, etc.) - a
+// warn-toned value (e.g. a network-child status stuck on "waiting-for-ram") now reads as a blocker
+// in the value text itself, not just a faint border tint. Neutral is left as this component's
+// existing default color, unchanged.
+const BADGE_LINE_VALUE_TONE_COLORS = {
+    success: "#6ee7a8",
+    warn: "#ffd88a",
+    danger: "#ff9a9a",
+};
+
 export function BadgeLine({ label, value, tone = "neutral", sourceLabel }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
+    const valueColor = BADGE_LINE_VALUE_TONE_COLORS[tone];
     return (
         <div data-dashboard-theme-role="data-row" style={{ ...styles.item, borderColor: tone === "success" ? "rgba(110, 231, 168, 0.25)" : tone === "warn" ? "rgba(255, 198, 92, 0.25)" : tone === "danger" ? "rgba(255, 122, 122, 0.25)" : "rgba(125, 160, 212, 0.12)" }}>
             <div data-dashboard-theme-role="data-heading" style={styles.itemTitle}>{label}</div>
-            <div data-dashboard-theme-role="data-value" style={styles.itemDetail}>{value}</div>
+            <div data-dashboard-theme-role="data-value" style={valueColor ? { ...styles.itemDetail, color: valueColor } : styles.itemDetail}>{value}</div>
             {sourceLabel ? <div style={styles.homeMetricSource}>via {sourceLabel}</div> : null}
         </div>
     );

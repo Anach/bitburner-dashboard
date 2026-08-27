@@ -136,6 +136,7 @@ import {
     getPluginIntegrationOverviewGauges,
     getPluginIntegrationGraphs,
     getPluginIntegrationOverviewLines,
+    getScriptGroupHealth,
     isIntegrationScriptRunning,
     loadPluginIntegrationStats,
     normalizePluginIntegrationOptions,
@@ -150,6 +151,7 @@ import {
     getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
 import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
+import { NETWORK_CHILD_STATUS_FILE } from "dashboard/libs/network-child-request.js";
 import { loadManualStrings, normalizeManualSections } from "dashboard/libs/manual-strings.js";
 import {
     getScriptListDetailEmptyMessage,
@@ -1969,6 +1971,37 @@ function getHomeRamStatus(ns) {
     return status;
 }
 
+const NETWORK_CHILD_STATUS_STALE_AFTER_MS = 30000;
+// The supervisor rewrites this file on its own ~5s heartbeat even when nothing about the tracked
+// children actually changed (network-child-supervisor.js's publishStatuses bumps generatedAt
+// regardless) - comparing only the generatedAt-stripped children content, not object identity or
+// raw file bytes, keeps this from looking "changed" every heartbeat when nothing worth reacting to
+// actually moved, so it can sit directly in renderSignature without forcing a re-render every 5s.
+let cachedNetworkChildStatus = null;
+
+function getNetworkChildStatusSnapshot(ns) {
+    if (!ns) return null;
+    let parsed = null;
+    try {
+        if (ns.fileExists(NETWORK_CHILD_STATUS_FILE, "home")) {
+            parsed = JSON.parse(ns.read(NETWORK_CHILD_STATUS_FILE));
+        }
+    } catch (error) {
+        parsed = null;
+    }
+    if (!parsed || typeof parsed.children !== "object" || parsed.children === null) return null;
+    if (Date.now() - (Number(parsed.generatedAt) || 0) > NETWORK_CHILD_STATUS_STALE_AFTER_MS) return null;
+
+    const signature = JSON.stringify(parsed.children);
+    if (cachedNetworkChildStatus?.signature === signature) {
+        return cachedNetworkChildStatus.value;
+    }
+
+    const value = { generatedAt: parsed.generatedAt, children: parsed.children };
+    cachedNetworkChildStatus = { signature, value };
+    return value;
+}
+
 function logMajorAction(ns, message, toastType = "info") {
     if (!ns) return;
     const normalizedToastType = toastType === "danger"
@@ -2558,6 +2591,10 @@ const DASHBOARD_HOME_WIDGET_TYPES = new Set(["metrics", "player-stats", "health"
 // automated path. normalizeDashboardActions() silently drops unknown kinds, so it must be listed.
 const SERVICE_ACTION_KINDS = new Set(["dashboard", "script", "save-options", "plugin-command", "clipboard"]);
 const SERVICE_HEALTH_LEVELS = new Set(["neutral", "info", "warn", "danger"]);
+const HEALTH_LEVEL_RANK = { neutral: 0, info: 1, warn: 2, danger: 3 };
+function moreSevereHealthLevel(a, b) {
+    return (HEALTH_LEVEL_RANK[b] ?? 0) > (HEALTH_LEVEL_RANK[a] ?? 0) ? b : a;
+}
 const SERVICE_CONTRACT_STRICT_MODE = Boolean(globalThis?.__DASHBOARD_SERVICE_STRICT_MODE__);
 
 function normalizeDashboardActions(actions = [], options = {}) {
@@ -2950,39 +2987,82 @@ function getServiceInputs(service, context) {
         .filter((input) => isServiceInputVisible(service, input, context?.options));
 }
 
+// Fully generic, no per-plugin opt-in required: any service that declares network children via
+// pluginMetadata.managedNetworkScripts (a flat array of script path strings, e.g.
+// ["affiliations/corp-manager/corp-manager-core.js"]) gets its declared children's health checked
+// automatically against data/network_child_status.json. Skips entirely once the parent isn't
+// running (getHealth above already reports that case) so this never double-warns, and silently
+// ignores any declared path with no matching status entry - that's an older, multi-host-clone-style
+// deployment (e.g. Hacking Ops' payloads, IPvGO's nsproxy.js) that never goes through the network-
+// child-supervisor's request/lease system at all, so it has no structured status to check here.
+function getNetworkChildHealthContribution(service, context) {
+    const scripts = Array.isArray(service?.pluginMetadata?.managedNetworkScripts)
+        ? service.pluginMetadata.managedNetworkScripts
+        : [];
+    if (scripts.length === 0) return null;
+
+    const parentRunning = (context?.homeScripts ?? []).some((script) => (
+        script?.filename === service.pluginFile && script?.running
+    ));
+    if (!parentRunning) return null;
+
+    const result = getScriptGroupHealth(scripts, context?.homeScripts, context?.networkChildStatus);
+    return result.level === "warn" ? result : null;
+}
+
 function getServiceHealth(service, context) {
-    if (typeof service?.getHealth !== "function") {
-        return { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
-    }
+    let level = "neutral";
+    let panels = {};
+    let panelSummaries = {};
+    let summary = "";
 
-    const rawHealth = service.getHealth(context);
-    if (!rawHealth || typeof rawHealth !== "object") {
-        return { level: "neutral", panels: {}, summary: "", panelSummaries: {} };
-    }
+    if (typeof service?.getHealth === "function") {
+        const rawHealth = service.getHealth(context);
+        if (rawHealth && typeof rawHealth === "object") {
+            level = SERVICE_HEALTH_LEVELS.has(rawHealth.level) ? rawHealth.level : "neutral";
+            summary = typeof rawHealth.summary === "string" ? rawHealth.summary : "";
 
-    const level = SERVICE_HEALTH_LEVELS.has(rawHealth.level) ? rawHealth.level : "neutral";
-    const panels = {};
-    const panelSummaries = {};
-    if (rawHealth.panels && typeof rawHealth.panels === "object") {
-        for (const [panelId, panelLevel] of Object.entries(rawHealth.panels)) {
-            if (typeof panelId !== "string") continue;
-            panels[panelId] = SERVICE_HEALTH_LEVELS.has(panelLevel) ? panelLevel : "neutral";
+            if (rawHealth.panels && typeof rawHealth.panels === "object") {
+                for (const [panelId, panelLevel] of Object.entries(rawHealth.panels)) {
+                    if (typeof panelId !== "string") continue;
+                    panels[panelId] = SERVICE_HEALTH_LEVELS.has(panelLevel) ? panelLevel : "neutral";
+                }
+            }
+
+            if (rawHealth.panelSummaries && typeof rawHealth.panelSummaries === "object") {
+                for (const [panelId, panelSummary] of Object.entries(rawHealth.panelSummaries)) {
+                    if (typeof panelId !== "string" || typeof panelSummary !== "string") continue;
+                    panelSummaries[panelId] = panelSummary;
+                }
+            }
         }
     }
 
-    if (rawHealth.panelSummaries && typeof rawHealth.panelSummaries === "object") {
-        for (const [panelId, panelSummary] of Object.entries(rawHealth.panelSummaries)) {
-            if (typeof panelId !== "string" || typeof panelSummary !== "string") continue;
-            panelSummaries[panelId] = panelSummary;
+    // Merged rather than replaced - a service's own RAM/script-bucket health (the 5 framework
+    // entries) or per-plugin health is an unrelated concern that must still surface even when a
+    // network child is also unhealthy.
+    const childContribution = getNetworkChildHealthContribution(service, context);
+    if (childContribution) {
+        level = moreSevereHealthLevel(level, childContribution.level);
+        summary = [summary, childContribution.summary].filter(Boolean).join(" | ");
+
+        // A panel with no runtimeScript(s) of its own doesn't get a specific per-child breakdown
+        // from the adapter factories (script-plugin.js/plugin-integration.js) - it implicitly
+        // represents the whole service, so it should inherit this aggregate contribution too.
+        // Without this, a service whose panels never declare runtimeScript (e.g. Augment Manager's
+        // "Status"/"Buy") would show the "!" badge on the left-menu item but never on any of its own
+        // sub-widget buttons. A panel that DOES declare its own runtimeScript(s) already has a more
+        // precise, specific answer from the factory and is left alone here.
+        const declaredPanels = Array.isArray(service?.pluginMetadata?.panels) ? service.pluginMetadata.panels : [];
+        for (const panelId of Object.keys(panels)) {
+            const declaredPanel = declaredPanels.find((candidate) => candidate?.id === panelId);
+            if (declaredPanel?.runtimeScript || declaredPanel?.runtimeScripts) continue;
+            panels[panelId] = moreSevereHealthLevel(panels[panelId] ?? "neutral", childContribution.level);
+            panelSummaries[panelId] = [panelSummaries[panelId], childContribution.summary].filter(Boolean).join(" | ");
         }
     }
 
-    return {
-        level,
-        panels,
-        summary: typeof rawHealth.summary === "string" ? rawHealth.summary : "",
-        panelSummaries,
-    };
+    return { level, panels, summary, panelSummaries };
 }
 
 function formatUtilizationPercent(ratio) {
@@ -3460,7 +3540,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     };
 }
 
-function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused }) {
+function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused, networkChildStatus }) {
     const [uiState, setUiState] = React.useState(loadUiState);
     const [options, setOptions] = React.useState(() => persistedOptions ?? getDefaultOptions());
     const gameThemeSignature = getGameThemeSignature(gameTheme);
@@ -3857,6 +3937,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         selectedItem,
         homeScripts,
         homeRamStatus,
+        networkChildStatus,
         options,
         pluginDashboardOptionInputs,
         services: dashboardServiceRegistry.services,
@@ -6659,6 +6740,7 @@ export async function main(ns) {
             maximized: layoutSnapshot.maximized,
         });
         const homeRamStatus = getHomeRamStatus(ns);
+        const networkChildStatus = getNetworkChildStatusSnapshot(ns);
         // Computed here (the safe main-loop NS context) and threaded down as a prop rather than
         // called directly from inside a React handler - a click that re-renders the already-
         // mounted tree runs independently of this loop's own tick cadence, and calling any ns.*
@@ -6850,6 +6932,7 @@ export async function main(ns) {
                 activeDashboardTheme.signature,
                 autostartPaused,
                 manualStrings,
+                networkChildStatus,
             ];
             const canSkipRender = Array.isArray(lastRenderedSignature)
                 && renderSignature.length === lastRenderedSignature.length
@@ -6873,6 +6956,7 @@ export async function main(ns) {
                         scriptLogSnapshots={scriptLogSnapshots}
                         layoutSnapshot={layoutSnapshot}
                         autostartPaused={autostartPaused}
+                        networkChildStatus={networkChildStatus}
                     ></DashboardWidget>
                 );
                 ns.ui.renderTail();

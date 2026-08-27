@@ -4,6 +4,7 @@ import {
     buildPluginIntegrationInputs,
     getPluginIntegrationSections,
     getPluginIntegrationStateLines,
+    getScriptGroupHealth,
     isIntegrationScriptRunning,
 } from "dashboard/libs/plugin-integration.js";
 
@@ -52,19 +53,39 @@ export function buildScriptPluginService(plugin) {
             ]),
             [optionsPanelId, { title: `${menuLabel} Options`, accent: "#6cb4ff", subtitle: "Script controls" }],
         ]),
-        getHealth: ({ homeScripts }) => {
+        getHealth: ({ homeScripts, networkChildStatus }) => {
             const script = findPluginScript(homeScripts, filename);
-            const level = script.running || !daemon ? "neutral" : "warn";
+            // "danger" (not "warn") for a stopped daemon - matches the left-menu dot's own red for
+            // this exact case, and keeps it visually distinct from "warn", which now also means "a
+            // network child is stuck/blocked while the parent is running fine" (see
+            // getNetworkChildHealthContribution/getScriptGroupHealth). Not running because the
+            // service is merely on-demand (!daemon) stays "neutral" - nothing wrong there.
+            const level = script.running || !daemon ? "neutral" : "danger";
             const summary = script.running
                 ? `${menuLabel} is running.`
                 : daemon
                     ? `${menuLabel} is stopped.`
                     : `${menuLabel} runs on demand.`;
+            // A panel with a declared runtimeScript(s) reports its own child's health instead of
+            // blindly mirroring the whole-service level - see plugin-integration.js's matching
+            // mechanism (the "metadata" adapter's own getHealth) for the same convention.
+            const panelHealth = Object.fromEntries(navigationPanels.map((panel) => {
+                const scripts = Array.isArray(panel?.runtimeScripts) && panel.runtimeScripts.length > 0
+                    ? panel.runtimeScripts
+                    : typeof panel?.runtimeScript === "string" && panel.runtimeScript.length > 0
+                        ? [panel.runtimeScript]
+                        : null;
+                if (!scripts) return [panel.id, { level, summary }];
+                const panelHealthResult = getScriptGroupHealth(scripts, homeScripts, networkChildStatus);
+                return [panel.id, panelHealthResult.level === "warn"
+                    ? panelHealthResult
+                    : { level: "neutral", summary: `${panel.label ?? panel.id} is running.` }];
+            }));
             return {
                 level,
                 summary,
-                panels: Object.fromEntries(navigationPanels.map(({ id }) => [id, level])),
-                panelSummaries: Object.fromEntries(navigationPanels.map(({ id }) => [id, summary])),
+                panels: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.level])),
+                panelSummaries: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.summary])),
             };
         },
         getState: ({ selectedCenterPanel, homeScripts, options, telemetryByServiceId }) => {

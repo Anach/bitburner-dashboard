@@ -1,6 +1,45 @@
 import { formatMoney, formatRam, formatRelativeAge, formatSignedMoney } from "dashboard/libs/format-utils.js";
 import { TELEMETRY_FRESHNESS_STATES, getTelemetryFreshnessState } from "dashboard/libs/telemetry-freshness.js";
 
+// A persistent worker briefly between relaunches ("owner-stopped") or a one-shot that simply
+// finished or was turned off ("completed"/"cancelled") is expected, not a problem - only the
+// remaining statuses mean a declared network child isn't doing its job while its parent runs fine.
+export const NETWORK_CHILD_HEALTHY_STATUSES = new Set(["running", "completed", "cancelled", "owner-stopped"]);
+
+export function getNetworkChildScriptStatus(scriptPath, networkChildStatus) {
+    if (typeof scriptPath !== "string" || !scriptPath) return null;
+    const children = networkChildStatus?.children;
+    if (!children || typeof children !== "object") return null;
+    const entry = Object.values(children).find((candidate) => candidate?.script === scriptPath);
+    if (!entry) return null;
+    return {
+        healthy: NETWORK_CHILD_HEALTHY_STATUSES.has(entry.status),
+        label: entry.label ?? scriptPath,
+        detail: entry.detail ?? entry.status,
+    };
+}
+
+// "Warn" requires positive evidence of a problem - a script with no Home process AND no network-child
+// status entry at all is treated as neutral, not warn. Absence is the common, benign case (the
+// feature's own option is simply off and it has never published a request), not evidence of failure;
+// a real problem always leaves behind a status entry (waiting-for-ram/missing/etc.), while an
+// intentional off-switch leaves a "cancelled" entry, already in the healthy allowlist above. Accepts
+// an array so one panel/service can be backed by more than one child script.
+export function getScriptGroupHealth(scripts, homeScripts, networkChildStatus) {
+    const problems = [];
+    for (const scriptPath of Array.isArray(scripts) ? scripts : []) {
+        if (typeof scriptPath !== "string" || !scriptPath) continue;
+        const runningOnHome = (homeScripts ?? []).some((script) => script?.filename === scriptPath && script?.running);
+        if (runningOnHome) continue;
+        const netStatus = getNetworkChildScriptStatus(scriptPath, networkChildStatus);
+        if (!netStatus || netStatus.healthy) continue;
+        problems.push(`${netStatus.label}: ${netStatus.detail}`);
+    }
+    return problems.length > 0
+        ? { level: "warn", summary: problems.slice(0, 2).join("; ") }
+        : { level: "neutral", summary: "" };
+}
+
 const telemetryJsonCache = new Map();
 const integrationStatsCache = new WeakMap();
 // Default freshness window for a labeled `sources[]` entry (see loadPluginIntegrationStats /
@@ -121,7 +160,15 @@ export function buildPluginIntegrationTelemetryLine(stats, field, format) {
         ? (Number(toneValue) > 0 ? "warn" : "success")
         : field.tone === "signed"
             ? (Number(toneValue) > 0 ? "success" : Number(toneValue) < 0 ? "danger" : "neutral")
-            : field.tone ?? "neutral";
+            // A *Worker.status/*WorkerStatus field mirrors a network-child-supervisor status string
+            // verbatim (see NETWORK_CHILD_HEALTHY_STATUSES) - color it by what that value actually
+            // means instead of a fixed tone, so a blocked worker (waiting-for-ram/missing/etc.)
+            // stands out in yellow right in the status text, not just on the badge/tooltip.
+            : field.tone === "networkChildStatus"
+                ? (String(toneValue) === "running"
+                    ? "success"
+                    : NETWORK_CHILD_HEALTHY_STATUSES.has(String(toneValue)) ? "neutral" : "warn")
+                : field.tone ?? "neutral";
     return {
         label: field.label,
         value: formatTelemetryFieldValue(value, format ?? field.format),
@@ -816,10 +863,19 @@ export function buildPluginIntegrationService(plugin) {
         const runtimeLabel = panel.runtimeLabel ?? panel.title ?? panel.label ?? panel.id;
         return `${runtimeLabel} Status`;
     };
-    const isPanelRuntimeRunning = (panelId, homeScripts) => {
-        const runtimeScript = getPanelRuntimeScript(panelId);
-        return (homeScripts ?? []).some((script) => script?.filename === runtimeScript && script?.running);
+    // A panel may declare a single "runtimeScript" or (for a panel that represents more than one
+    // network child - e.g. Faction Manager's "Gang" panel covering Gangs, Gang Bootstrap, and the
+    // reputation-share Boost filler together) a "runtimeScripts" array. Falls back to the
+    // integration's own main script when a panel declares neither, matching the previous behavior.
+    const getPanelRuntimeScripts = (panelId) => {
+        const panel = panels.find((candidate) => candidate?.id === panelId);
+        if (Array.isArray(panel?.runtimeScripts) && panel.runtimeScripts.length > 0) return panel.runtimeScripts;
+        if (typeof panel?.runtimeScript === "string" && panel.runtimeScript.length > 0) return [panel.runtimeScript];
+        return [integration.scriptPath];
     };
+    const getPanelRuntimeHealth = (panelId, homeScripts, networkChildStatus) => (
+        getScriptGroupHealth(getPanelRuntimeScripts(panelId), homeScripts, networkChildStatus)
+    );
     return {
         id: integration.serviceId,
         menuGroup: integration.menuGroup,
@@ -836,7 +892,7 @@ export function buildPluginIntegrationService(plugin) {
             ...panels.map(({ id, label, ...metadata }) => [id, { title: label, ...metadata }]),
             [optionsPanelId, { title: `${integration.menuLabel} Options`, accent: "#6cb4ff", subtitle: "Script controls" }],
         ]),
-        getHealth: ({ homeScripts, telemetryByServiceId }) => {
+        getHealth: ({ homeScripts, telemetryByServiceId, networkChildStatus }) => {
             const running = (homeScripts ?? []).some((script) => script?.filename === integration.scriptPath && script?.running);
             const stats = telemetryByServiceId?.[integration.serviceId] ?? null;
             const telemetryLines = getPluginIntegrationStateLines(integration, stats, { running });
@@ -846,14 +902,18 @@ export function buildPluginIntegrationService(plugin) {
                 : daemon
                     ? `${integration.menuLabel} is stopped.`
                     : `${integration.menuLabel} runs on demand.`;
-            const level = running || !daemon ? "neutral" : "warn";
+            // "danger" (not "warn") for a stopped daemon - matches the left-menu dot's own red for
+            // this exact case, and keeps it visually distinct from "warn", which now also means "a
+            // network child is stuck/blocked while the parent is running fine" (see
+            // getNetworkChildHealthContribution/getScriptGroupHealth). Not running because the
+            // service is merely on-demand (!daemon) stays "neutral" - nothing wrong there.
+            const level = running || !daemon ? "neutral" : "danger";
             const panelHealth = Object.fromEntries(panels.map((panel) => {
-                if (!panel?.runtimeScript) return [panel.id, { level, summary }];
-                const panelRunning = isPanelRuntimeRunning(panel.id, homeScripts);
-                return [panel.id, {
-                    level: panelRunning ? "neutral" : "warn",
-                    summary: `${panel.label ?? panel.id} is ${panelRunning ? "running" : "stopped"}.`,
-                }];
+                if (!panel?.runtimeScript && !panel?.runtimeScripts) return [panel.id, { level, summary }];
+                const panelHealthResult = getPanelRuntimeHealth(panel.id, homeScripts, networkChildStatus);
+                return [panel.id, panelHealthResult.level === "warn"
+                    ? panelHealthResult
+                    : { level: "neutral", summary: `${panel.label ?? panel.id} is running.` }];
             }));
             return {
                 level,
@@ -862,9 +922,9 @@ export function buildPluginIntegrationService(plugin) {
                 panelSummaries: Object.fromEntries(Object.entries(panelHealth).map(([id, health]) => [id, health.summary])),
             };
         },
-        getState: ({ selectedCenterPanel, homeScripts, telemetryByServiceId, options }) => {
+        getState: ({ selectedCenterPanel, homeScripts, telemetryByServiceId, options, networkChildStatus }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
-            const running = isPanelRuntimeRunning(selectedCenterPanel, homeScripts);
+            const running = getPanelRuntimeHealth(selectedCenterPanel, homeScripts, networkChildStatus).level === "neutral";
             return getPluginIntegrationStateLines(integration, telemetryByServiceId?.[integration.serviceId] ?? null, {
                 running,
                 panelId: selectedCenterPanel,
@@ -872,9 +932,9 @@ export function buildPluginIntegrationService(plugin) {
                 configuredOptions: options,
             });
         },
-        getSections: ({ selectedCenterPanel, homeScripts, telemetryByServiceId }) => {
+        getSections: ({ selectedCenterPanel, homeScripts, telemetryByServiceId, networkChildStatus }) => {
             if (selectedCenterPanel === optionsPanelId) return [];
-            const running = isPanelRuntimeRunning(selectedCenterPanel, homeScripts);
+            const running = getPanelRuntimeHealth(selectedCenterPanel, homeScripts, networkChildStatus).level === "neutral";
             const runtimeScript = getPanelRuntimeScript(selectedCenterPanel);
             return getPluginIntegrationSections(
                 integration,

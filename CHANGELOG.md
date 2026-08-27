@@ -10,6 +10,146 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-27
+
+### Fixed
+
+- **A fully-stopped daemon and a running service with a merely-blocked network child both showed the
+  same yellow "!" and yellow highlight, even though the left-menu dot already colors them
+  differently (red vs green+badge)** - once "warn" started meaning "a network child is stuck/blocked
+  while the parent runs fine" (see below), reusing "warn" for "this daemon isn't running at all"
+  became actively misleading, not just imprecise: a red-dot/yellow-badge service looked identical at
+  the badge/border level to a green-dot/yellow-badge one. `script-plugin.js`'s and
+  `plugin-integration.js`'s `getHealth` both had the same `level = running || !daemon ? "neutral" :
+  "warn"` line - changed to `"danger"`, matching the dot's own red for this exact case. A service
+  that's merely on-demand and currently idle (`!daemon`) is unaffected and stays `"neutral"`, as
+  before - only "should be running but isn't" escalates.
+
+- **A service whose sub-widget panels never declare `runtimeScript`/`runtimeScripts` never showed
+  the network-child "!" badge on any of its own panels, only on the left-menu item** - reported
+  against Augment Manager (`"status"`/`"buy"` panels, neither declares a runtime script; its sole
+  child `augment-manager-shop.js` is only visible via `pluginMetadata.managedNetworkScripts`). The
+  same gap affects Corp Manager, Contract Solver, and any panel on any service that doesn't declare
+  its own specific mapping. Root cause: `getServiceHealth()` (`dashboard/automation-dashboard.jsx`)
+  already merged the network-child contribution into the top-level `level`/`summary`, but never
+  propagated it into `panels`/`panelSummaries` - those stayed exactly as the adapter factory computed
+  them pre-merge, which for a panel with no runtime script is just the whole-service Home-only
+  running check. Fixed by having the merge step also walk every panel key in `panels` and, for any
+  panel whose descriptor entry has neither `runtimeScript` nor `runtimeScripts`, fold in the same
+  contribution via `moreSevereHealthLevel()` - a panel that *does* declare its own mapping is left
+  alone since it already has a more precise, specific answer. No descriptor changes needed anywhere;
+  this activates correctly for every service already declaring `managedNetworkScripts` today.
+
+### Added
+
+- **A `*Worker.status`/`*WorkerStatus`-style telemetry field can now declare `"tone":
+  "networkChildStatus"` to color itself by what its own value actually means, instead of a fixed
+  static tone.** These fields mirror a `network-child-supervisor` status string verbatim (e.g.
+  `"waiting-for-ram"`), and every one of them across both repos was previously declared with a fixed
+  `"tone": "info"` regardless of value - a worker stuck waiting for RAM read in the exact same color
+  as one running fine. `dashboard/libs/plugin-integration.js`'s `buildPluginIntegrationTelemetryLine`
+  gained a new tone-keyword branch (alongside the existing `"warnWhenPositive"`/`"signed"` numeric
+  ones) that resolves to `"success"` for `"running"`, `"neutral"` for the rest of the healthy
+  allowlist (`"completed"`/`"cancelled"`/`"owner-stopped"`), and `"warn"` for anything else -
+  reusing the same `NETWORK_CHILD_HEALTHY_STATUSES` set the panel/menu health checks already use, so
+  there's exactly one place that defines what counts as a blocked worker.
+  - **This surfaced a second, wider gap**: `BadgeLine` (`dashboard/renderers/dashboard-panels.jsx`),
+    the shared component every status-line value in the dashboard renders through, only ever used
+    `tone` to tint the row's *border* - the value text itself was always the same fixed green
+    (`styles.itemDetail`'s `#9ddb9d`) no matter the tone, so even a `"warn"`-toned line never actually
+    read as a warning in its own text. New `BADGE_LINE_VALUE_TONE_COLORS` map
+    (`success`/`warn`/`danger`, matching the same hues this component already borders itself with and
+    every other warn surface in the dashboard uses) now colors the value text too when its tone is
+    one of those three; neutral-toned lines are unchanged. This affects every `BadgeLine` in the
+    dashboard, not just the new `networkChildStatus` fields - any existing `"warn"`/`"danger"`-toned
+    status line now reads as yellow/red text as well as a tinted border, which is the intended,
+    consistent completion of a tone system that already meant "pay attention" everywhere else
+    (badges, buttons) except here.
+  - See the paired `bitburner-scripts` repo's changelog for which 12 fields across 6 integrations
+    were switched to the new tone keyword.
+  - No RAM change (confirmed via the estimator on all three edited files - pure control-flow/lookup
+    and JSX styling, no new `ns.*` calls).
+
+- **contract — Sub-widget panel buttons now show which specific network child is unhealthy, instead
+  of every panel mirroring the whole service's badge identically.** Follow-up to the menu-level
+  indicator below, after feedback that a service with multiple children (Server Manager: Cloud/
+  Hacknet/Home; Faction Manager: Core/Gangs/Gang Bootstrap/Boost) showed the same "!" on every
+  sub-widget button regardless of which specific child was the actual problem.
+  - `dashboard/libs/plugin-integration.js` gained two exports:
+    `getNetworkChildScriptStatus(scriptPath, networkChildStatus)` (single source of truth for "is
+    this script path healthy," looked up by `entry.script` in `data/network_child_status.json` - no
+    requestId-naming convention relied on) and `getScriptGroupHealth(scripts, homeScripts,
+    networkChildStatus)`, which checks a list of script paths and returns `"warn"` only when at
+    least one has positive evidence of a problem (found, on Home or via a network-child status
+    entry, and not in the healthy allowlist `running`/`completed`/`cancelled`/`owner-stopped`) - an
+    entry that's simply never been requested is treated as neutral, not warn, since that's the
+    common case for a disabled optional feature, not evidence of failure.
+  - A panel's descriptor entry can now declare `"runtimeScript": "path.js"` (existing, previously
+    only implemented in the `"metadata"` adapter) or the new `"runtimeScripts": ["a.js", "b.js"]`
+    for a panel that represents more than one child. `plugin-integration.js`'s
+    `buildPluginIntegrationService` (the `"metadata"` adapter) had this partially built already but
+    only checked `homeScripts`, which would always report "stopped" for any since-migrated network
+    child; `dashboard/libs/script-plugin.js`'s `buildScriptPluginService` (the `"script"` adapter -
+    used by every current multi-child service) had no per-panel mechanism at all and blanket-applied
+    the whole-service level to every panel, which was the actual bug in the screenshot. Both now
+    share the same `getScriptGroupHealth` logic.
+  - **This also fixes a real, previously-dead bug**: `hacking-engine-integration.js` already
+    declared `"runtimeScript"` on its "Buyer" and "BDRouter" panels, but since Hacking Engine uses
+    the `"script"` adapter, that field was never read by anything - and even if it had been, the
+    Home-only check would have permanently misreported both panels as "stopped" now that Buyer/
+    BDRouter run as network children. Both bugs are fixed by the same change; no descriptor edit
+    needed for Hacking Engine.
+  - Content rollout: `server-manager-integration.js`'s 7 panels now declare `runtimeScript` grouped
+    by which of its 3 children each represents (`home` → the Home-upgrade worker; `status`/`graphs`/
+    `servers` → the Cloud buyer; `hacknet`/`hacknet-graphs`/`hacknet-servers` → the Hacknet buyer).
+    `faction-manager-integration.js`'s 5 panels now declare `runtimeScript(s)` matching its actual
+    existing telemetry layout (confirmed against the descriptor's own `telemetry.fields[].panelId`
+    assignments, not guessed from panel labels): `status` already surfaces Core's, Gang Bootstrap's,
+    *and* Boost's worker fields together, so it gets all three as `runtimeScripts`; `graphs` is
+    specifically Boost's own reputation-boost-over-time history graph (`sourceKey: "boost.history"`),
+    not Core's, so it gets only Boost; `gang-status`/`gang-members`/`gang-graphs` get only Gangs.
+    Corp Manager, Augment Manager, and Contract Solver have exactly one panel each and were left
+    alone - a single panel is already fully precise via the existing top-level signal. Progression
+    Report's one network child doesn't map cleanly onto any of its 14 existing panels and was
+    deliberately left for a dedicated content-authoring pass rather than bundling in a guess.
+  - No RAM change anywhere (confirmed via the estimator, before/after each file: `automation-
+    dashboard.jsx` 9.30 GB, `plugin-integration.js` 1.70 GB, `script-plugin.js` 1.60 GB, all
+    unchanged) - pure control-flow/lookup logic, no new `ns.*` calls.
+
+- **The left-menu health indicator now flags a service whose declared network child isn't healthy,
+  even while its parent daemon is running fine** (`dashboard/automation-dashboard.jsx`). Since the
+  network-child-supervisor migrations (see the paired `bitburner-scripts` repo's changelog for the
+  dozen "Offload X to network RAM" commits), a parent's own running/not-running dot no longer tells
+  the whole story - the parent can be alive while its dispatched worker is stuck waiting for RAM,
+  crashed, or simply missing, and the only way to see that used to be opening that service's own
+  Status panel and reading its worker fields one at a time.
+  This is a fully generic addition to the existing health-badge pipeline, not new UI: every
+  service's `getServiceHealth()` result already flows into the left-menu "!"/"!!" badge
+  (`renderHealthBadge`), the per-item hover tooltip (`getServiceItemTooltip`, which already prints
+  `Level: ...\n<summary>`), and the Danger/Warn/Healthy counters/filter - none of that changed. What
+  changed is the *input*: a new `getNetworkChildHealthContribution(service, context)` runs for any
+  service whose descriptor declares a non-empty `pluginMetadata.managedNetworkScripts` (already a
+  flat array of script path strings in every current descriptor - no descriptor changes needed
+  anywhere, in either repo). It skips entirely if the parent isn't running (the existing per-service
+  `getHealth` already reports that case, so there's no double-warn), then looks up each declared
+  script path against a newly-read `data/network_child_status.json` (`entry.script` already holds
+  the same path string, so matching needs no requestId-naming convention). A declared path with no
+  matching entry at all is silently ignored - that covers the older, multi-host-clone-style
+  `managedNetworkScripts` entries that predate the network-child-supervisor and never publish a
+  status entry (Hacking Ops' payloads, IPvGO's `nsproxy.js`, Faction Manager's
+  `faction-manager-share-loop.js`). Any matched entry whose `status` isn't in the benign allowlist
+  (`running`/`completed`/`cancelled`/`owner-stopped`) contributes `"warn"`, merged with (not
+  replacing) the service's own existing health level via a new `moreSevereHealthLevel()` rank helper,
+  since a framework service's own RAM/script-bucket health is an unrelated concern that must still
+  surface. New `getNetworkChildStatusSnapshot(ns)` reads and caches the status file the same way
+  `getHomeRamStatus()` already caches Home RAM - reusing the last parsed value (by comparing the
+  `generatedAt`-stripped `children` content, not object identity) so the supervisor's own ~5s
+  heartbeat rewrite of that file doesn't force a dashboard re-render every 5 seconds regardless of
+  whether anything actually changed; a 30s staleness cutoff avoids confidently reporting from data
+  the supervisor hasn't touched in a while (e.g. right after a dashboard restart). No RAM change -
+  confirmed via the estimator (9.30 GB unchanged before/after) since `ns.fileExists`/`ns.read` were
+  already called directly elsewhere in this same file.
+
 ## 2026-08-26
 
 ### Added
