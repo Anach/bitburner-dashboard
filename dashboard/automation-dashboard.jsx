@@ -64,6 +64,7 @@ import {
 } from "dashboard/libs/tail-layout.js";
 import { buildDashboardTailTitle } from "dashboard/libs/tail-title.js";
 import { formatMoney, formatRam } from "dashboard/libs/format-utils.js";
+import { sumStartOrderChildRam } from "dashboard/libs/start-order-ram.js";
 import {
     DASHBOARD_RAM_LIMIT_MODE_GB,
     DASHBOARD_RAM_LIMIT_MODE_PERCENT,
@@ -1703,11 +1704,13 @@ function isDashboardCoreScript(filename) {
 
 function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceRegistry()) {
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
-    // Children (managedScripts) are deliberately looked up against the *unfiltered* catalogue, not
+    // Capacity-planning children are deliberately looked up against the *unfiltered* catalogue, not
     // the daemon-only rows below: most children (faction-manager-core.js, faction-manager-gangs.js,
     // etc.) have no DASHBOARD_SCRIPT_METADATA of their own by design, so they'd never survive the
     // daemon===true filter themselves even though buildHomeScriptCatalog() already computed a live
-    // ramPerThread for every .js/.jsx file on home regardless of metadata.
+    // ramPerThread for every .js/.jsx file on home regardless of metadata. Descriptors that offload
+    // service children use capacityPlanningScripts; older Home-only descriptors fall back to their
+    // managedScripts lifecycle list inside sumStartOrderChildRam().
     const ramByFilename = new Map(scripts.map((script) => [script?.filename, script?.ramPerThread ?? 0]));
 
     return scripts
@@ -1716,16 +1719,13 @@ function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceR
             && !String(script?.filename ?? "").startsWith("trashbin/"))
         .map((script) => {
             const matchedService = registry.services.find((service) => service.pluginFile === script.filename);
-            const managedScripts = Array.isArray(matchedService?.pluginMetadata?.managedScripts)
-                ? matchedService.pluginMetadata.managedScripts
-                : [];
             const ownRamGb = script.ramPerThread ?? 0;
             // Summed regardless of whether each child's own internal option/toggle currently has it
             // running - this is the capacity-planning ceiling (every optional sub-feature enabled at
             // once), not today's live total. A child missing from home entirely (not yet synced)
             // silently contributes 0 rather than warning, matching this page's existing best-effort
             // reporting.
-            const childrenRamGb = managedScripts.reduce((sum, childFile) => sum + (ramByFilename.get(childFile) ?? 0), 0);
+            const childrenRamGb = sumStartOrderChildRam(matchedService?.pluginMetadata, ramByFilename);
             return {
                 serviceId: matchedService?.id || script.filename,
                 label: matchedService?.menuLabel || script.label || script.filename,

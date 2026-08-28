@@ -14,6 +14,16 @@ integration.
 
 ### Fixed
 
+- **Start Order lost every migrated service's `(Children - X GB)` cost after its workers moved from
+  Home to network RAM.** The capacity calculation still read only `managedScripts`, correctly
+  emptied by the offloading work, while the same workers now live under `managedNetworkScripts`.
+  Start Order now consumes a separate placement-independent `capacityPlanningScripts` descriptor
+  field, falling back to `managedScripts` for older integrations. This restores Augment Manager,
+  Contract Solver, Corp Manager, Faction Manager, Hacking Engine, Progression Report, and Server
+  Manager without treating ordinary network payloads, mailbox helpers, share loops, or `nsproxy`
+  as fixed service children. The Combined total is again the complete declared service-stack
+  ceiling regardless of which rooted host ultimately carries each worker.
+
 - **A fully-stopped daemon and a running service with a merely-blocked network child both showed the
   same yellow "!" and yellow highlight, even though the left-menu dot already colors them
   differently (red vs green+badge)** - once "warn" started meaning "a network child is stuck/blocked
