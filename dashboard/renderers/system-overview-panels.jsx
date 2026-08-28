@@ -5,6 +5,11 @@ import {
 } from "dashboard/libs/theme-adapter.js";
 import { RamGauge } from "dashboard/renderers/dashboard-metrics.jsx";
 import { getTelemetryFreshnessTooltip } from "dashboard/libs/telemetry-freshness.js";
+import {
+    NATIVE_OVERVIEW_ACTIONS,
+    readNativeOverviewActionState,
+    runNativeOverviewAction,
+} from "dashboard/libs/native-overview-actions.js";
 
 let React = null;
 let rawReact = null;
@@ -29,7 +34,7 @@ function getReact() {
 
 // muted matches TonePill/HomeMetricCard's own stale-state opacity (0.7) so an offline widget
 // fades consistently everywhere, regardless of which of these three components is showing it.
-export function HomePanel({ title, subtitle = "", children, widgetStyles, muted = false }) {
+export function HomePanel({ title, subtitle = "", headerActions = null, children, widgetStyles, muted = false }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
@@ -37,11 +42,160 @@ export function HomePanel({ title, subtitle = "", children, widgetStyles, muted 
         <section data-dashboard-theme-role="card-frame" style={{ ...styles.homePanel, opacity: muted ? 0.7 : 1 }}>
             <div style={styles.homePanelHeader}>
                 <div style={styles.homePanelTitle}>{title}</div>
-                {subtitle ? <div style={styles.homePanelSubtitle}>{subtitle}</div> : null}
+                {headerActions
+                    ? <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>{headerActions}</div>
+                    : subtitle ? <div style={styles.homePanelSubtitle}>{subtitle}</div> : null}
             </div>
             {children}
         </section>
     );
+}
+
+function NativeOverviewActionIcon({ action, state, onClick }) {
+    const available = state?.available === true;
+    const color = available ? state?.color || action.fallbackColor : "#526474";
+    const commonSvgProps = {
+        viewBox: "0 0 18 18",
+        width: "15",
+        height: "15",
+        focusable: "false",
+        "aria-hidden": "true",
+        style: { display: "block", pointerEvents: "none" },
+    };
+    return <button
+        type="button"
+        aria-label={action.ariaLabel}
+        title={available ? action.title : `${action.title} unavailable`}
+        disabled={!available}
+        onClick={onClick}
+        style={{
+            width: "22px",
+            minWidth: "22px",
+            height: "22px",
+            minHeight: "22px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2px",
+            color,
+            border: "none",
+            background: "transparent",
+            boxShadow: "none",
+            cursor: available ? "pointer" : "not-allowed",
+            opacity: available ? 1 : 0.55,
+        }}
+    >
+        {action.id === "save"
+            ? <svg {...commonSvgProps}>
+                <path fill="currentColor" d="M2 2h11l3 3v11H2V2Zm2 1.5V8h8V3.5H4Zm1.5 8V15h7v-3.5h-7ZM10 4.5h1v2h-1v-2Z" />
+            </svg>
+            : <svg {...commonSvgProps}>
+                <circle cx="9" cy="9" r="1.8" fill="currentColor" />
+                <path d="M5.9 5.9a4.4 4.4 0 0 0 0 6.2M12.1 5.9a4.4 4.4 0 0 1 0 6.2M3.5 3.5a7.8 7.8 0 0 0 0 11M14.5 3.5a7.8 7.8 0 0 1 0 11" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
+            </svg>}
+    </button>;
+}
+
+function WidgetHeaderContributionIcon({ action, onNavigate }) {
+    const badgeValue = Number.isFinite(action?.badgeValue) ? action.badgeValue : null;
+    const label = badgeValue == null
+        ? action.label
+        : `${action.label}: ${badgeValue} unread`;
+    return <button
+        type="button"
+        aria-label={label}
+        title={label}
+        onClick={() => onNavigate?.(action.navigateToServiceId)}
+        style={{
+            minWidth: "22px",
+            height: "22px",
+            minHeight: "22px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "2px",
+            padding: "2px",
+            color: "#ffd17a",
+            border: "none",
+            background: "transparent",
+            boxShadow: "none",
+            cursor: "pointer",
+        }}
+    >
+        {action.icon === "mail" ? <svg
+            viewBox="0 0 18 18"
+            width="15"
+            height="15"
+            focusable="false"
+            aria-hidden="true"
+            style={{ display: "block", pointerEvents: "none" }}
+        >
+            <path d="M2.25 4h13.5v10H2.25V4Zm.9 1.1L9 9.35l5.85-4.25M3.15 12.9l4.1-3.7m7.6 3.7-4.1-3.7" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="round" strokeLinecap="round" />
+        </svg> : null}
+        {badgeValue == null ? null : <span
+            aria-hidden="true"
+            style={{
+                color: "currentColor",
+                fontSize: "9px",
+                fontWeight: 700,
+                lineHeight: 1,
+                pointerEvents: "none",
+            }}
+        >[{badgeValue}]</span>}
+    </button>;
+}
+
+let nativeOverviewActionStateCache = Object.fromEntries(NATIVE_OVERVIEW_ACTIONS.map((action) => [
+    action.id,
+    { available: true, color: action.fallbackColor },
+]));
+
+export function PlayerStatusNativeOverviewControls({ contributedActions = [], onNavigate } = {}) {
+    const react = getReact();
+    if (!react) return null;
+    const controlsRef = react.useRef(null);
+    const [actionStates, setActionStates] = react.useState(() => nativeOverviewActionStateCache);
+    const usePrePaintEffect = react.useLayoutEffect ?? react.useEffect;
+
+    usePrePaintEffect(() => {
+        const refresh = () => {
+            const nextStates = Object.fromEntries(NATIVE_OVERVIEW_ACTIONS.map((action) => {
+                const observedState = readNativeOverviewActionState(controlsRef.current, action);
+                // The native Overview is normally always mounted. Retain the last confirmed state
+                // across a transient query miss or dashboard-card remount instead of flashing the
+                // disabled fallback icon during a telemetry refresh.
+                return [action.id, observedState.available
+                    ? observedState
+                    : nativeOverviewActionStateCache[action.id]];
+            }));
+            nativeOverviewActionStateCache = nextStates;
+            setActionStates((current) => NATIVE_OVERVIEW_ACTIONS.every((action) => {
+                return current?.[action.id]?.available === nextStates[action.id].available
+                    && current?.[action.id]?.color === nextStates[action.id].color;
+            }) ? current : nextStates);
+        };
+        refresh();
+        const interval = setInterval(refresh, 600);
+        return () => clearInterval(interval);
+    }, []);
+
+    return <div ref={controlsRef} style={{ display: "flex", alignItems: "center", gap: "5px", transform: "translateY(2px)" }}>
+        {NATIVE_OVERVIEW_ACTIONS.map((action) => <NativeOverviewActionIcon
+            key={action.id}
+            action={action}
+            state={actionStates[action.id]}
+            onClick={(event) => {
+                // The native handlers perform the real save/connect/disconnect/settings behavior.
+                // Neither handler applies the trusted-event restrictions used by Bitburner's minigames.
+                runNativeOverviewAction(event.currentTarget, action);
+            }}
+        />)}
+        {(Array.isArray(contributedActions) ? contributedActions : []).map((action) => <WidgetHeaderContributionIcon
+            key={`${action.contributionServiceId}:${action.id}`}
+            action={action}
+            onNavigate={onNavigate}
+        />)}
+    </div>;
 }
 
 export function PluginRuntimeWarning({ statuses = [] }) {

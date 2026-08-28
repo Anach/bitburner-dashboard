@@ -18,6 +18,7 @@ import {
     HomeMetricCard,
     HomePanel,
     HomeServiceLandscape,
+    PlayerStatusNativeOverviewControls,
 } from "dashboard/renderers/system-overview-panels.jsx";
 
 let React = null;
@@ -45,7 +46,7 @@ function getReact() {
     return React;
 }
 
-export function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl, closeControl, minimizeControl, compactControls = false, widgetStyles }) {
+export function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, playerStatusHeaderActions = [], onSelectPlayerStatusHeaderAction, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl, closeControl, minimizeControl, compactControls = false, widgetStyles }) {
     const react = getReact();
     const styles = widgetStyles ?? getWidgetStyles();
     if (!react) return null;
@@ -112,7 +113,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
             const runtimeStatuses = widgetServiceIds.map((serviceId) => serviceRuntimeById?.[serviceId]).filter(Boolean);
             const isOffline = runtimeStatuses.some((status) => status?.requiresRuntime && !status?.running);
             return <div key={widget.id} style={{ ...wrapperStyle, ...styles.playerStatusDividerColumn }}>
-                <HomePanel title={title} subtitle={subtitle} widgetStyles={styles} muted={isOffline}>
+                <HomePanel title={title} subtitle={subtitle} headerActions={<PlayerStatusNativeOverviewControls contributedActions={playerStatusHeaderActions} onNavigate={onSelectPlayerStatusHeaderAction} />} widgetStyles={styles} muted={isOffline}>
                     {isOffline
                         ? <div style={styles.muted}>Service is offline.</div>
                         : selectedDefinitions.length > 0

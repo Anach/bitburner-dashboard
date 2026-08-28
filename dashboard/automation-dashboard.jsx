@@ -77,7 +77,11 @@ import { normalizeDashboardActionCommand } from "dashboard/libs/action-command.j
 import { executeDashboardAction } from "dashboard/libs/action-executor.js";
 import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispatch.js";
 import { buildDashboardActionCommand as buildActionCommand } from "dashboard/libs/dashboard-action-command.js";
-import { buildPluginDashboardOptionInputs, selectDashboardWorkspaceWidgets } from "dashboard/libs/workspace-widgets.js";
+import {
+    buildPluginDashboardOptionInputs,
+    selectDashboardWidgetHeaderActions,
+    selectDashboardWorkspaceWidgets,
+} from "dashboard/libs/workspace-widgets.js";
 import { createDashboardSnapshotCoordinator } from "dashboard/libs/dashboard-snapshots.js";
 import {
     DASHBOARD_FRAME_CONTROL_LABELS,
@@ -108,6 +112,7 @@ import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/rend
 import {
     configureSystemOverviewPanels,
     HomePanel,
+    PlayerStatusNativeOverviewControls,
 } from "dashboard/renderers/system-overview-panels.jsx";
 import { configureDashboardGraphs, DataGraph as DashboardDataGraph } from "dashboard/renderers/dashboard-graphs.jsx";
 import {
@@ -3971,6 +3976,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             running: !service.pluginFile || homeScripts.some((script) => script?.filename === service.pluginFile && script?.running),
         }])
     );
+    const playerStatusHeaderActions = selectDashboardWidgetHeaderActions(
+        dashboardServiceRegistry.services,
+        "player-stats",
+        options,
+        telemetryByServiceId
+    );
     const workspaceWidgets = selectDashboardWorkspaceWidgets(
         dashboardServiceRegistry.services,
         selectedService,
@@ -5877,7 +5888,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
         return (
             <div key={`${widget.contributionServiceId}:${widget.id}`} style={WIDGET_STYLES.playerStatusColumn}>
-                <HomePanel title={title} subtitle={subtitle} muted={isOffline}>
+                <HomePanel title={title} subtitle={subtitle} headerActions={<PlayerStatusNativeOverviewControls contributedActions={playerStatusHeaderActions} onNavigate={selectItem} />} muted={isOffline}>
                     {isOffline
                         ? <div style={WIDGET_STYLES.muted}>Service is offline.</div>
                         : definitions.length > 0
@@ -5896,6 +5907,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     metrics={statsTiles}
                     playerHudDefinitions={playerHudDefinitions}
                     playerStatsEnabled={playerStatsEnabled}
+                    playerStatusHeaderActions={playerStatusHeaderActions}
+                    onSelectPlayerStatusHeaderAction={selectItem}
                     dashboardTheme={dashboardTheme}
                     gauges={quickGauges}
                     healthServices={homeHealthServices}

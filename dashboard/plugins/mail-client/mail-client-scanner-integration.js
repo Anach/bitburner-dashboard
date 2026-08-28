@@ -6,6 +6,17 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "menuGroup": "software",
     "menuLabel": "Mail Client",
     "description": "Persistent mailbox workspace backed by the scanner for messages, lore, and text files discovered across the network.",
+    "widgetHeaderActions": [
+        {
+            "id": "mail-client",
+            "targetWidgetType": "player-stats",
+            "icon": "mail",
+            "label": "Mail Client",
+            "navigateToServiceId": "mail.mailbox",
+            "badgeKey": "totalUnread",
+            "order": 20
+        }
+    ],
     "requirements": [
         { "type": "api", "id": "darknet", "required": false }
     ],

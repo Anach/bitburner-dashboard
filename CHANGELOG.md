@@ -10,6 +10,34 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-08-29
+
+### Added
+
+- **Mail Client can now contribute an unread-mail shortcut to the Player Status header.** Its
+  descriptor publishes a generic `widgetHeaderActions` contribution with an envelope icon, the
+  scanner's live `totalUnread` value as terminal-style bracketed text (for example, `[3]`), and its
+  normal workspace service destination. Selecting it therefore reuses the dashboard's standard
+  navigation path, including starting Mail Client when it is not already running. The contribution
+  is present only while Mail Client is shown in Plugin Manager, and works in both the System
+  Overview and normal workspace
+  Player Status cards without hard-coding Mail Client into either renderer. The focused Player
+  Status validator covers visible, hidden, zero, missing-telemetry, badge, and navigation contracts.
+
+- **Player Status now carries compact native Save and Remote API controls in its card header.** The
+  former right-aligned descriptive subtitle is replaced by two inline SVG icons in both the System
+  Overview widget and the normal workspace widget. They proxy Bitburner's always-mounted native
+  Character Overview buttons, preserving the game's real save behavior and Remote API
+  connect/disconnect/settings routing instead of reimplementing internal game functions. The
+  Remote API glyph mirrors the native icon's live status color and both controls disable if their
+  native target is unavailable. The bridge starts from each icon's `ownerDocument`, avoiding global
+  DOM access and any additional Netscript RAM charge. `HomePanel` gains a reusable `headerActions`
+  slot. The controls retain their last confirmed native availability/color in a module cache and
+  refresh it in a pre-paint layout effect, preventing dashboard telemetry remounts from briefly
+  flashing disabled fallback icons. The paired scripts repository's
+  `bitburner-scripts/tools/validate-player-status-native-controls.mjs` covers selector, click,
+  status-color, fallback, refresh stability, and both placement contracts.
+
 ## 2026-08-27
 
 ### Fixed
@@ -555,12 +583,10 @@ integration.
 
 ### Added
 
-- **RAM-collision audit tooling**, not-contained in this repo (own `acorn`/`acorn-walk`/
-  `acorn-jsx-walk`/`@babel/standalone` in `tools/`, independent of the private sibling.
-  `tools/audit-ram-collisions.mjs` walks every `.js`/`.jsx` file and flags any identifier matching
-  `data/ns_api_functions.json` — the definitive Netscript API function-name list, generated from the
-  game's own `NetscriptDefinitions.d.ts` and committed here (regenerated from the private
-  `bitburner-src` repo when available). Documented as mandatory for new/significantly modified scripts in
+- **RAM-collision audit tooling**, maintained centrally in the paired `bitburner-scripts` checkout.
+  Running `node tools/audit-ram-collisions.mjs --repo dashboard` there walks every dashboard
+  `.js`/`.jsx` file and flags any identifier matching the generated Netscript API function-name
+  list. It remains documented as mandatory for new/significantly modified scripts in
   `docs/DASHBOARD_DESIGN_PRINCIPLES.md`'s Performance Discipline section.
 
 ### Fixed
