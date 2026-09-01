@@ -478,6 +478,14 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
         const statsStateValue = typeof action.stateKey === "string"
             ? getTelemetryFieldValue(safeStats, action.stateKey)
             : undefined;
+        // Some command buttons are only meaningful in one authoritative runtime state (for
+        // example Activate only while inactive, Resume only while paused). Descriptors can publish
+        // that state as telemetry and name it here without teaching dashboard core about any
+        // particular integration. Missing/stale telemetry fails closed to disabled.
+        const enabledStateValue = typeof action.enabledStateKey === "string"
+            ? getTelemetryFieldValue(safeStats, action.enabledStateKey)
+            : true;
+        const enabledByState = action.enabledStateKey === undefined || enabledStateValue === true;
         // A persisted action updates the options store the instant it is clicked, while the daemon
         // it targets only reflects the change once its own loop drains the command and publishes
         // telemetry. Preferring the saved option here makes both toggles and explicit enum/mode
@@ -559,7 +567,11 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // work while the Singularity-gated worker is stopped.
             disabled: isClipboard
                 ? clipboardText.length === 0
-                : Boolean((requiresRuntime && !running) || (locked && action.lockWhenIntegrationLocked)),
+                : Boolean(
+                    (requiresRuntime && !running)
+                    || (locked && action.lockWhenIntegrationLocked)
+                    || !enabledByState
+                ),
             order: startingOrder + (Number(action.order) || index * 10),
             // Mirrors telemetry sections' own panelId scoping (getPluginIntegrationSections) - an
             // action with no panelId shows on every panel (the pre-existing, still-default

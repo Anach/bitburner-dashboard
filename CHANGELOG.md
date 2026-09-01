@@ -10,6 +10,26 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-01
+
+### Added
+
+- **Contract: descriptor actions can now declare `enabledStateKey`.** The generic action renderer
+  resolves that telemetry path and disables the action unless its current value is exactly `true`;
+  missing or stale telemetry fails closed. Meta-Orchestrator uses the contract to make
+  Activate/Deactivate mutually exclusive and to prevent Pause/Resume commands from appearing
+  available until its independent actuator and authoritative requested pause state allow them.
+
+- **Contract: Service Supervisor now supports the Meta-Orchestrator's explicit, opt-in core-service
+  Pause/Resume actuator.** While `servicePauseActuatorEnabled` is true, the supervisor reads
+  `data/service_pause_state.json`, stops requested Home daemons, and suppresses their normal
+  autostart. Both loading and admission enforce the exact three-service allowlist: Server Manager,
+  Hacking Engine, and Trading Engine. Turning the actuator off clears the saved pause state, so an
+  earlier administrative pause cannot return when the option is re-enabled. With the option off,
+  ordinary service lifecycle behavior remains unchanged. Changes to the actuator or requested
+  pause set now force a service pass from the existing one-second heartbeat, avoiding the normal
+  reconciliation loop's previous delay of up to 30 seconds.
+
 ## 2026-08-29
 
 ### Added
