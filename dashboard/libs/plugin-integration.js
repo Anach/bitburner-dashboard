@@ -543,6 +543,8 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // dispatched as a port command instead.
             kind: actionKind,
             featureSize: action.featureSize === true,
+            ...(typeof action.group === "string" && action.group.length > 0 ? { group: action.group } : {}),
+            ...(action.afterInputs === true ? { afterInputs: true } : {}),
             ...(isClipboard ? { text: clipboardText } : {}),
             command: action.command ?? variant?.command ?? (enabled ? action.disableCommand : action.enableCommand),
             // Per-action override for an integration whose merged components each still run their
@@ -572,7 +574,10 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
                     || (locked && action.lockWhenIntegrationLocked)
                     || !enabledByState
                 ),
-            order: startingOrder + (Number(action.order) || index * 10),
+            // Number(action.order) || index * 10 would silently discard an explicit order: 0 (0 is
+            // falsy) and fall through to the index-based default instead - mirrors the
+            // Number.isFinite(Number(action.port)) pattern just above for the same reason.
+            order: startingOrder + (Number.isFinite(Number(action.order)) ? Number(action.order) : index * 10),
             // Mirrors telemetry sections' own panelId scoping (getPluginIntegrationSections) - an
             // action with no panelId shows on every panel (the pre-existing, still-default
             // behavior), one with a panelId is confined to it. Lets buy-style actions live on their

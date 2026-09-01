@@ -10,25 +10,43 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-02
+
+### Added
+
+- **Contract: plugin actions can now declare `group` and `afterInputs`.** Named action groups render
+  in independent terminal-style sections, while `afterInputs: true` places an action after a
+  panel's configuration fields. Meta-Orchestrator uses this to present Orchestrator Controls,
+  Settings, then Service Blacklist without service-specific dashboard code.
+
+- **Contract: resource-card metrics gained responsive analytics presentation metadata.** Cards now
+  support compact money, ratio-percent, duration, and availability formats; `hideWhenEmpty` omits
+  inapplicable values, `hideWhenEqualKey` collapses redundant comparisons, and `fullWidth` gives
+  notes their own row. Meta-Orchestrator Income Routes uses these capabilities to replace its wide,
+  heavily wrapped table with one readable card per route.
+
 ## 2026-09-01
 
 ### Added
 
+- **Contract: Service Supervisor now consumes Meta-Orchestrator's expiring Startup Optimizer state.**
+  When `metaOrchestratorStartupOptimizerEnabled` is on, a fresh
+  `data/service_startup_optimizer_state.json` request can prepend only seven reviewed service IDs to
+  the normal configured start order. The reader rejects extra fields, wrong versions, future or
+  expired timestamps, intervals over 30 seconds, duplicates, and unknown IDs; when the option is
+  off it does not read the file. This replaces the earlier Stage 3 administrative Pause/Resume
+  integration, which duplicated each service's existing Start/Stop controls.
+
 - **Contract: descriptor actions can now declare `enabledStateKey`.** The generic action renderer
   resolves that telemetry path and disables the action unless its current value is exactly `true`;
-  missing or stale telemetry fails closed. Meta-Orchestrator uses the contract to make
-  Activate/Deactivate mutually exclusive and to prevent Pause/Resume commands from appearing
-  available until its independent actuator and authoritative requested pause state allow them.
+  missing or stale telemetry fails closed. The capability remains available to integrations even
+  though Meta-Orchestrator's simplified Stage 4 UI no longer needs separate Activate/Deactivate or
+  Pause/Resume actions.
 
-- **Contract: Service Supervisor now supports the Meta-Orchestrator's explicit, opt-in core-service
-  Pause/Resume actuator.** While `servicePauseActuatorEnabled` is true, the supervisor reads
-  `data/service_pause_state.json`, stops requested Home daemons, and suppresses their normal
-  autostart. Both loading and admission enforce the exact three-service allowlist: Server Manager,
-  Hacking Engine, and Trading Engine. Turning the actuator off clears the saved pause state, so an
-  earlier administrative pause cannot return when the option is re-enabled. With the option off,
-  ordinary service lifecycle behavior remains unchanged. Changes to the actuator or requested
-  pause set now force a service pass from the existing one-second heartbeat, avoiding the normal
-  reconciliation loop's previous delay of up to 30 seconds.
+### Fixed
+
+- **Descriptor action `order: 0` was treated as missing** because the normalizer used a truthy
+  fallback. Explicit zero now remains zero, matching negative and positive action orders.
 
 ## 2026-08-29
 

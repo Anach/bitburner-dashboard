@@ -7,6 +7,7 @@ import {
 import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "dashboard/libs/plugin-loader.js";
 import {
     isServiceAutostartEnabled,
+    getServiceStartOrder,
     sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
 import {
@@ -27,23 +28,24 @@ const EXCLUDED_RUNTIME_FOLDERS = ["dashboard", "libs", "trashbin"];
 const DASHBOARD_OPTIONS_FILE = "data/dashboard_options.json";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 const RAM_COMPARISON_EPSILON_GB = 1e-9;
-// Meta-orchestrator Stage 3 (bitburner-scripts' docs/META_ORCHESTRATOR_DESIGN.md) opt-in pause
-// actuator - a manual admin capability (pause/resume a whole core daemon), separate from and in
-// addition to that project's per-control effective-value overlay, which already pauses these same
-// 3 services' *purchasing sub-behavior* for free via the existing network-child reconciliation
-// (libs/temporary-script-launcher.js) once a control flips through the overlay - no Supervisor
-// change was needed for that. This is for stopping the *core daemon itself*, which has no
-// cooperative "please exit" flag the way a network child does, so ns.scriptKill (the same primitive
-// dashboard/libs/script-actions.js's stopHomeScript already uses for exactly that reason) is the
-// deliberate, narrowly-scoped exception. Entirely inert unless servicePauseActuatorEnabled is on
-// (default false) - every other service's behavior, and this whole file's behavior when the option
-// is off, is unchanged from before this addition.
-const SERVICE_PAUSE_STATE_FILE = "data/service_pause_state.json";
-const SERVICE_PAUSE_ACTUATOR_OPTION_KEY = "servicePauseActuatorEnabled";
-const SERVICE_PAUSE_ALLOWLIST = new Set([
-    "hardware/server-manager/server-manager.js",
-    "hacking/hacking-engine/hacking-engine.js",
-    "finances/trading-engine/trading-engine.js",
+// Meta-orchestrator Stage 4's proposal-driven Startup Optimizer. It may nudge only the explicitly
+// known managed service IDs earlier in the start-order queue. Its state is a strict, short-lived
+// trust boundary: malformed, future-dated, overlong, or expired files are ignored, so a stopped
+// adviser cannot leave persistent influence behind.
+const SERVICE_STARTUP_OPTIMIZER_STATE_FILE = "data/service_startup_optimizer_state.json";
+const SERVICE_STARTUP_OPTIMIZER_OPTION_KEY = "metaOrchestratorStartupOptimizerEnabled";
+const SERVICE_STARTUP_OPTIMIZER_MAX_TTL_MS = 30000;
+const SERVICE_STARTUP_OPTIMIZER_STATE_KEYS = new Set([
+    "schemaVersion", "generatedAt", "expiresAt", "optimizedServices",
+]);
+const STARTUP_OPTIMIZER_SERVICE_IDS = new Set([
+    "automation.batcher",
+    "automation.serverBuyer",
+    "automation.hacker",
+    "automation.stockTrader",
+    "progression.factions",
+    "progression.companies",
+    "software.augmentManager",
 ]);
 let cachedFileSignature = "";
 let cachedManagedServices = [];
@@ -58,15 +60,32 @@ function readDashboardOptions(ns) {
     }
 }
 
-function readPausedScripts(ns) {
-    if (!ns.fileExists(SERVICE_PAUSE_STATE_FILE, "home")) return new Set();
+export function readServiceStartupOptimizerState(ns, now = Date.now()) {
+    if (!ns.fileExists(SERVICE_STARTUP_OPTIMIZER_STATE_FILE, "home")) return [];
     try {
-        const parsed = JSON.parse(ns.read(SERVICE_PAUSE_STATE_FILE));
-        return Array.isArray(parsed?.pausedScripts)
-            ? new Set(parsed.pausedScripts.filter((script) => SERVICE_PAUSE_ALLOWLIST.has(script)))
-            : new Set();
+        const parsed = JSON.parse(ns.read(SERVICE_STARTUP_OPTIMIZER_STATE_FILE));
+        if (
+            !parsed
+            || typeof parsed !== "object"
+            || Array.isArray(parsed)
+            || !Object.keys(parsed).every((key) => SERVICE_STARTUP_OPTIMIZER_STATE_KEYS.has(key))
+            || parsed.schemaVersion !== 1
+            || !Number.isInteger(parsed.generatedAt)
+            || !Number.isInteger(parsed.expiresAt)
+            || parsed.generatedAt > now
+            || parsed.expiresAt <= parsed.generatedAt
+            || parsed.expiresAt - parsed.generatedAt > SERVICE_STARTUP_OPTIMIZER_MAX_TTL_MS
+            || now >= parsed.expiresAt
+            || !Array.isArray(parsed.optimizedServices)
+        ) return [];
+        const uniqueIds = new Set(parsed.optimizedServices);
+        if (
+            uniqueIds.size !== parsed.optimizedServices.length
+            || !parsed.optimizedServices.every((id) => typeof id === "string" && STARTUP_OPTIMIZER_SERVICE_IDS.has(id))
+        ) return [];
+        return [...parsed.optimizedServices];
     } catch (error) {
-        return new Set();
+        return [];
     }
 }
 
@@ -250,7 +269,7 @@ export async function main(ns) {
     const previousIssues = new Map();
     let nextServiceReconcileAt = 0;
     let previousNetworkChildIssue = "";
-    let previousServicePauseSignature = "";
+    let previousStartupOptimizerSignature = "";
 
     while (true) {
         try {
@@ -271,27 +290,24 @@ export async function main(ns) {
         }
 
         // The normal service-discovery/admission pass is intentionally only every 30 seconds, but
-        // Pause/Resume is an interactive control. Poll its tiny option/state contract on the
-        // existing one-second heartbeat and force the full pass only when that contract changes.
-        // This keeps ordinary supervisor work at its original cadence while making an accepted
-        // pause or resume visible at the process layer within roughly one heartbeat.
+        // Startup Optimizer is a proposal-driven control. Poll its tiny option/state contract on
+        // the existing one-second heartbeat and force the full pass only when that contract
+        // changes. When the option is off, the state file isn't even read - optimizedServiceIds
+        // stays empty and every downstream branch below is a byte-identical no-op to this feature
+        // not existing.
+        const now = Date.now();
         const options = readDashboardOptions(ns);
-        const pauseActuatorEnabled = options?.[SERVICE_PAUSE_ACTUATOR_OPTION_KEY] === true;
-        let pausedScripts = readPausedScripts(ns);
-        if (!pauseActuatorEnabled && pausedScripts.size > 0) {
-            pausedScripts = new Set();
-            await ns.write(SERVICE_PAUSE_STATE_FILE, JSON.stringify({ pausedScripts: [] }), "w");
-        }
-        const servicePauseSignature = JSON.stringify({
-            enabled: pauseActuatorEnabled,
-            pausedScripts: [...pausedScripts].sort(),
+        const startupOptimizerEnabled = options?.[SERVICE_STARTUP_OPTIMIZER_OPTION_KEY] === true;
+        const optimizedServiceIds = startupOptimizerEnabled ? readServiceStartupOptimizerState(ns, now) : [];
+        const startupOptimizerSignature = JSON.stringify({
+            enabled: startupOptimizerEnabled,
+            optimizedServiceIds: [...optimizedServiceIds].sort(),
         });
-        if (servicePauseSignature !== previousServicePauseSignature) {
-            previousServicePauseSignature = servicePauseSignature;
+        if (startupOptimizerSignature !== previousStartupOptimizerSignature) {
+            previousStartupOptimizerSignature = startupOptimizerSignature;
             nextServiceReconcileAt = 0;
         }
 
-        const now = Date.now();
         if (now < nextServiceReconcileAt) {
             await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
             continue;
@@ -332,7 +348,20 @@ export async function main(ns) {
         // The persisted order is the admission order for every eligible autostart service. This
         // lets cheap or important daemons win limited Home capacity ahead of expensive ones; any
         // launch blocked by a configured RAM safeguard is retried in the same order next cycle.
-        const orderedServices = sortByServiceStartOrder(services, options);
+        // Meta-orchestrator Stage 4 Startup Optimizer intents nudge this order without touching
+        // sortByServiceStartOrder itself: optimized ids are prepended ahead of the user's own
+        // configured order. The configured order is filtered to drop any id already optimized before
+        // concatenating - not because it changes the result (parseServiceStartOrder's own dedup
+        // already keeps a repeated id's FIRST occurrence, so a boosted id would still rank first
+        // even left in its original tail position too, confirmed directly against the real
+        // function), but so this code's own correctness is self-contained and doesn't depend on
+        // that upstream dedup direction never changing.
+        const configuredServiceStartOrder = getServiceStartOrder(options);
+        const optimizedServiceIdSet = new Set(optimizedServiceIds);
+        const effectiveServiceStartOrder = startupOptimizerEnabled && optimizedServiceIds.length > 0
+            ? [...optimizedServiceIds, ...configuredServiceStartOrder.filter((id) => !optimizedServiceIdSet.has(id))].join(",")
+            : options?.serviceStartOrder;
+        const orderedServices = sortByServiceStartOrder(services, { ...options, serviceStartOrder: effectiveServiceStartOrder });
         // The transient reserve protects free Home capacity, while the service limit bounds the
         // aggregate RAM of service entry scripts represented in the Start Order list. Both are
         // disabled at 0 for backward compatibility. Existing services count toward the aggregate
@@ -351,33 +380,10 @@ export async function main(ns) {
             ? calculateRunningManagedServiceRam(services, runningProcesses, resolveScriptRamGb)
             : 0;
 
-        // Meta-orchestrator Stage 3 opt-in pause actuator (see the constants above for the "why").
-        // Reading pausedScripts is unconditional (cheap - one small JSON file). Turning the
-        // actuator off clears its state, so an old pause cannot unexpectedly return when the user
-        // later re-enables it; the actuator itself only ever acts while the option is on.
-        if (pauseActuatorEnabled) {
-            for (const script of pausedScripts) {
-                if (!SERVICE_PAUSE_ALLOWLIST.has(script) || !runningFiles.has(script)) continue;
-                // A changed pause contract forces this pass on the one-second heartbeat. The
-                // ordinary 30-second pass remains idempotent enforcement: once killed, the script
-                // no longer appears in runningFiles; if something else restarts it manually, the
-                // next ordinary pass re-kills it rather than silently letting the pause lapse.
-                if (ns.scriptKill(script, "home")) {
-                    ns.print(`[LIFECYCLE] Paused ${script} (meta-orchestrator pause actuator).`);
-                    runningFiles.delete(script);
-                }
-            }
-        }
-
         for (const service of orderedServices) {
             const requirements = Array.isArray(service.requirements) ? service.requirements : [];
             if (!areCapabilityRequirementsMet(requirements, capabilities)) continue;
             if (!isServiceAutostartEnabled(service.serviceId, options)) continue;
-            if (
-                pauseActuatorEnabled
-                && SERVICE_PAUSE_ALLOWLIST.has(service.filename)
-                && pausedScripts.has(service.filename)
-            ) continue;
 
             const script = service.filename;
             const result = startManagedService(ns, service, runningFiles, {

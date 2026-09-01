@@ -3090,11 +3090,27 @@ function getGraphValue(record, key) {
 }
 
 function formatResourceCardValue(value, format = "text") {
+    if (value === undefined || value === null || value === "") return "n/a";
     if (format === "ram") return formatRam(Math.max(0, Number(value) || 0));
-    if (format === "number") return (Number(value) || 0).toLocaleString();
+    if (format === "number") return (Number(value) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
     if (format === "percent") return formatUtilizationPercent(Number(value) || 0);
     if (format === "money") return formatMoney(Number(value) || 0);
-    return value === undefined || value === null || value === "" ? "n/a" : String(value);
+    if (format === "compact-money") return formatCompactDashboardValue(Number(value), "money");
+    if (format === "ratio-percent") return `${Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100)}%`;
+    if (format === "duration") {
+        const milliseconds = Math.max(0, Number(value) || 0);
+        if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
+        if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0).replace(/\.0$/, "")}s`;
+        if (milliseconds < 3600000) return `${(milliseconds / 60000).toFixed(milliseconds < 600000 ? 1 : 0).replace(/\.0$/, "")}m`;
+        if (milliseconds < 86400000) return `${(milliseconds / 3600000).toFixed(milliseconds < 36000000 ? 1 : 0).replace(/\.0$/, "")}h`;
+        return `${(milliseconds / 86400000).toFixed(milliseconds < 864000000 ? 1 : 0).replace(/\.0$/, "")}d`;
+    }
+    if (format === "availability") return value === true ? "Available" : "Unavailable";
+    return String(value);
+}
+
+function isEmptyResourceCardValue(value) {
+    return value === undefined || value === null || value === "";
 }
 
 function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" }) {
@@ -3314,14 +3330,34 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                         <div style={WIDGET_STYLES.resourceCardBody}>
                             {metrics.length > 0 ? (
                                 <div style={WIDGET_STYLES.resourceMetricGrid}>
-                                    {metrics.map((metric) => (
-                                        <div key={metric.key}>
-                                            <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.resourceMetricLabel}>{metric.label}</div>
-                                            <div data-dashboard-theme-role="data-value" style={WIDGET_STYLES.resourceMetricValue}>
-                                                {formatResourceCardValue(getGraphValue(item, metric.key), metric.format)}
+                                    {metrics.filter((metric) => {
+                                        const value = getGraphValue(item, metric.key);
+                                        if (metric.hideWhenEmpty === true && isEmptyResourceCardValue(value)) return false;
+                                        if (typeof metric.hideWhenEqualKey === "string"
+                                            && value === getGraphValue(item, metric.hideWhenEqualKey)) return false;
+                                        return true;
+                                    }).map((metric) => {
+                                        const rawValue = getGraphValue(item, metric.key);
+                                        const availabilityColor = metric.format === "availability"
+                                            ? (rawValue === true ? "#6ee7a8" : "#ff7a7a")
+                                            : undefined;
+                                        const valueColor = availabilityColor ?? metric.accent;
+                                        return (
+                                            <div key={metric.key} style={metric.fullWidth ? { gridColumn: "1 / -1" } : undefined}>
+                                                <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.resourceMetricLabel}>{metric.label}</div>
+                                                <div
+                                                    data-dashboard-theme-role={valueColor ? undefined : "data-value"}
+                                                    style={{
+                                                        ...WIDGET_STYLES.resourceMetricValue,
+                                                        color: valueColor ?? WIDGET_STYLES.resourceMetricValue.color,
+                                                        overflowWrap: metric.fullWidth ? "anywhere" : undefined,
+                                                    }}
+                                                >
+                                                    {formatResourceCardValue(rawValue, metric.format)}
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             ) : null}
                             {utilization ? (
@@ -4372,10 +4408,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         // notice appears next to the button that produced it rather than on every panel.
         const showCopyNotice = copyNotice && actions.some((action) => action.kind === "clipboard");
 
-        return (
-            <div>
+        const renderActions = (groupActions) => (
             <div style={containerStyle}>
-                {actions.map((action) => (
+                {groupActions.map((action) => (
                     <button
                         type="button"
                         key={action.id}
@@ -4404,6 +4439,43 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     </button>
                 ))}
             </div>
+        );
+
+        const groupedActions = [];
+        const groupByKey = new Map();
+        for (const action of actions) {
+            const label = typeof action.group === "string" && action.group.length > 0 ? action.group : "";
+            const key = label || "__ungrouped";
+            let group = groupByKey.get(key);
+            if (!group) {
+                group = { key, label, actions: [] };
+                groupByKey.set(key, group);
+                groupedActions.push(group);
+            }
+            group.actions.push(action);
+        }
+        const hasNamedGroups = groupedActions.some((group) => group.label.length > 0);
+
+        return (
+            <div style={hasNamedGroups ? { display: "grid", gap: "14px" } : undefined}>
+            {hasNamedGroups ? groupedActions.map((group) => (
+                <section key={group.key} style={{ display: "grid", gap: "7px" }}>
+                    {group.label ? (
+                        <div
+                            data-dashboard-theme-role="data-heading"
+                            style={{
+                                ...WIDGET_STYLES.heading,
+                                marginBottom: 0,
+                                paddingBottom: "5px",
+                                borderBottom: "1px solid rgba(125, 160, 212, 0.32)",
+                            }}
+                        >
+                            {group.label}
+                        </div>
+                    ) : null}
+                    {renderActions(group.actions)}
+                </section>
+            )) : renderActions(actions)}
             {showCopyNotice ? (
                 <div
                     style={{
@@ -5411,6 +5483,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         const hasSections = Array.isArray(sections) && sections.length > 0;
         const hasInputs = Array.isArray(inputs) && inputs.length > 0;
         const hasActions = Array.isArray(actions) && actions.length > 0;
+        const leadingActions = actionsFirst ? actions.filter((action) => action.afterInputs !== true) : [];
+        const trailingActions = actionsFirst ? actions.filter((action) => action.afterInputs === true) : actions;
+        const hasLeadingActions = leadingActions.length > 0;
+        const hasTrailingActions = trailingActions.length > 0;
         const hasContent = hasState || hasSections || hasInputs || hasActions;
         const healthTone = getHealthSummaryTone(healthLevel);
         const showHealthSummary = typeof healthSummary === "string" && healthSummary.length > 0;
@@ -5433,7 +5509,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 ) : null}
                 {(showHealthSummary || showDescription) && hasContent ? <div style={WIDGET_STYLES.sectionGap} /> : null}
                 {!hasContent && emptyMessage ? <div style={WIDGET_STYLES.muted}>{emptyMessage}</div> : null}
-                {hasActions && actionsFirst ? (collapsibleActions ? (
+                {hasLeadingActions ? (collapsibleActions ? (
                     <div style={WIDGET_STYLES.actionGrid}>
                         <button
                             type="button"
@@ -5450,10 +5526,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         >
                             {uiState.expandedGroups?.[actionsSectionKey] ? "- " : "+ "}{actionsSectionLabel}
                         </button>
-                        {uiState.expandedGroups?.[actionsSectionKey] ? renderServiceActions(actions, actionLayout) : null}
+                        {uiState.expandedGroups?.[actionsSectionKey] ? renderServiceActions(leadingActions, actionLayout) : null}
                     </div>
-                ) : renderServiceActions(actions, actionLayout)) : null}
-                {hasActions && actionsFirst && (hasState || hasSections || hasInputs) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
+                ) : renderServiceActions(leadingActions, actionLayout)) : null}
+                {hasLeadingActions && (hasState || hasSections || hasInputs || hasTrailingActions) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
                 {hasState ? (
                     <div style={WIDGET_STYLES.list}>
                         {stateLines.map((line) => (
@@ -5461,12 +5537,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         ))}
                     </div>
                 ) : null}
-                {hasState && (hasSections || hasInputs || hasActions) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
+                {hasState && (hasSections || hasInputs || hasTrailingActions) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
                 {hasSections ? renderServiceSections(sections) : null}
-                {hasSections && (hasInputs || hasActions) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
+                {hasSections && (hasInputs || hasTrailingActions) ? <div style={WIDGET_STYLES.sectionGap} /> : null}
                 {hasInputs ? renderServiceInputs(inputs, inputLayout) : null}
-                {hasInputs && hasActions && !actionsFirst ? <div style={WIDGET_STYLES.sectionGap} /> : null}
-                {!actionsFirst && hasActions ? (collapsibleActions ? (
+                {hasInputs && hasTrailingActions ? <div style={WIDGET_STYLES.sectionGap} /> : null}
+                {hasTrailingActions ? (collapsibleActions ? (
                     <div style={WIDGET_STYLES.actionGrid}>
                         <button
                             type="button"
@@ -5483,9 +5559,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         >
                             {uiState.expandedGroups?.[actionsSectionKey] ? "- " : "+ "}{actionsSectionLabel}
                         </button>
-                        {uiState.expandedGroups?.[actionsSectionKey] ? renderServiceActions(actions, actionLayout) : null}
+                        {uiState.expandedGroups?.[actionsSectionKey] ? renderServiceActions(trailingActions, actionLayout) : null}
                     </div>
-                ) : renderServiceActions(actions, actionLayout)) : null}
+                ) : renderServiceActions(trailingActions, actionLayout)) : null}
             </Card>
         );
     };
