@@ -3096,6 +3096,7 @@ function formatResourceCardValue(value, format = "text") {
     if (format === "percent") return formatUtilizationPercent(Number(value) || 0);
     if (format === "money") return formatMoney(Number(value) || 0);
     if (format === "compact-money") return formatCompactDashboardValue(Number(value), "money");
+    if (format === "compact-number") return formatCompactDashboardValue(Number(value));
     if (format === "ratio-percent") return `${Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100)}%`;
     if (format === "duration") {
         const milliseconds = Math.max(0, Number(value) || 0);
@@ -3338,7 +3339,16 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                                         return true;
                                     }).map((metric) => {
                                         const rawValue = getGraphValue(item, metric.key);
-                                        const availabilityColor = metric.format === "availability"
+                                        const formatSelector = typeof metric.formatKey === "string"
+                                            ? getGraphValue(item, metric.formatKey)
+                                            : undefined;
+                                        const resolvedFormat = typeof formatSelector === "string"
+                                            ? metric.formatMap?.[formatSelector] ?? metric.format
+                                            : metric.format;
+                                        const resolvedSuffix = typeof formatSelector === "string"
+                                            ? metric.suffixMap?.[formatSelector] ?? ""
+                                            : "";
+                                        const availabilityColor = resolvedFormat === "availability"
                                             ? (rawValue === true ? "#6ee7a8" : "#ff7a7a")
                                             : undefined;
                                         const valueColor = availabilityColor ?? metric.accent;
@@ -3353,7 +3363,8 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                                                         overflowWrap: metric.fullWidth ? "anywhere" : undefined,
                                                     }}
                                                 >
-                                                    {formatResourceCardValue(rawValue, metric.format)}
+                                                    {formatResourceCardValue(rawValue, resolvedFormat)}
+                                                    {resolvedSuffix}
                                                 </div>
                                             </div>
                                         );

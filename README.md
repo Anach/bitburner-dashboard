@@ -438,7 +438,10 @@ The example intentionally demonstrates the most common integration path. The fra
 - Additional telemetry snapshots merged with `telemetry.sources`.
 - Quick-stat fields with `overview`, `overviewLabel`, and `overviewOrder`.
 - Circular quick gauges with `telemetry.overviewGauges`.
-- `graph`, `string-list`, `items`, `message`, and `resource-cards` sections.
+- `graph`, `string-list`, `items`, `message`, and `resource-cards` sections. A resource-card metric
+  can select its formatter from row data with `formatKey` plus `formatMap`, and append a matching
+  display-only unit with `suffixMap`; for example, one metric can render money and XP rows without
+  integration-specific dashboard code.
 - Numeric, On/Off dropdown, and general select inputs.
 - Telemetry-driven action variants and lock states.
 - On-demand runtimes with `"daemon": false`.

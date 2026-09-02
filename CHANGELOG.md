@@ -25,6 +25,11 @@ integration.
   notes their own row. Meta-Orchestrator Income Routes uses these capabilities to replace its wide,
   heavily wrapped table with one readable card per route.
 
+- **Contract: resource-card metrics can now select formats and suffixes from each row.** A metric's
+  optional `formatKey` resolves a discriminator from the current item, `formatMap` selects its
+  formatter, and `suffixMap` adds a display-only unit. Meta-Orchestrator uses this generic contract
+  to show money and hacking-XP gains together without rendering XP with a dollar prefix.
+
 ### Fixed
 
 - **Generic data tables now honor each column's existing `format` metadata.** Time, number, money,
