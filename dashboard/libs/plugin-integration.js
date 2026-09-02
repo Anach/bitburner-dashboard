@@ -120,7 +120,7 @@ function loadTelemetryJsonFile(ns, path) {
     }
 }
 
-function formatTelemetryFieldValue(value, format) {
+export function formatTelemetryFieldValue(value, format) {
     if (format === "money") return formatMoney(Number(value) || 0);
     if (format === "signedMoney") return formatSignedMoney(Number(value) || 0);
     if (format === "ram") return formatRam(Number(value) || 0);

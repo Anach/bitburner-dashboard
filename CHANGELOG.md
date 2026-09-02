@@ -25,6 +25,14 @@ integration.
   notes their own row. Meta-Orchestrator Income Routes uses these capabilities to replace its wide,
   heavily wrapped table with one readable card per route.
 
+### Fixed
+
+- **Generic data tables now honor each column's existing `format` metadata.** Time, number, money,
+  RAM, and other declared value formats use the same formatter as ordinary telemetry fields instead
+  of falling back to raw strings. This makes Meta-Orchestrator's Automatic Decision Log show local
+  times rather than epoch milliseconds; its time column is also left-aligned with the rest of the
+  table.
+
 ## 2026-09-01
 
 ### Added

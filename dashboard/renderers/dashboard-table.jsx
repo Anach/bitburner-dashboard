@@ -4,6 +4,7 @@ import {
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
 import { ACTION_TONE_STYLES, normalizeActionTone } from "dashboard/libs/action-tones.js";
+import { formatTelemetryFieldValue } from "dashboard/libs/plugin-integration.js";
 
 let React = null;
 let rawReact = null;
@@ -32,6 +33,11 @@ function getValue(value, key) {
         if (!current || typeof current !== "object" || !(segment in current)) return undefined;
         return current[segment];
     }, value);
+}
+
+function formatCellValue(value, column) {
+    if (value == null || value === "") return column.emptyValue ?? "-";
+    return formatTelemetryFieldValue(value, column.format);
 }
 
 function formatSummary(summary, rows, conflictCount) {
@@ -158,9 +164,9 @@ export function DashboardDataTable({ section, widgetStyles }) {
                                                     ...conflictStyle,
                                                 }}
                                             >
-                                                <div>{value == null || value === "" ? (column.emptyValue ?? "-") : String(value)}</div>
+                                                <div>{formatCellValue(value, column)}</div>
                                                 {secondary != null && secondary !== "" ? (
-                                                    <div style={{ ...baseStyles.smallMuted, marginTop: "2px", overflowWrap: "anywhere" }}>{String(secondary)}</div>
+                                                    <div style={{ ...baseStyles.smallMuted, marginTop: "2px", overflowWrap: "anywhere" }}>{formatTelemetryFieldValue(secondary, column.format)}</div>
                                                 ) : null}
                                             </td>
                                         );
