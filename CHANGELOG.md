@@ -12,6 +12,29 @@ integration.
 
 ## 2026-09-03
 
+### Added
+
+- **Contract: an enum option can now declare display labels for its values.** Adding a `labels` map
+  (`{ storedValue: "Shown Text" }`) to an entry in a descriptor's `options` block changes what every
+  select for that option shows, while the persisted value stays the raw id - so an option can keep a
+  stable machine-readable value without exposing it in the UI. Declared once on the option
+  definition and resolved by both the plugin panel's own inputs and `dashboardOptions`
+  contributions, so one setting reads identically everywhere it is surfaced. Values without a label
+  keep rendering as-is, and a contribution may still override the map with its own `optionLabels`.
+  Meta-Orchestrator uses this so its Goal selector reads "Maximise Hacking XP" rather than
+  `maximise_hacking_xp`.
+
+- **Contract: a descriptor's `dashboardOptions` contributions can now choose where they render.**
+  Each contribution accepts an optional `placement`; `system-overview` renders it in the System
+  Overview header beside the frame controls, while omitting the field keeps the original behavior of
+  appearing in the global Dashboard Options panel. A contribution no longer has to restate an enum
+  it already declares - when it supplies no `options` list, the choice list is resolved from the
+  plugin's own `options[optionKey].values`. Contributions from a menu-hidden service are now
+  filtered out, and the returned list is order-sorted, both matching the sibling
+  `widgetHeaderActions` channel's existing behavior. Meta-Orchestrator uses this to offer its Goal
+  selector next to Kill All Scripts, so the dashboard carries no plugin-specific identifiers to do
+  it.
+
 ### Changed
 
 - **Service Supervisor's Startup Optimizer allowlist is no longer hardcoded.** It previously
