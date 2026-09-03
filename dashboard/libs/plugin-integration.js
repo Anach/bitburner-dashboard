@@ -54,6 +54,15 @@ function getObject(value) {
     return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : {};
 }
 
+/** An enum option's optional display-label map: plain value -> shown text, strings both sides. */
+export function isOptionLabelMap(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const entries = Object.entries(value);
+    return entries.length > 0 && entries.every(([key, label]) => (
+        typeof key === "string" && key.length > 0 && typeof label === "string" && label.length > 0
+    ));
+}
+
 function isOptionControlledEntryVisible(entry, integration, configuredOptions) {
     const visibleOptionKey = typeof entry?.visibleOptionKey === "string" ? entry.visibleOptionKey : "";
     if (!visibleOptionKey) return true;
@@ -454,6 +463,10 @@ export function buildPluginIntegrationInputs(integration, options = {}, stats = 
             type: input.type,
             value: inputLocked ? (input.lockedValue === "maximum" ? maximum : input.lockedValue) : (input.type === "number" ? numericValue : rawValue),
             ...(Array.isArray(input.values) ? { options: input.values } : {}),
+            // Display-only text for enum choices, keyed by the persisted value. Declared once on the
+            // option definition so every consumer of that option renders the same wording while the
+            // stored value stays the raw id.
+            ...(isOptionLabelMap(optionDefinition.labels) ? { optionLabels: optionDefinition.labels } : {}),
             ...(input.type === "number" ? { min: minimum, step, ...(maximum === null ? {} : { max: maximum }) } : {}),
             disabled: Boolean(inputLocked),
         };

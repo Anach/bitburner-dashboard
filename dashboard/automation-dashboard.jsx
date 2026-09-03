@@ -3873,6 +3873,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const playerHudDefinitions = buildDashboardHudDefinition(dashboardServiceRegistry.services, telemetryByServiceId, options);
     const playerStatsEnabled = isServiceVisibleInMenu("system.playerStatus", options);
     const pluginDashboardOptionInputs = buildPluginDashboardOptionInputs(dashboardServiceRegistry.services, options);
+    // Contributions a descriptor asked to place in the System Overview header instead of the global
+    // Dashboard Options panel. Rendered beside the frame controls - see systemOverviewOptionControls.
+    const systemOverviewOptionInputs = buildPluginDashboardOptionInputs(
+        dashboardServiceRegistry.services,
+        options,
+        "system-overview"
+    );
     const workspaceColumns = responsiveLayout.workspaceColumns;
     const setActiveView = (viewId) => {
         setUiState((current) => {
@@ -4634,7 +4641,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             onChange={(e) => updateOptionInput(input, e.target.value)}
                         >
                             {selectOptions.map((optionValue) => (
-                                <option key={`${input.id}:${optionValue}`} value={optionValue}>{optionValue}</option>
+                                <option key={`${input.id}:${optionValue}`} value={optionValue}>
+                                    {input.optionLabels?.[optionValue] ?? optionValue}
+                                </option>
                             ))}
                         </select>
                     ) : input.format === "money" ? (
@@ -6011,7 +6020,43 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     windowControl={systemOverviewWindowControl}
                     closeControl={systemOverviewCloseControl}
                     minimizeControl={systemOverviewMinimizeControl}
-                    killAllControl={(
+                    killAllControl={(<>
+                        {/* Descriptor-contributed option controls asking for system-overview
+                            placement render to the left of Kill All, inside the same frame-control
+                            flex row. Passed through this existing prop rather than a new one, so
+                            system-overview-view.jsx needs no change. */}
+                        {systemOverviewOptionInputs
+                            .filter((input) => input.type === "select" && Array.isArray(input.options))
+                            .map((input) => (
+                                <select
+                                    key={input.id}
+                                    data-dashboard-theme-role="data-value"
+                                    title={typeof input.tooltip === "string" && input.tooltip.length > 0
+                                        ? `${input.label}: ${input.tooltip}`
+                                        : `Adjust ${input.label}`}
+                                    style={{
+                                        ...WIDGET_STYLES.input,
+                                        height: "24px",
+                                        minHeight: "24px",
+                                        padding: "2px 6px",
+                                        boxSizing: "border-box",
+                                        flex: "0 0 auto",
+                                        maxWidth: "180px",
+                                        ...(systemOverviewControlStyle ?? {}),
+                                    }}
+                                    value={String(input.value ?? "")}
+                                    disabled={Boolean(input.disabled)}
+                                    onFocus={() => setOptionsInputFocus(true)}
+                                    onBlur={() => setOptionsInputFocus(false)}
+                                    onChange={(e) => updateOptionInput(input, e.target.value)}
+                                >
+                                    {input.options.map((optionValue) => (
+                                        <option key={`${input.id}:${optionValue}`} value={optionValue}>
+                                            {input.optionLabels?.[optionValue] ?? optionValue}
+                                        </option>
+                                    ))}
+                                </select>
+                            ))}
                         <button
                             type="button"
                             title={globalKillAction.disabled
@@ -6037,7 +6082,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         >
                             {renderActionLabel(globalKillAction)}
                         </button>
-                    )}
+                    </>)}
                 />
             ) : activeView?.renderer === "network-map" ? (
                 <NetworkMapView
