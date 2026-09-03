@@ -10,6 +10,21 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-03
+
+### Changed
+
+- **Service Supervisor's Startup Optimizer allowlist is no longer hardcoded.** It previously
+  duplicated the paired scripts repo's exact managed-service IDs as a literal `Set` in
+  `service-supervisor.js`, coupling this dashboard's own core supervisor daemon to a specific
+  companion repo and already caught drifting out of sync once. It now reads
+  `dashboard/service-startup-optimizer-services.json` from whichever repo is staged as home,
+  caching the result for this daemon's lifetime; a missing or malformed file fails closed to an
+  empty set rather than this dashboard failing to load. Not a contract change - nothing in the
+  plugin descriptor/runtime surface depends on this internal allowlist. See the new
+  `dashboard/examples/example-service-startup-optimizer-services.js` for the file's shape if you're
+  building your own companion repo from scratch.
+
 ## 2026-09-02
 
 ### Added

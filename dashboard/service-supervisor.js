@@ -38,17 +38,16 @@ const SERVICE_STARTUP_OPTIMIZER_MAX_TTL_MS = 30000;
 const SERVICE_STARTUP_OPTIMIZER_STATE_KEYS = new Set([
     "schemaVersion", "generatedAt", "expiresAt", "optimizedServices",
 ]);
-const STARTUP_OPTIMIZER_SERVICE_IDS = new Set([
-    "automation.batcher",
-    "automation.serverBuyer",
-    "automation.hacker",
-    "automation.stockTrader",
-    "progression.factions",
-    "progression.companies",
-    "software.augmentManager",
-]);
+// The set of serviceIds Startup Optimizer may nudge is deliberately NOT hardcoded here - it's
+// whichever companion "scripts" repo's own Meta-Orchestrator declares as managed
+// (libs/meta-orchestrator-options.js's META_MANAGED_SERVICE_OPTIONS there), so this dashboard's own
+// core supervisor never hardcodes another repo's serviceId literals. This is static, checked-in
+// configuration (not data/ runtime telemetry), read once and cached for this daemon's lifetime - see
+// dashboard/examples/example-service-startup-optimizer-services.js for the shape and where to put it.
+const STARTUP_OPTIMIZER_SERVICES_CONFIG_FILE = "dashboard/service-startup-optimizer-services.json";
 let cachedFileSignature = "";
 let cachedManagedServices = [];
+let cachedStartupOptimizerServiceIds = null;
 
 function readDashboardOptions(ns) {
     if (!ns.fileExists(DASHBOARD_OPTIONS_FILE, "home")) return {};
@@ -58,6 +57,33 @@ function readDashboardOptions(ns) {
     } catch (error) {
         return {};
     }
+}
+
+// Missing, malformed, or empty config all fail closed to an empty Set: nothing is ever eligible for
+// startup optimization rather than this daemon crashing outright (a static ES import of a file that
+// might not exist would fail to even compile/launch this script - unacceptable for the dashboard's
+// own core supervisor on a standalone install with no companion scripts repo staged).
+function readStartupOptimizerServiceIds(ns) {
+    if (cachedStartupOptimizerServiceIds) return cachedStartupOptimizerServiceIds;
+    let serviceIds = new Set();
+    if (ns.fileExists(STARTUP_OPTIMIZER_SERVICES_CONFIG_FILE, "home")) {
+        try {
+            const parsed = JSON.parse(ns.read(STARTUP_OPTIMIZER_SERVICES_CONFIG_FILE));
+            if (
+                parsed
+                && typeof parsed === "object"
+                && !Array.isArray(parsed)
+                && Array.isArray(parsed.serviceIds)
+                && parsed.serviceIds.every((id) => typeof id === "string" && id.length > 0)
+            ) {
+                serviceIds = new Set(parsed.serviceIds);
+            }
+        } catch (error) {
+            // Fall through to the empty Set already assigned above.
+        }
+    }
+    cachedStartupOptimizerServiceIds = serviceIds;
+    return cachedStartupOptimizerServiceIds;
 }
 
 export function readServiceStartupOptimizerState(ns, now = Date.now()) {
@@ -81,7 +107,7 @@ export function readServiceStartupOptimizerState(ns, now = Date.now()) {
         const uniqueIds = new Set(parsed.optimizedServices);
         if (
             uniqueIds.size !== parsed.optimizedServices.length
-            || !parsed.optimizedServices.every((id) => typeof id === "string" && STARTUP_OPTIMIZER_SERVICE_IDS.has(id))
+            || !parsed.optimizedServices.every((id) => typeof id === "string" && readStartupOptimizerServiceIds(ns).has(id))
         ) return [];
         return [...parsed.optimizedServices];
     } catch (error) {

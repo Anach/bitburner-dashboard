@@ -492,12 +492,15 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
         // choices update immediately instead of waiting out that daemon's full cycle.
         const hasOptionKey = typeof action.optionKey === "string" && action.optionKey.length > 0;
         const hasExplicitOptionValue = Object.prototype.hasOwnProperty.call(action, "optionValue");
-        const isPersistedToggle = hasOptionKey && action.activeValue === undefined;
-        const isPersistedAction = isPersistedToggle || (hasOptionKey && hasExplicitOptionValue);
+        const variants = getObject(action.variants);
+        const hasVariantOptionValue = Object.values(variants)
+            .some((entry) => Object.prototype.hasOwnProperty.call(getObject(entry), "optionValue"));
+        const isPersistedToggle = hasOptionKey && action.activeValue === undefined && !hasVariantOptionValue;
+        const isPersistedAction = isPersistedToggle || (hasOptionKey && (hasExplicitOptionValue || hasVariantOptionValue));
         const stateValue = isPersistedAction
             ? (safeOptions[action.optionKey] ?? statsStateValue ?? action.defaultValue)
             : (statsStateValue ?? safeOptions[action.optionKey] ?? action.defaultValue);
-        const variant = getObject(action.variants)?.[String(stateValue)];
+        const variant = variants[String(stateValue)];
         const enabled = action.activeValue !== undefined
             ? String(stateValue) === String(action.activeValue)
             : Boolean(stateValue);
@@ -518,7 +521,9 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ? String(getTelemetryFieldValue(safeStats, action.textKey) ?? "")
             : "";
         const isClipboard = action.kind === "clipboard";
-        const nextOptionValue = hasExplicitOptionValue ? action.optionValue : !enabled;
+        const nextOptionValue = Object.prototype.hasOwnProperty.call(getObject(variant), "optionValue")
+            ? variant.optionValue
+            : hasExplicitOptionValue ? action.optionValue : !enabled;
         // Mutual-exclusion pair: a toggle turning ITSELF on (never off) can force one or more other,
         // unrelated services' own option keys to false in the same options-store write - e.g. two
         // automations that would otherwise fight over the same in-game "current work" slot every
