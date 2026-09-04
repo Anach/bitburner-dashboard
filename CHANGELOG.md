@@ -10,6 +10,62 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-05
+
+### Added
+
+- **Contract: `resource-cards` sections can now declare `toggles`.** Each entry is
+  `{ key, label, match, tooltip }` and renders as an on/off button in the same toolbar as `filters`
+  and `search`, narrowing the list to items whose `key` equals `match` (default `true`). Like the
+  other toolbar options it is opt-in and read defensively, so a section that omits it is unchanged.
+
+- **Contract: `resource-cards` sections can now declare `filters`, `search`, `tooltipKey` and
+  `backToTop`.** All four are opt-in and read defensively, so a section declaring none of them
+  renders exactly as before - the toolbar is not emitted at all unless at least one is present.
+
+  `filters` is an array of `{ key, label, multi, allLabel, tooltip }`. Options are derived from the
+  items themselves rather than declared, so a filter can never offer a value that matches nothing,
+  nor miss one the service has started publishing; `multi: true` reads a comma-separated cell as
+  several values. `search` is `{ keys, placeholder }` and matches case-insensitively across the
+  listed keys, with Escape to clear. `tooltipKey` names a field rendered as the card's native title
+  tooltip, omitted when the value is empty so hovering never shows an empty box. `backToTop` adds a
+  button that scrolls the list back into view.
+
+  Both new inputs set the options-input focus flag, without which the main loop's `printRaw`
+  re-render remounts the tail and closes an open dropdown or drops search text mid-typing. A
+  fully-filtered list reports "No matches" distinctly rather than falling through to the
+  empty-source/offline message, which would otherwise read as the service having gone away.
+
+### Fixed
+
+- **Resource-card filter, search and toggle state no longer resets about once a second.** The main
+  loop re-renders the whole tree through `ns.printRaw()`, which remounts every component and wipes
+  `React.useState` - the same reason scroll position already lives on `globalThis`. A select or a
+  text input hid the problem because both suppress the re-render while focused, so they only reset a
+  beat after you looked away; a toggle button never holds focus, so it appeared to switch itself
+  back off the instant it was clicked. This state now lives in a `globalThis` store keyed by service
+  and section, seeded back into `useState` on each remount, with every setter writing through.
+
+- **Contract: a panel descriptor can now set `actionLayout: "feature-row"`.** Panel actions default
+  to one per line; this lays them out as a wrapping row so related actions sit side by side. Any
+  panel omitting it is unchanged.
+
+- **`position: sticky` now works inside service panels.** `WIDGET_STYLES.card`, the frame every
+  service panel is wrapped in, clipped with `overflow: hidden`. That makes the card a scroll
+  container, and a sticky element resolves against its *nearest* scroll container - so any sticky
+  element inside a panel stuck to the card, which never scrolls, instead of to the scrolling
+  workspace column outside it. The result was a sticky header that silently behaved as though it
+  were static, with nothing in the styles to suggest why.
+
+  The card now clips with `overflow: clip`, which clips identically for the rounded corners but does
+  not create a scroll container. Margin-collapse containment is unaffected: the card's own border
+  already prevented it, so losing `hidden`'s block formatting context changes no spacing. The
+  pre-existing sticky `homeHeader` was never affected because it renders outside a card, which is
+  why the problem only ever showed up in plugin panels.
+  `tools/validate-resource-card-filters.mjs` in the scripts repository pins the `clip` value, since
+  reverting it is a one-word change with no visual tell until a sticky element quietly stops
+  sticking.
+
 ## 2026-09-03
 
 ### Added

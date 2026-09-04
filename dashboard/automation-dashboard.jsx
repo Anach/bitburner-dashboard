@@ -189,6 +189,28 @@ const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
 const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
+// Filter/search/toggle state for resource-card lists, kept on globalThis for the same reason scroll
+// position is: the main loop re-renders the whole tree through ns.printRaw(), which remounts every
+// component, so React.useState is wiped roughly once a second. That is invisible for a select or a
+// text box (they suppress the re-render while focused, so they only reset a beat after you look
+// away) but immediately obvious on a toggle button, which never holds focus at all - it appeared to
+// switch itself back off the instant it was clicked.
+const DASHBOARD_RESOURCE_CARD_VIEW_STATE_KEY = "__dashboard_resource_card_view_state_v1";
+
+function readResourceCardViewState(viewKey) {
+    const store = globalThis[DASHBOARD_RESOURCE_CARD_VIEW_STATE_KEY];
+    const entry = store && typeof store === "object" ? store[viewKey] : null;
+    return entry && typeof entry === "object" ? entry : {};
+}
+
+function writeResourceCardViewState(viewKey, patch) {
+    const store = globalThis[DASHBOARD_RESOURCE_CARD_VIEW_STATE_KEY];
+    const current = store && typeof store === "object" ? store : {};
+    globalThis[DASHBOARD_RESOURCE_CARD_VIEW_STATE_KEY] = {
+        ...current,
+        [viewKey]: { ...(current[viewKey] ?? {}), ...patch },
+    };
+}
 const DASHBOARD_SERVICE_REGISTRY_KEY = "__dashboard_service_registry_v8";
 const DASHBOARD_SERVICE_REGISTRY_SOURCE_KEY = "__dashboard_service_registry_source_v7";
 const DASHBOARD_VIEW_REGISTRY_KEY = "__dashboard_view_registry_v4";
@@ -570,7 +592,15 @@ const WIDGET_STYLES = {
         borderRadius: "8px",
         background: "rgba(6, 10, 6, 0.98)",
         border: "1px solid #1d3d1d",
-        overflow: "hidden"
+        // `clip`, never `hidden`. Both clip children to the rounded corners identically, but
+        // `hidden` makes this element a scroll container, and `position: sticky` resolves against
+        // its nearest scroll container - so any sticky descendant would stick to this card, which
+        // never scrolls, instead of to the scrolling workspace column outside it. That is why
+        // sticky headers/toolbars inside a panel silently did nothing. `clip` does not create a
+        // scroll container, so sticky descendants resolve against the column as intended.
+        // Margin-collapse containment is unaffected here: this element's own border already
+        // prevents it, so losing `hidden`'s block formatting context changes no spacing.
+        overflow: "clip"
     },
     cardBody: {
         padding: "8px 10px 10px"
@@ -3117,7 +3147,31 @@ function isEmptyResourceCardValue(value) {
 function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" }) {
     const [editingIdentity, setEditingIdentity] = React.useState("");
     const [draftName, setDraftName] = React.useState("");
+    // Scoped per section so two lists in the same service cannot share a filter, and so a service's
+    // filters do not follow you to a different service.
+    const viewKey = `${serviceId}:${section?.id ?? section?.title ?? index}`;
+    const persistedView = readResourceCardViewState(viewKey);
+    // useState still does the in-mount work; the store is what carries the value across the remount.
+    const [filterSelections, setFilterSelectionsState] = React.useState(persistedView.filters ?? {});
+    const [toggleSelections, setToggleSelectionsState] = React.useState(persistedView.toggles ?? {});
+    const [searchText, setSearchTextState] = React.useState(persistedView.search ?? "");
+    const setFilterSelections = (next) => {
+        writeResourceCardViewState(viewKey, { filters: next });
+        setFilterSelectionsState(next);
+    };
+    const setToggleSelections = (next) => {
+        writeResourceCardViewState(viewKey, { toggles: next });
+        setToggleSelectionsState(next);
+    };
+    const setSearchText = (next) => {
+        writeResourceCardViewState(viewKey, { search: next });
+        setSearchTextState(next);
+    };
     const cancelRenameRef = React.useRef(false);
+    // Anchor for the back-to-top control. scrollIntoView is used rather than scrollTop on a known
+    // container because the scrolling ancestor differs between the workspace column and a maximised
+    // panel; this works for both without either being named here.
+    const listRef = React.useRef(null);
     React.useEffect(() => {
         return () => {
             if (editingIdentity) setDashboardOptionsInputFocusState(false);
@@ -3143,6 +3197,54 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
     const utilization = section?.utilization && typeof section.utilization === "object"
         ? section.utilization
         : null;
+    // All opt-in. A section that declares none of these renders exactly as before.
+    const filters = Array.isArray(section?.filters) ? section.filters : [];
+    const search = section?.search && typeof section.search === "object" ? section.search : null;
+    // A boolean-ish narrowing switch, distinct from `filters`: it has no options to choose between,
+    // it is simply on or off (e.g. "only show what I can buy right now").
+    const toggles = Array.isArray(section?.toggles) ? section.toggles : [];
+    const showBackToTop = section?.backToTop === true;
+    const tooltipKey = typeof section?.tooltipKey === "string" ? section.tooltipKey : "";
+
+    // A `multi` filter reads a comma-separated cell (an augmentation's factions or stat groups) as
+    // several values; a plain one treats the whole cell as a single value.
+    const splitFilterValues = (raw) => String(raw ?? "")
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    const itemFilterValues = (item, filter) => (filter.multi === true
+        ? splitFilterValues(getGraphValue(item, filter.key))
+        : [formatResourceCardValue(getGraphValue(item, filter.key))].filter(Boolean));
+
+    // Options come from the data rather than the descriptor, so a filter can never offer a choice
+    // that matches nothing, and never miss one the service started publishing.
+    const filterControls = filters.map((filter) => ({
+        filter,
+        options: [...new Set(items.flatMap((item) => itemFilterValues(item, filter)))]
+            .sort((left, right) => left.localeCompare(right)),
+    }));
+
+    const searchKeys = Array.isArray(search?.keys) ? search.keys : [];
+    const normalizedSearch = searchText.trim().toLowerCase();
+    const visibleItems = items.filter((item) => {
+        for (const filter of filters) {
+            const selected = filterSelections[filter.key];
+            if (!selected) continue;
+            if (!itemFilterValues(item, filter).includes(selected)) return false;
+        }
+        for (const toggle of toggles) {
+            if (!toggleSelections[toggle.key]) continue;
+            const match = toggle.match === undefined ? true : toggle.match;
+            if (String(getGraphValue(item, toggle.key)) !== String(match)) return false;
+        }
+        if (!normalizedSearch) return true;
+        return searchKeys.some((key) => String(getGraphValue(item, key) ?? "")
+            .toLowerCase()
+            .includes(normalizedSearch));
+    });
+    const filtersActive = normalizedSearch !== ""
+        || filters.some((filter) => filterSelections[filter.key])
+        || toggles.some((toggle) => toggleSelections[toggle.key]);
 
     const beginNameEdit = (identity, name) => {
         if (!nameEdit || !serviceId) return;
@@ -3210,6 +3312,7 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
 
     return (
         <div
+            ref={listRef}
             style={{
                 ...WIDGET_STYLES.resourceCardList,
                 marginTop: index > 0 ? "5px" : 0,
@@ -3231,7 +3334,116 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                         : `via ${section.sourceLabel}`}
                 </div>
             ) : null}
-            {items.map((item, itemIndex) => {
+            {filterControls.length > 0 || toggles.length > 0 || search || showBackToTop ? (
+                // Sticky so the controls stay reachable in a long list - this is also what makes the
+                // back-to-top button useful rather than something you must scroll up to reach.
+                <div
+                    style={{
+                        position: "sticky",
+                        top: 0,
+                        zIndex: 2,
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: "4px 0",
+                        marginBottom: "4px",
+                        // Must be opaque, not "inherit": the list itself has no background, so
+                        // cards would scroll visibly underneath the toolbar. This is the panel
+                        // card's own colour, so the bar reads as panel chrome rather than a float.
+                        background: WIDGET_STYLES.card.background,
+                    }}
+                >
+                    {filterControls.map(({ filter, options }) => (
+                        <select
+                            key={filter.key}
+                            data-dashboard-theme-role="data-value"
+                            aria-label={filter.label ?? filter.key}
+                            title={filter.tooltip ?? filter.label ?? filter.key}
+                            style={{ ...WIDGET_STYLES.input, height: "22px", padding: "0 4px", flex: "0 1 auto" }}
+                            value={filterSelections[filter.key] ?? ""}
+                            // Same requirement as every other dashboard input: the main loop checks
+                            // this flag to suppress its printRaw re-render, without which the tail
+                            // remounts and closes an open dropdown mid-selection.
+                            onFocus={() => setDashboardOptionsInputFocusState(true)}
+                            onBlur={() => setDashboardOptionsInputFocusState(false)}
+                            onChange={(event) => setFilterSelections({
+                                ...filterSelections,
+                                [filter.key]: event.target.value,
+                            })}
+                        >
+                            <option value="">{filter.allLabel ?? `All ${filter.label ?? filter.key}`}</option>
+                            {options.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                            ))}
+                        </select>
+                    ))}
+                    {toggles.map((toggle) => {
+                        const on = Boolean(toggleSelections[toggle.key]);
+                        return (
+                            <button
+                                key={toggle.key}
+                                type="button"
+                                aria-pressed={on}
+                                title={toggle.tooltip ?? toggle.label ?? toggle.key}
+                                style={{
+                                    ...WIDGET_STYLES.actionButton,
+                                    flex: "0 0 auto",
+                                    // On/off has to be legible at a glance, since the control both
+                                    // is a button and carries state.
+                                    borderColor: on ? "#6ee7a8" : undefined,
+                                    color: on ? "#6ee7a8" : undefined,
+                                }}
+                                onClick={() => setToggleSelections({
+                                    ...toggleSelections,
+                                    [toggle.key]: !on,
+                                })}
+                            >
+                                {toggle.label ?? toggle.key}
+                            </button>
+                        );
+                    })}
+                    {search ? (
+                        <input
+                            type="text"
+                            aria-label={search.placeholder ?? "Search"}
+                            placeholder={search.placeholder ?? "Search"}
+                            style={{ ...WIDGET_STYLES.input, height: "22px", padding: "0 4px", flex: "1 1 120px", minWidth: "90px" }}
+                            value={searchText}
+                            onFocus={() => setDashboardOptionsInputFocusState(true)}
+                            onBlur={() => setDashboardOptionsInputFocusState(false)}
+                            onChange={(event) => setSearchText(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Escape") {
+                                    setSearchText("");
+                                    event.currentTarget.blur();
+                                }
+                            }}
+                        />
+                    ) : null}
+                    {filtersActive ? (
+                        <span style={{ ...WIDGET_STYLES.muted, whiteSpace: "nowrap" }}>
+                            {visibleItems.length}/{items.length}
+                        </span>
+                    ) : null}
+                    {showBackToTop ? (
+                        <button
+                            type="button"
+                            title="Back to the top of the list"
+                            style={{ ...WIDGET_STYLES.actionButton, marginLeft: "auto", flex: "0 0 auto" }}
+                            onClick={() => listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                        >
+                            {"\u2191 Top"}
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+            {visibleItems.length === 0 ? (
+                // Distinct from the empty-source message above: the service is reporting fine, the
+                // filters just exclude everything.
+                <div style={WIDGET_STYLES.muted}>No matches. Clear the filters or search to see all.</div>
+            ) : null}
+            {visibleItems.map((item, itemIndex) => {
                 const name = formatResourceCardValue(getGraphValue(item, nameKey));
                 const identity = formatResourceCardValue(getGraphValue(item, idKey));
                 const editingName = Boolean(nameEdit && editingIdentity === identity);
@@ -3255,7 +3467,14 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                 const utilizationFormat = utilization?.valueFormat ?? "number";
 
                 return (
-                    <div key={`${identity}-${itemIndex}`} style={WIDGET_STYLES.resourceCard}>
+                    <div
+                        key={`${identity}-${itemIndex}`}
+                        // Native title tooltip, matching how every other control in this dashboard
+                        // surfaces detail. Omitted entirely when the item has no text, so hovering
+                        // never shows an empty box.
+                        title={tooltipKey ? (String(getGraphValue(item, tooltipKey) ?? "") || undefined) : undefined}
+                        style={WIDGET_STYLES.resourceCard}
+                    >
                         <div style={WIDGET_STYLES.resourceCardIdentity}>
                             {section.nameLabel ? (
                                 <div data-dashboard-theme-role="data-heading" style={WIDGET_STYLES.resourceCardNameLabel}>{section.nameLabel}</div>
@@ -5852,7 +6071,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             actionsSectionLabel: "Script Controls",
             collapsibleActions: false,
             actionsFirst: isPluginOptionsPanel || resolvedPanelMeta?.actionsFirst === true,
-            actionLayout: isPluginOptionsPanel ? "feature-row" : "default",
+            // A panel can opt into the wrapping row layout so its actions sit side by side instead
+            // of stacking one per line; the single-column grid stays the default.
+            actionLayout: isPluginOptionsPanel || resolvedPanelMeta?.actionLayout === "feature-row"
+                ? "feature-row"
+                : "default",
             inputLayout,
         });
     };
