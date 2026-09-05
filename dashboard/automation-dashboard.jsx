@@ -3270,6 +3270,11 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
             kind: "plugin-command",
             serviceId,
             command: `${commandPrefix}${encode(identity)}`,
+            // Per-item override, matching the per-action one in buildPluginIntegrationActions: a
+            // section can list items owned by a different service and dispatch to that service's
+            // own command-drain loop. Without it a card action could only ever reach the port its
+            // own descriptor declares.
+            ...(Number.isFinite(Number(itemAction.port)) ? { port: Number(itemAction.port) } : {}),
         });
         if (itemAction.startRuntime === true && scriptPath) {
             enqueueDashboardAction({

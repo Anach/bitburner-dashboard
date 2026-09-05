@@ -100,7 +100,13 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         const descriptorFilename = normalized.slice(normalized.lastIndexOf("/") + 1);
         const pluginName = descriptorFilename.slice(0, -DASHBOARD_PLUGIN_INTEGRATION_SUFFIX.length);
         if (!pluginName) continue;
-        const metadataOnly = metadata.adapter === "static";
+        // A descriptor may declare "runtime": false to opt out of runtime pairing entirely. Every
+        // other adapter is paired by basename to exactly one runtime file, and a descriptor with no
+        // match is dropped silently - correct for a normal integration, but wrong for an aggregator
+        // that deliberately owns no runtime and exists only to surface other services' telemetry and
+        // command ports. "static" implies it; anything else must ask, so existing descriptors are
+        // unaffected.
+        const metadataOnly = metadata.adapter === "static" || metadata.runtime === false;
         let scriptPath = "";
         if (!metadataOnly) {
             const runtimeFilenames = RUNTIME_SCRIPT_EXTENSIONS.map((extension) => `${pluginName}${extension}`);

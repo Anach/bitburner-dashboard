@@ -14,6 +14,22 @@ integration.
 
 ### Added
 
+- **Contract: a descriptor may declare `"runtime": false` to opt out of runtime pairing.** Every
+  adapter except `static` is paired by basename to exactly one runtime file, and a descriptor with
+  no match is discarded silently - it appears in neither the menu nor any list, with no error. That
+  is right for an ordinary integration but wrong for an aggregator that deliberately owns no runtime
+  and exists only to surface other services' telemetry and command ports. Such a descriptor gets an
+  empty `scriptPath`, so it must set `commands.requiresRuntime: false` and give every panel its own
+  `runtimeScripts`; it will not appear in the Integrations list, which enumerates runnable scripts.
+  Descriptors omitting the key are unaffected.
+
+- **Contract: `resource-cards` `itemAction` now accepts a `port`.** Panel actions could already
+  override the command port (`buildPluginIntegrationActions`); per-card actions could not, so a
+  section listing another service's items could only ever dispatch to its own descriptor's port.
+  `itemAction.port` now mirrors that behaviour exactly, letting one menu entry present catalogues
+  owned by several different services and route each card's action to the worker that owns it.
+  Sections omitting it are unchanged.
+
 - **Contract: `resource-cards` sections can now declare `toggles`.** Each entry is
   `{ key, label, match, tooltip }` and renders as an on/off button in the same toolbar as `filters`
   and `search`, narrowing the list to items whose `key` equals `match` (default `true`). Like the
