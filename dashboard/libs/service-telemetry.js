@@ -23,6 +23,7 @@ export function applyDashboardServiceTelemetryContributions(services = []) {
                 ...definition,
                 contributionServiceId: sourceService.id,
                 contributionSourceLabel: sourceService.menuLabel,
+                contributionSourcePath: sourceService.pluginMetadata?.telemetry?.path,
             });
             contributionsByServiceId.set(targetServiceId, targetContributions);
         }
@@ -56,11 +57,12 @@ export function getDashboardServiceTelemetryStateLines(service, context = {}) {
         if (!sourceServiceId) continue;
         const stats = telemetryByServiceId?.[sourceServiceId] ?? null;
         const sourceLabel = contribution.sourceLabel ?? contribution.contributionSourceLabel;
+        const sourcePath = contribution.sourcePath ?? contribution.contributionSourcePath;
 
         for (const field of contribution.fields ?? []) {
             const line = buildPluginIntegrationTelemetryLine(stats, field);
             if (!line) continue;
-            lines.push(sourceLabel ? { ...line, sourceLabel } : line);
+            lines.push(sourceLabel ? { ...line, sourceLabel, sourcePath } : line);
         }
     }
 

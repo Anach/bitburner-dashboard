@@ -5,7 +5,9 @@ import {
 } from "dashboard/libs/theme-adapter.js";
 import {
     getTelemetrySourceLinkStyle,
+    getTelemetrySourceLinkInteractionHandlers,
     getTelemetrySourceTarget,
+    normalizeTelemetrySourceLabel,
     navigateToTelemetrySource,
 } from "dashboard/libs/telemetry-source-link.js";
 
@@ -64,12 +66,14 @@ const BADGE_LINE_VALUE_TONE_COLORS = {
 // A source label is followable when its data came from another service's telemetry file. Rendered as
 // plain text otherwise, so an unattributed or self-owned label never looks clickable.
 function renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, prefix = "") {
-    const target = getTelemetrySourceTarget(sourcePath, currentServiceId);
+    sourceLabel = normalizeTelemetrySourceLabel(sourceLabel);
+    const target = getTelemetrySourceTarget(sourcePath, currentServiceId, sourceLabel);
     if (!target) return react.createElement("div", { style: styles.homeMetricSource }, `${prefix}${sourceLabel}`);
     return react.createElement("button", {
         type: "button",
         title: `Go to ${sourceLabel}`,
         style: getTelemetrySourceLinkStyle(styles.homeMetricSource),
+        ...getTelemetrySourceLinkInteractionHandlers(styles.homeMetricSource),
         onClick: (event) => {
             // The label often sits inside a clickable card or row; without this the parent's own
             // handler fires too and the navigation is immediately overridden.

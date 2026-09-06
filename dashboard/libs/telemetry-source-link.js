@@ -7,30 +7,31 @@
 // telemetry *path* is the identity: exactly one descriptor declares each file as its own
 // `telemetry.path`, so a path resolves to a single owning service.
 //
-// This module deliberately holds no React. The four renderers that show a source label each carry
+// This module deliberately holds no React. The renderers that show a source label each carry
 // their own React accessor (theme-adapter wraps a themed copy per module), so a shared component
 // would have to pick one of them. Sharing only the resolve/navigate logic keeps every renderer
 // building its own element with its own React, exactly as they already do.
 
+/** @type {(sourcePath?: unknown, sourceLabel?: unknown) => string} */
 let resolveOwningServiceId = () => "";
 let navigateToService = null;
 
 // Configured once from dashboard core, which is the only place that knows the service registry and
 // how to change the selection. Renderers stay ignorant of both.
+/** @param {{ resolve?: (sourcePath?: unknown, sourceLabel?: unknown) => string, onNavigate?: (serviceId: string) => void }} options */
 export function configureTelemetrySourceNavigation({ resolve, onNavigate } = {}) {
     if (typeof resolve === "function") resolveOwningServiceId = resolve;
     if (typeof onNavigate === "function") navigateToService = onNavigate;
 }
 
 /**
- * The service that owns `sourcePath`, or "" when there is nowhere useful to go: an unattributed
- * source, a path no descriptor claims, or the service you are already looking at. Callers render
- * plain text in that case rather than a link that does nothing.
+ * The service that owns `sourcePath` (or matches `sourceLabel`), or "" when there is nowhere useful to go:
+ * an unattributed source, a path/label no descriptor claims, or the service you are already looking at.
+ * Callers render plain text in that case rather than a link that does nothing.
  */
-export function getTelemetrySourceTarget(sourcePath, currentServiceId = "") {
-    if (typeof sourcePath !== "string" || !sourcePath) return "";
+export function getTelemetrySourceTarget(sourcePath, currentServiceId = "", sourceLabel = "") {
     if (typeof navigateToService !== "function") return "";
-    const owner = resolveOwningServiceId(sourcePath);
+    const owner = resolveOwningServiceId(sourcePath, sourceLabel);
     if (typeof owner !== "string" || !owner) return "";
     return owner === currentServiceId ? "" : owner;
 }
@@ -41,8 +42,28 @@ export function navigateToTelemetrySource(serviceId) {
     navigateToService(serviceId);
 }
 
+export function normalizeTelemetrySourceLabel(value) {
+    if (typeof value === "string") return value;
+    if (!value || typeof value !== "object") return value == null ? "" : String(value);
+    return String(value.label ?? value.sourceLabel ?? value.name ?? "");
+}
+
+export function getTelemetrySourceLinkInteractionHandlers(baseStyle = {}) {
+    const baseColor = baseStyle.color ?? "";
+    return {
+        onMouseEnter: (event) => {
+            event.currentTarget.style.color = "#b8f7c8";
+            event.currentTarget.style.background = "rgba(110, 231, 168, 0.12)";
+        },
+        onMouseLeave: (event) => {
+            event.currentTarget.style.color = baseColor;
+            event.currentTarget.style.background = "transparent";
+        },
+    };
+}
+
 /**
- * Shared presentation for a source label rendered as a link. Kept here so all four renderers agree:
+ * Shared presentation for a source label rendered as a link. Kept here so all renderers agree:
  * a dotted underline reading as "this is followable" without turning a muted footnote into a button.
  */
 export function getTelemetrySourceLinkStyle(baseStyle) {
@@ -51,10 +72,7 @@ export function getTelemetrySourceLinkStyle(baseStyle) {
         padding: 0,
         border: 0,
         background: "transparent",
-        font: "inherit",
-        textAlign: "left",
         cursor: "pointer",
-        textDecoration: "underline dotted",
-        textUnderlineOffset: "2px",
+        textAlign: "left",
     };
 }

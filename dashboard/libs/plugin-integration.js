@@ -647,7 +647,12 @@ export function getPluginIntegrationStateLines(integration, stats, options = {})
         const line = buildPluginIntegrationTelemetryLine(stats, field);
         if (!line) continue;
         hasKnownStats = true;
-        lines.push(line);
+        const sourceFreshness = getTelemetrySourceFreshness(stats, field.key);
+        lines.push(sourceFreshness?.sourceLabel ? {
+            ...line,
+            sourceLabel: sourceFreshness.sourceLabel,
+            sourcePath: sourceFreshness.sourcePath,
+        } : line);
     }
     if (!hasKnownStats) lines.push({ label: "Telemetry", value: "Stats file loaded (no known keys)", tone: "neutral" });
     return lines;

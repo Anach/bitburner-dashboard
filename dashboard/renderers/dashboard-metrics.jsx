@@ -5,6 +5,13 @@ import {
     buildDashboardTheme,
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
+import {
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceLinkInteractionHandlers,
+    normalizeTelemetrySourceLabel,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+} from "dashboard/libs/telemetry-source-link.js";
 
 let React = null;
 let rawReact = null;
@@ -29,7 +36,23 @@ function getReact() {
     return React;
 }
 
-export function TonePill({ label, value, tone = "neutral", sourceLabel, state = "live", ageText }) {
+function renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, prefix = "") {
+    sourceLabel = normalizeTelemetrySourceLabel(sourceLabel);
+    const target = getTelemetrySourceTarget(sourcePath, currentServiceId, sourceLabel);
+    if (!target) return react.createElement("div", { style: styles.homeMetricSource }, `${prefix}${sourceLabel}`);
+    return react.createElement("button", {
+        type: "button",
+        title: `Go to ${sourceLabel}`,
+        style: getTelemetrySourceLinkStyle(styles.homeMetricSource),
+        ...getTelemetrySourceLinkInteractionHandlers(styles.homeMetricSource),
+        onClick: (event) => {
+            event.stopPropagation();
+            navigateToTelemetrySource(target);
+        },
+    }, `${prefix}${sourceLabel}`);
+}
+
+export function TonePill({ label, value, tone = "neutral", sourceLabel, sourcePath, serviceId, state = "live", ageText }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
@@ -46,12 +69,13 @@ export function TonePill({ label, value, tone = "neutral", sourceLabel, state = 
     const style = muted ? tones.neutral : (tones[tone] ?? tones.neutral);
     const subtext = sourceLabel || "";
     const tooltip = getTelemetryFreshnessTooltip(state, { sourceLabel, ageText });
+    const targetSource = sourcePath ?? serviceId;
 
     return (
         <div title={tooltip || undefined} data-dashboard-theme-role="quick-stat" style={{ ...styles.pill, borderColor: style.border, opacity: muted ? 0.7 : 1 }}>
             <div style={styles.pillLabel}>{label}</div>
             <div data-dashboard-theme-role="stat-value" style={{ ...styles.pillValue, color: style.value }}>{value}</div>
-            {subtext ? <div style={styles.homeMetricSource}>{subtext}</div> : null}
+            {subtext ? renderSourceLabel(react, styles, subtext, targetSource, "") : null}
         </div>
     );
 }

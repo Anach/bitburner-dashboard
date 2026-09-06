@@ -10,9 +10,41 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-06
+
+### Added
+
+- **Start Order deterministic queue admission and Autostart-disabled handling.**
+  - Added a default-on **Strict Start Order** toggle to the Start Order page. When enabled, the Service Supervisor pauses the current admission cycle on the first RAM-blocked eligible service rather than allowing lower-priority services to leapfrog it.
+  - Autostart-disabled services are skipped immediately in both Strict On and Off modes and do not block the queue.
+  - Autostart-disabled rows are rendered with muted grey styling and an explicit `Autostart Off (skipped)` label, while remaining reorderable so their configured priority is preserved.
+  - Theme-role isolation (`start-order-row-selected`, `start-order-row-disabled`) ensures selection blue and disabled grey are preserved without remapping to game-theme green, while enabled rows retain standard game-theme title and background colors.
+  - Repaired selection-following scroll behavior by dynamically resolving the nearest scroll container rather than relying on layout-fixed refs.
+
+- **Stopped managed process names in action execution and network child supervisor.**
+  - `action-executor` now reports the specific filenames of stopped managed child processes (e.g. on service stop/restart) instead of only the count.
+  - `network-child-supervisor` reports the target script name when stopping cancelled, owner-stopped, or expired network children.
+
 ## 2026-09-05
 
 ### Added
+
+- **Telemetry attribution footers are now links to the service that owns the data.** A widget
+  reading "via Cloud Server Buyer" or "via Infrastructure Report" takes you straight to that
+  service's menu entry, instead of leaving you to work out which manager publishes it - which
+  matters most exactly where attribution exists, since several descriptors merge sources from
+  services whose menu entry is nowhere near the panel you are looking at.
+
+  Labelled `telemetry.sources[]` entries now carry their file path through to the renderers, and
+  dashboard core resolves it against the registry: each telemetry file is declared as exactly one
+  descriptor's own `telemetry.path`, so a path identifies a single owner. No descriptor changes are
+  needed - every existing labelled source became navigable as-is.
+
+  Applies to badge lines, graphs and resource-card footers. It degrades to today's plain text
+  whenever there is nowhere to go: an unattributed source, a path no descriptor claims, or data
+  owned by the service you are already viewing. The new `dashboard/libs/telemetry-source-link.js`
+  holds only the resolve/navigate logic and deliberately no React, since each renderer carries its
+  own themed React instance.
 
 - **Contract: a descriptor may declare `"runtime": false` to opt out of runtime pairing.** Every
   adapter except `static` is paired by basename to exactly one runtime file, and a descriptor with

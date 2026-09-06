@@ -47,6 +47,7 @@ function getReachableServers(ns) {
 
 function killMatchingProcesses(ns, hosts, matcher, excludedPids = []) {
     const excluded = new Set(excludedPids);
+    const killedFilenames = new Set();
     let killedCount = 0;
     let failedCount = 0;
     let serverCount = 0;
@@ -58,6 +59,9 @@ function killMatchingProcesses(ns, hosts, matcher, excludedPids = []) {
                 if (ns.kill(process.pid)) {
                     killedCount += 1;
                     hostKills += 1;
+                    if (typeof process?.filename === "string" && process.filename.length > 0) {
+                        killedFilenames.add(process.filename);
+                    }
                 } else {
                     failedCount += 1;
                 }
@@ -67,7 +71,7 @@ function killMatchingProcesses(ns, hosts, matcher, excludedPids = []) {
         }
         if (hostKills > 0) serverCount += 1;
     }
-    return { killedCount, failedCount, serverCount };
+    return { killedCount, failedCount, serverCount, killedFilenames: [...killedFilenames] };
 }
 
 function stopManagedProcesses(ns, command) {
@@ -164,8 +168,11 @@ function performScriptAction(ns, command) {
         failed: `Failed to ${actionId} ${filename}.`,
     };
     const ok = ["started", "stopped", "restarted", "already-running", "not-running"].includes(result.status);
+    const managedNames = (managedResult.killedFilenames ?? []).length > 0
+        ? ` (${managedResult.killedFilenames.join(", ")})`
+        : "";
     const managedSuffix = managedResult.killedCount > 0
-        ? ` Stopped ${managedResult.killedCount} managed child process${managedResult.killedCount === 1 ? "" : "es"}.`
+        ? ` Stopped ${managedResult.killedCount} managed child process${managedResult.killedCount === 1 ? "" : "es"}${managedNames}.`
         : "";
     return {
         ok,

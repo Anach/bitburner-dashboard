@@ -5,8 +5,10 @@ import {
 } from "dashboard/libs/theme-adapter.js";
 import {
     getTelemetrySourceLinkStyle,
+    getTelemetrySourceLinkInteractionHandlers,
     getTelemetrySourceTarget,
     navigateToTelemetrySource,
+    normalizeTelemetrySourceLabel,
 } from "dashboard/libs/telemetry-source-link.js";
 
 let React = null;
@@ -140,13 +142,15 @@ function computeGraphGeometry(section, terminalMode) {
 // See dashboard-panels.jsx for why this is duplicated rather than shared: each renderer module owns
 // its own themed React instance, so only the resolve/navigate logic is shared.
 function renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, prefix = "", extraStyle = {}) {
+    sourceLabel = normalizeTelemetrySourceLabel(sourceLabel);
     const base = { ...styles.homeMetricSource, ...extraStyle };
-    const target = getTelemetrySourceTarget(sourcePath, currentServiceId);
+    const target = getTelemetrySourceTarget(sourcePath, currentServiceId, sourceLabel);
     if (!target) return react.createElement("div", { style: base }, `${prefix}${sourceLabel}`);
     return react.createElement("button", {
         type: "button",
         title: `Go to ${sourceLabel}`,
         style: getTelemetrySourceLinkStyle(base),
+        ...getTelemetrySourceLinkInteractionHandlers(base),
         onClick: (event) => {
             event.stopPropagation();
             navigateToTelemetrySource(target);

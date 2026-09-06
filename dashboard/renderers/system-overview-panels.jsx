@@ -11,6 +11,31 @@ import {
     runNativeOverviewAction,
 } from "dashboard/libs/native-overview-actions.js";
 
+import {
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceLinkInteractionHandlers,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+    normalizeTelemetrySourceLabel,
+} from "dashboard/libs/telemetry-source-link.js";
+
+function renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, prefix = "", extraStyle = {}) {
+    sourceLabel = normalizeTelemetrySourceLabel(sourceLabel);
+    const baseStyle = { ...styles.homeMetricSource, ...extraStyle };
+    const target = getTelemetrySourceTarget(sourcePath, currentServiceId, sourceLabel);
+    if (!target) return react.createElement("div", { style: baseStyle }, `${prefix}${sourceLabel}`);
+    return react.createElement("button", {
+        type: "button",
+        title: `Go to ${sourceLabel}`,
+        style: getTelemetrySourceLinkStyle(baseStyle),
+        ...getTelemetrySourceLinkInteractionHandlers(baseStyle),
+        onClick: (event) => {
+            event.stopPropagation();
+            navigateToTelemetrySource(target);
+        },
+    }, `${prefix}${sourceLabel}`);
+}
+
 let React = null;
 let rawReact = null;
 let getDashboardTheme = () => buildDashboardTheme(DASHBOARD_THEME_MODE_DASHBOARD);
@@ -252,11 +277,12 @@ export function HomeMetricCard({ metric }) {
     const title = freshnessTooltip
         ? `${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"} (${freshnessTooltip})`
         : `${metric?.label ?? "Metric"}: ${metric?.value ?? "n/a"}`;
+    const targetSource = metric?.sourcePath ?? metric?.serviceId;
     return (
         <div title={title} style={{ ...styles.homeMetric, borderColor: palette.border, background: `linear-gradient(140deg, ${palette.glow}, rgba(5, 9, 8, 0.82) 58%)`, boxShadow: `inset 0 -2px 0 ${palette.accent}`, opacity: muted ? 0.68 : 1 }}>
             <div style={styles.homeMetricLabel}>{metric?.label ?? "Metric"}</div>
             <div data-dashboard-theme-role="stat-value" style={{ ...styles.homeMetricValue, color: palette.accent }}>{metric?.value ?? "n/a"}</div>
-            {subtext ? <div style={styles.homeMetricSource}>{subtext}</div> : null}
+            {subtext ? renderSourceLabel(react, styles, subtext, targetSource, "") : null}
         </div>
     );
 }
@@ -312,10 +338,11 @@ export function HomeGaugeCard({ gauge, size = 84 }) {
     // they don't get clipped or crowd the next row, scaling with size rather than a static constant.
     // marginTop on both lines below is a local override, half of homeGaugeValue's/homeMetricSource's
     // own default (4px) - tightened for this tighter, denser widget specifically, not globally.
+    const targetSource = gauge?.sourcePath ?? gauge?.serviceId;
     return <div style={{ ...styles.homeGaugeCard, minHeight: `${size + (gauge?.sourceLabel ? 40 : 28)}px` }}>
         <RamGauge {...gauge} size={size} />
         <div style={{ ...styles.homeGaugeValue, marginTop: "0px" }}>{gauge?.offline ? "Offline" : `${formatResourceValue(used, valueFormat)} / ${formatResourceValue(total, valueFormat)}`}</div>
-        {gauge?.sourceLabel ? <div style={{ ...styles.homeMetricSource, marginTop: "0px" }}>{gauge.sourceLabel}</div> : null}
+        {gauge?.sourceLabel ? renderSourceLabel(react, styles, gauge.sourceLabel, targetSource, "", "", { marginTop: "0px" }) : null}
     </div>;
 }
 

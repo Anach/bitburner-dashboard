@@ -248,7 +248,7 @@ export async function reconcileNetworkChildren(ns, state, now = Date.now()) {
                 outputFiles: request.outputFiles,
                 detail: !outputSync.ok
                     ? outputSync.detail
-                    : stopped > 0 ? `Stopped ${stopped} managed process(es).` : "No managed process was running.",
+                    : stopped > 0 ? `Stopped ${stopped} managed process(es) (${request.script}).` : `No managed process (${request.script}) was running.`,
             }, now) || changed;
             ns.rm(requestFile, "home");
             continue;

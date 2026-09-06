@@ -4243,17 +4243,48 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // descriptor changes at all.
     const telemetryPathOwners = React.useMemo(() => {
         const owners = new Map();
+        const labelOwners = new Map();
         for (const service of dashboardServiceRegistry.services ?? []) {
+            if (!service?.id) continue;
             const path = service?.pluginMetadata?.telemetry?.path;
             if (typeof path !== "string" || !path) continue;
-            // First declaration wins. A duplicate would be a descriptor bug, and picking one
-            // arbitrarily is better than a footer that navigates somewhere different each render.
             if (!owners.has(path)) owners.set(path, service.id);
+            if (service.menuLabel) labelOwners.set(service.menuLabel.toLowerCase(), service.id);
+            if (service.name) labelOwners.set(service.name.toLowerCase(), service.id);
+            for (const childPath of [
+                ...(service.pluginMetadata?.managedScripts ?? []),
+                ...(service.pluginMetadata?.managedNetworkScripts ?? []),
+            ]) {
+                if (typeof childPath === "string" && childPath) {
+                    const base = childPath.split("/").pop()?.replace(/\.jsx?$/i, "").replace(/-/g, "_");
+                    if (base) {
+                        owners.set(`data/${base}_stats.json`, service.id);
+                        owners.set(`data/${base}.json`, service.id);
+                    }
+                }
+            }
         }
-        return owners;
+        return { paths: owners, labels: labelOwners };
     }, [dashboardServiceRegistry]);
     configureTelemetrySourceNavigation({
-        resolve: (sourcePath) => telemetryPathOwners.get(sourcePath) ?? "",
+        resolve: (sourcePath, sourceLabel) => {
+            if (typeof sourcePath === "string" && sourcePath) {
+                if (telemetryPathOwners.paths.has(sourcePath)) return telemetryPathOwners.paths.get(sourcePath);
+                if (dashboardServiceRegistry.byId.has(sourcePath)) return sourcePath;
+                for (const [knownPath, serviceId] of telemetryPathOwners.paths) {
+                    const prefix = knownPath.replace(/_stats\.json$/, "").replace(/\.json$/, "");
+                    if (prefix && sourcePath.startsWith(prefix)) return serviceId;
+                }
+            }
+            if (typeof sourceLabel === "string" && sourceLabel) {
+                const norm = sourceLabel.toLowerCase().replace(/^via\s+/, "").trim();
+                if (telemetryPathOwners.labels.has(norm)) return telemetryPathOwners.labels.get(norm);
+                for (const [label, serviceId] of telemetryPathOwners.labels) {
+                    if (norm.includes(label) || label.includes(norm)) return serviceId;
+                }
+            }
+            return "";
+        },
         onNavigate: (serviceId) => selectItem(serviceId),
     });
 
@@ -4282,7 +4313,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             });
         }
         setUiState((current) => {
-            const next = { ...current, activeViewId: "", selectedItem: itemId };
+            const menuGroup = workspaceService?.menuGroup ?? dashboardServiceRegistry.byId.get(itemId)?.menuGroup;
+            const expandedGroups = menuGroup && current.expandedGroups && !current.expandedGroups[menuGroup]
+                ? { ...current.expandedGroups, [menuGroup]: true }
+                : current.expandedGroups;
+            const next = { ...current, activeViewId: "", selectedItem: itemId, expandedGroups };
             saveUiState(next);
             return next;
         });
@@ -6602,7 +6637,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             title={`${tile.label}: ${tile.value}`}
                             style={WIDGET_STYLES.statTile}
                         >
-                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} sourceLabel={tile.sourceLabel} state={tile.state} ageText={tile.ageText} />
+                            <TonePill label={tile.label} value={tile.value} tone={tile.tone} sourceLabel={tile.sourceLabel} sourcePath={tile.sourcePath} serviceId={tile.serviceId} state={tile.state} ageText={tile.ageText} />
                         </div>
                     ))}
                 </div>
