@@ -8,6 +8,7 @@ import {
     getServiceStartOrder,
     HIDE_UNQUALIFIED_PLUGINS_MODES,
     isServiceAutostartEnabled,
+    isStrictServiceStartOrderEnabled,
     isServiceVisibleInMenu,
     MENU_UNLOCK_GLYPH_SCOPE_MAIN,
     MENU_UNLOCK_GLYPH_SCOPE_SUBMENUS,
@@ -107,6 +108,12 @@ import { configureWorkspaceProviderView, WorkspaceProviderView } from "dashboard
 import { ScriptLogView } from "dashboard/renderers/script-log-view.jsx";
 import { buildScriptLogSnapshot } from "dashboard/renderers/script-log-snapshot.js";
 import { BadgeLine, Card, configureDashboardPanels } from "dashboard/renderers/dashboard-panels.jsx";
+import {
+    configureTelemetrySourceNavigation,
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+} from "dashboard/libs/telemetry-source-link.js";
 import { configureDashboardTable, DashboardDataTable } from "dashboard/renderers/dashboard-table.jsx";
 import { configureDashboardMetrics, RamGaugeBar, TonePill } from "dashboard/renderers/dashboard-metrics.jsx";
 import {
@@ -1463,11 +1470,12 @@ function rememberDashboardFileManagerRender(viewId, signature) {
 // Deliberately exclude serviceStartOrder from this signature: moves update the mounted component
 // immediately and save through the global action queue, so the disk round-trip must not trigger a
 // second remount of the same edit.
-function getDashboardStartOrderRenderSignature(homeScripts, themeSignature = "", layoutSignature = "") {
-    const rows = buildServiceStartOrderRows(homeScripts)
+function getDashboardStartOrderRenderSignature(homeScripts, options = {}, themeSignature = "", layoutSignature = "") {
+    const rows = buildServiceStartOrderRows(homeScripts, getDashboardServiceRegistry(), options)
         .map((row) => ({
             serviceId: row.serviceId,
             label: row.label,
+            autostartEnabled: row.autostartEnabled,
             ramPerThread: row.ramPerThread,
             childrenRamGb: row.childrenRamGb,
             totalRamGb: row.totalRamGb,
@@ -1484,6 +1492,46 @@ function isDashboardStartOrderRenderStable(signature) {
 
 function rememberDashboardStartOrderRender(signature) {
     globalThis[DASHBOARD_START_ORDER_RENDER_STATE_KEY] = signature ? { signature } : null;
+}
+
+export function findStartOrderScrollContainer(row, fallback = null) {
+    let ancestor = row?.parentElement ?? null;
+    let nearestScrollable = null;
+    while (ancestor) {
+        if (ancestor?.dataset?.dashboardScrollContainer === "right") return ancestor;
+        if (
+            !nearestScrollable
+            &&
+            Number(ancestor.scrollHeight) > Number(ancestor.clientHeight)
+            && Number.isFinite(Number(ancestor.scrollTop))
+        ) {
+            nearestScrollable = ancestor;
+        }
+        ancestor = ancestor.parentElement ?? null;
+    }
+    return nearestScrollable ?? fallback;
+}
+
+export function followStartOrderSelection(row, fallbackContainer = null, edgePadding = 8) {
+    const container = findStartOrderScrollContainer(row, fallbackContainer);
+    if (
+        !container
+        || !row
+        || typeof container.getBoundingClientRect !== "function"
+        || typeof row.getBoundingClientRect !== "function"
+    ) return null;
+
+    const containerBounds = container.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    const padding = Math.max(0, Number(edgePadding) || 0);
+    let nextScrollTop = Math.max(0, Number(container.scrollTop) || 0);
+    if (rowBounds.top < containerBounds.top + padding) {
+        nextScrollTop -= (containerBounds.top + padding) - rowBounds.top;
+    } else if (rowBounds.bottom > containerBounds.bottom - padding) {
+        nextScrollTop += rowBounds.bottom - (containerBounds.bottom - padding);
+    }
+    container.scrollTop = Math.max(0, nextScrollTop);
+    return container;
 }
 
 // Same purpose as the File Manager trio above, generalized for any full-window view that's
@@ -1561,15 +1609,64 @@ function loadDashboardOptions(ns) {
         return defaults;
     }
 }
+function formatOptionChangeSummaries(services, previousOptions, currentOptions) {
+    if (!previousOptions || typeof previousOptions !== "object") return [];
+    const optionLabels = new Map();
+    for (const service of services ?? []) {
+        const meta = service?.pluginMetadata;
+        if (meta) {
+            for (const input of meta.inputs ?? []) {
+                if (input?.optionKey && input.label) optionLabels.set(input.optionKey, input.label);
+            }
+            for (const action of meta.actions ?? []) {
+                if (action?.optionKey && action.label) optionLabels.set(action.optionKey, action.label);
+            }
+            for (const opt of meta.dashboardOptions ?? []) {
+                if (opt?.optionKey && opt.label) optionLabels.set(opt.optionKey, opt.label);
+            }
+        }
+        if (service?.id) {
+            const serviceName = service.menuLabel ?? service.name ?? service.id;
+            optionLabels.set(`${service.id}Autostart`, `${serviceName} Autostart`);
+            optionLabels.set(`${service.id}MenuVisibility`, `${serviceName} Menu Visibility`);
+        }
+    }
+    optionLabels.set("serviceStartOrder", "Service Start Order");
+    optionLabels.set("strictServiceStartOrder", "Strict Service Start Order");
+    optionLabels.set("reservedHomeRam", "Reserved Home RAM");
+
+    const allKeys = new Set([...Object.keys(previousOptions), ...Object.keys(currentOptions ?? {})]);
+    const changed = [];
+    for (const key of allKeys) {
+        const prevVal = previousOptions[key];
+        const nextVal = currentOptions?.[key];
+        if (prevVal !== nextVal) {
+            const label = optionLabels.get(key) ?? key;
+            const valStr = typeof nextVal === "boolean"
+                ? (nextVal ? "ON" : "OFF")
+                : (typeof nextVal === "string" ? `"${nextVal}"` : String(nextVal ?? "null"));
+            changed.push(label !== key ? `${label} (${key}): ${valStr}` : `${key}: ${valStr}`);
+        }
+    }
+    return changed;
+}
+
 function saveDashboardOptions(ns, options) {
     if (!ns) return;
+    const services = getDashboardServiceRegistry().services;
+    const previousOptions = dashboardOptionsCache.value;
+    const changedSummaries = formatOptionChangeSummaries(services, previousOptions, options);
     const raw = JSON.stringify(options);
     ns.write(DASHBOARD_OPTIONS_FILE, raw, "w");
     dashboardOptionsCache.raw = raw;
-    dashboardOptionsCache.services = getDashboardServiceRegistry().services;
+    dashboardOptionsCache.services = services;
     dashboardOptionsCache.value = options;
-    ns.tprint(`[DASHBOARD] Saved options to ${DASHBOARD_OPTIONS_FILE}`);
-    ns.toast("Dashboard options saved", "success", 3500);
+    const changeDetail = changedSummaries.length > 0 ? `: ${changedSummaries.join(", ")}` : "";
+    ns.tprint(`[DASHBOARD] Saved options to ${DASHBOARD_OPTIONS_FILE}${changeDetail}`);
+    const toastMessage = changedSummaries.length === 1
+        ? `Option saved: ${changedSummaries[0]}`
+        : "Dashboard options saved";
+    ns.toast(toastMessage, "success", 3500);
 }
 
 function buildExecutableDashboardCommand(ns, command) {
@@ -1737,7 +1834,7 @@ function isDashboardCoreScript(filename) {
     return filename === DASHBOARD_SCRIPT || filename === SERVICE_SUPERVISOR_SCRIPT;
 }
 
-function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceRegistry()) {
+function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceRegistry(), options = {}) {
     const scripts = Array.isArray(homeScripts) ? homeScripts : [];
     // Capacity-planning children are deliberately looked up against the *unfiltered* catalogue, not
     // the daemon-only rows below: most children (faction-manager-core.js, faction-manager-gangs.js,
@@ -1761,9 +1858,11 @@ function buildServiceStartOrderRows(homeScripts, registry = getDashboardServiceR
             // silently contributes 0 rather than warning, matching this page's existing best-effort
             // reporting.
             const childrenRamGb = sumStartOrderChildRam(matchedService?.pluginMetadata, ramByFilename);
+            const serviceId = matchedService?.id || script.filename;
             return {
-                serviceId: matchedService?.id || script.filename,
+                serviceId,
                 label: matchedService?.menuLabel || script.label || script.filename,
+                autostartEnabled: isServiceAutostartEnabled(serviceId, options),
                 ramPerThread: ownRamGb,
                 childrenRamGb,
                 totalRamGb: ownRamGb + childrenRamGb,
@@ -3333,11 +3432,26 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                 // own nothing" rather than "the tracker stopped reporting". This note is the only
                 // offline signal for this section type, so it always shows the source, and adds an
                 // explicit stale callout when offline rather than silently going quiet.
-                <div style={WIDGET_STYLES.muted}>
-                    {section.offline
+                (() => {
+                    const sourceText = section.offline
                         ? `${section.sourceLabel} - offline${section.sourceAgeText ? ` (last data ${section.sourceAgeText})` : ""}, showing last-known data`
-                        : `via ${section.sourceLabel}`}
-                </div>
+                        : `via ${section.sourceLabel}`;
+                    const sourceTarget = getTelemetrySourceTarget(section.sourcePath, serviceId);
+                    if (!sourceTarget) return <div style={WIDGET_STYLES.muted}>{sourceText}</div>;
+                    return (
+                        <button
+                            type="button"
+                            title={`Go to ${section.sourceLabel}`}
+                            style={getTelemetrySourceLinkStyle(WIDGET_STYLES.muted)}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                navigateToTelemetrySource(sourceTarget);
+                            }}
+                        >
+                            {sourceText}
+                        </button>
+                    );
+                })()
             ) : null}
             {filterControls.length > 0 || toggles.length > 0 || search || showBackToTop ? (
                 // Sticky so the controls stay reachable in a long list - this is also what makes the
@@ -4122,6 +4236,26 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             }
         }));
     };
+
+    // Exactly one descriptor declares each telemetry file as its own `telemetry.path`, so a path
+    // that another descriptor merges in resolves back to a single owning service. Built from the
+    // registry rather than declared per source, so it covers every existing descriptor with no
+    // descriptor changes at all.
+    const telemetryPathOwners = React.useMemo(() => {
+        const owners = new Map();
+        for (const service of dashboardServiceRegistry.services ?? []) {
+            const path = service?.pluginMetadata?.telemetry?.path;
+            if (typeof path !== "string" || !path) continue;
+            // First declaration wins. A duplicate would be a descriptor bug, and picking one
+            // arbitrarily is better than a footer that navigates somewhere different each render.
+            if (!owners.has(path)) owners.set(path, service.id);
+        }
+        return owners;
+    }, [dashboardServiceRegistry]);
+    configureTelemetrySourceNavigation({
+        resolve: (sourcePath) => telemetryPathOwners.get(sourcePath) ?? "",
+        onNavigate: (serviceId) => selectItem(serviceId),
+    });
 
     const selectItem = (itemId) => {
         const shortcut = getDashboardShortcutById(itemId);
@@ -4977,7 +5111,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         <Card title={meta.title} accent={meta.accent} subtitle={meta.subtitle} widgetStyles={WIDGET_STYLES}>
             <div style={WIDGET_STYLES.list}>
                 {stateLines.map((line) => (
-                    <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} />
+                    <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} sourcePath={line.sourcePath} currentServiceId={selectedService?.id ?? ""} />
                 ))}
             </div>
         </Card>
@@ -5013,6 +5147,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             index={index}
                             offline={offline}
                             sourceLabel={section.sourceLabel}
+                            sourcePath={section.sourcePath}
+                            currentServiceId={selectedService?.id ?? ""}
                         />;
                     }
 
@@ -5273,7 +5409,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // trashbin/ kept its old DASHBOARD_SCRIPT_METADATA daemon:true declaration intact, so it kept
     // showing up here as a live start-order candidate (and staying in the persisted
     // serviceStartOrder list) long after the user believed it deleted.
-    const serviceStartOrderRows = buildServiceStartOrderRows(homeScripts, dashboardServiceRegistry);
+    const serviceStartOrderRows = buildServiceStartOrderRows(homeScripts, dashboardServiceRegistry, options);
     const orderedServiceStartOrderRows = sortByServiceStartOrder(serviceStartOrderRows, options);
 
     // Ref callbacks run before layout effects. The general column-scroll restoration effect near
@@ -5284,18 +5420,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         if (selectedItem !== "global.startOrder" || selectedCenterPanel !== "order") return;
         if (!uiState.startOrderSelectedServiceId) return;
 
-        const container = rightColumnRef.current;
         const row = startOrderSelectedRowRef.current;
-        if (!container || !row || typeof container.getBoundingClientRect !== "function" || typeof row.getBoundingClientRect !== "function") return;
-
-        const containerBounds = container.getBoundingClientRect();
-        const rowBounds = row.getBoundingClientRect();
-        const edgePadding = 8;
-        if (rowBounds.top < containerBounds.top + edgePadding) {
-            container.scrollTop -= (containerBounds.top + edgePadding) - rowBounds.top;
-        } else if (rowBounds.bottom > containerBounds.bottom - edgePadding) {
-            container.scrollTop += rowBounds.bottom - (containerBounds.bottom - edgePadding);
-        }
+        const container = followStartOrderSelection(row, rightColumnRef.current);
+        if (!container) return;
         rememberScroll("right", container.scrollTop);
     }, [selectedItem, selectedCenterPanel, uiState.startOrderSelectedServiceId, options.serviceStartOrder]);
 
@@ -5777,7 +5904,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 {hasState ? (
                     <div style={WIDGET_STYLES.list}>
                         {stateLines.map((line) => (
-                            <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} />
+                            <BadgeLine key={line.label} label={line.label} value={line.value} tone={line.tone ?? "neutral"} sourceLabel={line.sourceLabel} sourcePath={line.sourcePath} currentServiceId={selectedService?.id ?? ""} />
                         ))}
                     </div>
                 ) : null}
@@ -5914,13 +6041,55 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             );
             return (
                 <Card title={startOrderTitle} accent="#6cb4ff" subtitle="Order the Integration Service Supervisor uses when RAM is scarce" widgetStyles={WIDGET_STYLES}>
+                    {renderServiceInputs([{
+                        id: "strict-service-start-order",
+                        label: "Strict Start Order",
+                        description: "Wait for the first RAM-blocked eligible service instead of trying lower entries.",
+                        tooltip: "On keeps startup deterministic: when the next eligible service cannot fit in available Home RAM or a configured RAM safeguard, lower-priority services wait. Off restores opportunistic skip-and-continue admission.",
+                        optionKey: "strictServiceStartOrder",
+                        type: "boolean-select",
+                        value: isStrictServiceStartOrderEnabled(options),
+                    }])}
                     {getServiceStartOrder(options).length === 0 ? (
                         <div style={WIDGET_STYLES.smallMuted}>Not customized yet — using default (alphabetical) start order.</div>
                     ) : null}
                     <ul style={{ ...WIDGET_STYLES.list, minWidth: 0 }}>
-                        {orderedServiceStartOrderRows.map((row, index) => (
+                        {orderedServiceStartOrderRows.map((row, index) => {
+                            const autostartDisabled = row.autostartEnabled !== true;
+                            const selected = row.serviceId === uiState.startOrderSelectedServiceId;
+                            const rowStateStyle = selected
+                                ? {
+                                    border: "1px solid rgba(108, 180, 255, 0.9)",
+                                    background: "rgba(10, 34, 58, 0.98)",
+                                    boxShadow: "inset 4px 0 0 #6cb4ff",
+                                    color: "#d9ecff",
+                                    opacity: 1,
+                                    filter: "none",
+                                }
+                                : autostartDisabled
+                                    ? {
+                                        border: "1px solid rgba(120, 125, 130, 0.35)",
+                                        background: "rgba(20, 20, 20, 0.88)",
+                                        color: "#92979c",
+                                        opacity: 0.5,
+                                        filter: "grayscale(0.8)",
+                                    }
+                                    : {};
+                            const rowThemeRole = selected
+                                ? "start-order-row-selected"
+                                : autostartDisabled
+                                    ? "start-order-row-disabled"
+                                    : undefined;
+                            const titleThemeRole = selected || autostartDisabled
+                                ? rowThemeRole
+                                : "data-heading";
+                            return (
                             <li
                                 key={row.serviceId}
+                                data-dashboard-theme-role={rowThemeRole}
+                                title={autostartDisabled
+                                    ? `${row.label}: Autostart is off, so the supervisor skips this entry in both Strict On and Off modes.`
+                                    : undefined}
                                 ref={row.serviceId === uiState.startOrderSelectedServiceId
                                     ? startOrderSelectedRowRef
                                     : null}
@@ -5928,18 +6097,17 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                     ...WIDGET_STYLES.item,
                                     cursor: "pointer",
                                     minWidth: 0,
-                                    ...(row.serviceId === uiState.startOrderSelectedServiceId ? {
-                                        borderColor: "rgba(108, 180, 255, 0.55)",
-                                        background: "rgba(10, 24, 38, 0.95)",
-                                    } : {}),
+                                    ...rowStateStyle,
                                 }}
                                 onClick={() => setUiState((current) => ({
                                     ...current,
                                     startOrderSelectedServiceId: current.startOrderSelectedServiceId === row.serviceId ? "" : row.serviceId,
                                 }))}
                             >
-                                <div style={{ ...WIDGET_STYLES.itemTitle, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
-                                    <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.label}</span>
+                                <div data-dashboard-theme-role={titleThemeRole} style={{ ...WIDGET_STYLES.itemTitle, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
+                                    <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {row.label}{autostartDisabled ? " — Autostart Off (skipped)" : ""}
+                                    </span>
                                     <span
                                         style={{ ...WIDGET_STYLES.itemDetail, fontWeight: 400, whiteSpace: "nowrap", flex: "0 0 auto" }}
                                         title={row.childrenRamGb > 0
@@ -6003,7 +6171,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                     </span>
                                 </div>
                             </li>
-                        ))}
+                            );
+                        })}
                     </ul>
                 </Card>
             );
@@ -6695,6 +6864,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             >
                                 <div
                                     ref={rightColumnRef}
+                                    data-dashboard-scroll-container="right"
                                     style={{ minWidth: 0, height: "100%", overflowY: "auto" }}
                                     onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
                                 >
@@ -6715,6 +6885,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         ) : (
                             <div
                                 ref={rightColumnRef}
+                                data-dashboard-scroll-container="right"
                                 data-dashboard-theme-role="workspace-column"
                                 style={WIDGET_STYLES.column}
                                 onScroll={(e) => rememberScroll("right", e.currentTarget.scrollTop)}
@@ -7020,10 +7191,21 @@ export async function main(ns) {
     previousHomeProcessFilenames = new Set();
     lastOptionReplayServiceRegistry = null;
     lastRequestedCurrentWorkFocus = null;
+    lastRenderedSignature = null;
+    dashboardOptionsCache.raw = null;
+    dashboardOptionsCache.services = null;
+    dashboardOptionsCache.value = null;
 
+    dashboardTailLayoutState.initialized = false;
+    dashboardTailLayoutState.visible = false;
+    dashboardTailLayoutState.requestedMode = null;
+    dashboardTailLayoutState.lastTitle = "";
+
+    setDashboardOptionsInputFocusState(false);
     setDashboardViewDragActiveState(false);
     rememberDashboardFileManagerRender("", "");
     rememberDashboardNetworkMapRender("", "");
+    rememberDashboardStartOrderRender("");
 
     React = getReactLib();
 
@@ -7264,6 +7446,7 @@ export async function main(ns) {
         const startOrderRenderSignature = activeStartOrder
             ? getDashboardStartOrderRenderSignature(
                 homeScripts,
+                persistedOptions,
                 activeDashboardTheme.signature,
                 `${layoutSnapshot.mode}:${layoutSnapshot.tailWidth}x${layoutSnapshot.tailHeight}`
             )

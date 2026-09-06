@@ -82,6 +82,13 @@ export function getServiceStartOrder(options) {
     return parseServiceStartOrder(options?.serviceStartOrder);
 }
 
+// Missing is ON so existing option files adopt deterministic queue admission automatically.
+// Callers that read the raw persisted JSON (not normalizeDashboardOptions) must use this helper
+// rather than checking for === true.
+export function isStrictServiceStartOrderEnabled(options) {
+    return options?.strictServiceStartOrder !== false;
+}
+
 // items: array of objects each with a .serviceId field, in the current natural/discovery order.
 // A .map()+.sort() over the ORIGINAL array, not a rebuild through a Map<serviceId,item> - a
 // serviceId can legitimately be "" or collide (integration authors sometimes omit it, the same
@@ -186,6 +193,7 @@ export function getDefaultDashboardOptions(services = []) {
         dashboardWindowedHeight: DEFAULT_TAIL_HEIGHT,
         hiddenScriptFolders: DEFAULT_HIDDEN_SCRIPT_FOLDERS_OPTION,
         hiddenScriptFiles: DEFAULT_HIDDEN_SCRIPT_FILES_OPTION,
+        strictServiceStartOrder: true,
         serviceStartOrder: "",
     };
     for (const service of services) {
@@ -262,6 +270,7 @@ export function normalizeDashboardOptions(rawOptions = {}, services = []) {
         hiddenScriptFiles: normalizeScriptFiles(
             rawOptions.hiddenScriptFiles ?? rawOptions.ignoredScriptFiles ?? defaults.hiddenScriptFiles
         ),
+        strictServiceStartOrder: rawOptions.strictServiceStartOrder !== false,
         serviceStartOrder: normalizeServiceStartOrder(rawOptions.serviceStartOrder ?? defaults.serviceStartOrder),
     };
     for (const service of services) {

@@ -8,6 +8,7 @@ import { discoverDashboardPlugins, isDashboardPluginDescriptorFilename } from "d
 import {
     isServiceAutostartEnabled,
     getServiceStartOrder,
+    isStrictServiceStartOrderEnabled,
     sortByServiceStartOrder,
 } from "dashboard/libs/dashboard-options.js";
 import {
@@ -120,6 +121,8 @@ function reportLaunchIssue(ns, script, status, previousIssues) {
         ? `starting it would use the Transient RAM Reserve`
         : status === "service-limit"
             ? `starting it would exceed the Service Startup RAM Limit`
+            : status === "insufficient-ram"
+                ? `not enough Home RAM is currently available`
             : "";
     if (protectedSkipMessage) {
         // Not an error - a deliberate skip to enforce a configured Home RAM safeguard. Quiet
@@ -224,6 +227,9 @@ export function getServiceLaunchRamStatus({
     serviceStartupRamLimitGb,
 }) {
     if (!(scriptRamGb > 0)) return "allowed";
+    if (scriptRamGb - freeHomeRamGb > RAM_COMPARISON_EPSILON_GB) {
+        return "insufficient-ram";
+    }
     if (
         serviceStartupRamLimitGb > 0
         && runningManagedServiceRamGb + scriptRamGb - serviceStartupRamLimitGb > RAM_COMPARISON_EPSILON_GB
@@ -245,14 +251,11 @@ function startManagedService(ns, service, runningFiles, ramLimits) {
 
     const reservedHomeRamGb = ramLimits?.reservedHomeRamGb ?? 0;
     const serviceStartupRamLimitGb = ramLimits?.serviceStartupRamLimitGb ?? 0;
-    const ramLimitsEnabled = reservedHomeRamGb > 0 || serviceStartupRamLimitGb > 0;
-    const scriptRamGb = ramLimitsEnabled ? ramLimits.resolveScriptRamGb(script) : 0;
+    const scriptRamGb = ramLimits.resolveScriptRamGb(script);
     // Free RAM is checked fresh so each successive start sees the headroom consumed by services
     // started earlier in this pass. The aggregate service total is maintained separately because
     // it must also include listed services that were already running when this cycle began.
-    const freeHomeRamGb = reservedHomeRamGb > 0
-        ? ns.getServerMaxRam("home") - ns.getServerUsedRam("home")
-        : Number.POSITIVE_INFINITY;
+    const freeHomeRamGb = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const ramStatus = getServiceLaunchRamStatus({
         scriptRamGb,
         freeHomeRamGb,
@@ -388,6 +391,7 @@ export async function main(ns) {
             ? [...optimizedServiceIds, ...configuredServiceStartOrder.filter((id) => !optimizedServiceIdSet.has(id))].join(",")
             : options?.serviceStartOrder;
         const orderedServices = sortByServiceStartOrder(services, { ...options, serviceStartOrder: effectiveServiceStartOrder });
+        const strictServiceStartOrder = isStrictServiceStartOrderEnabled(options);
         // The transient reserve protects free Home capacity, while the service limit bounds the
         // aggregate RAM of service entry scripts represented in the Start Order list. Both are
         // disabled at 0 for backward compatibility. Existing services count toward the aggregate
@@ -422,6 +426,14 @@ export async function main(ns) {
                 runningManagedServiceRamGb += result.scriptRamGb;
             }
             reportLaunchIssue(ns, script, result.status, previousIssues);
+            if (
+                strictServiceStartOrder
+                && ["insufficient-ram", "reserved", "service-limit"].includes(result.status)
+            ) {
+                // Deterministic admission: the first RAM-blocked eligible service holds its place
+                // and lower-priority services wait for the next pass instead of leapfrogging it.
+                break;
+            }
         }
 
         await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);

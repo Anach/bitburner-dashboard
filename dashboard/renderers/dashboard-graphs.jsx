@@ -3,6 +3,11 @@ import {
     buildDashboardTheme,
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
+import {
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+} from "dashboard/libs/telemetry-source-link.js";
 
 let React = null;
 let rawReact = null;
@@ -132,7 +137,24 @@ function computeGraphGeometry(section, terminalMode) {
 // graph is normally also geometry.empty - the plain "Service is offline." text below (rather than
 // a floating overlay badge, which visually collided with the title/legend text) is enough on its
 // own; both branches still fade via frameStyle's opacity for a subtler, secondary cue.
-export function DataGraph({ section, index = 0, presentation = "default", offline = false, sourceLabel }) {
+// See dashboard-panels.jsx for why this is duplicated rather than shared: each renderer module owns
+// its own themed React instance, so only the resolve/navigate logic is shared.
+function renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, prefix = "", extraStyle = {}) {
+    const base = { ...styles.homeMetricSource, ...extraStyle };
+    const target = getTelemetrySourceTarget(sourcePath, currentServiceId);
+    if (!target) return react.createElement("div", { style: base }, `${prefix}${sourceLabel}`);
+    return react.createElement("button", {
+        type: "button",
+        title: `Go to ${sourceLabel}`,
+        style: getTelemetrySourceLinkStyle(base),
+        onClick: (event) => {
+            event.stopPropagation();
+            navigateToTelemetrySource(target);
+        },
+    }, `${prefix}${sourceLabel}`);
+}
+
+export function DataGraph({ section, index = 0, presentation = "default", offline = false, sourceLabel, sourcePath, currentServiceId }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
@@ -152,7 +174,7 @@ export function DataGraph({ section, index = 0, presentation = "default", offlin
         return <div data-dashboard-theme-role="graph-panel" style={frameStyle}>
             <div data-dashboard-theme-role="data-heading" title={title} style={{ ...styles.strong, ...styles.graphTitle, marginBottom: "5px" }}>{terminalMode ? "> " : ""}{title}</div>
             <div style={styles.muted}>{offline ? "Service is offline." : (section?.emptyText || "Collecting history data...")}</div>
-            {sourceLabel ? <div style={{ ...styles.homeMetricSource, marginTop: "2px" }}>{sourceLabel}</div> : null}
+            {sourceLabel ? renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId, "", { marginTop: "2px" }) : null}
         </div>;
     }
 
@@ -184,6 +206,6 @@ export function DataGraph({ section, index = 0, presentation = "default", offlin
             <text x={plot.left} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="start">{formatGraphXValue(xMin, xFormat)}</text>
             <text x={plot.right} y={graphHeight - 7} fill={terminalMode ? "#999999" : "#759875"} fontSize="9" textAnchor="end">{formatGraphXValue(xMax, xFormat)}</text>
         </svg>
-        {sourceLabel ? <div style={styles.homeMetricSource}>{sourceLabel}</div> : null}
+        {sourceLabel ? renderSourceLabel(react, styles, sourceLabel, sourcePath, currentServiceId) : null}
     </div>;
 }

@@ -283,6 +283,10 @@ function adaptColorToken(token, propertyName, theme, themeRole = "", elementType
 
 function adaptStyleValue(value, propertyName, theme, themeRole = "", elementType = "") {
     if (typeof value !== "string" || !theme?.followGame) return value;
+    // Start Order's selected blue and disabled grey are interaction states, not semantic
+    // success/primary colors. Preserve only those explicit states. Ordinary enabled rows carry no
+    // Start Order role and continue through normal game-theme adaptation.
+    if (themeRole === "start-order-row-selected" || themeRole === "start-order-row-disabled") return value;
     return value.replace(COLOR_TOKEN_PATTERN, (token) => adaptColorToken(token, propertyName, theme, themeRole, elementType));
 }
 

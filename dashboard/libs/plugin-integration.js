@@ -279,6 +279,10 @@ export function loadPluginIntegrationStats(ns, integration) {
                 sourceMeta.push({
                     targetKey: source.targetKey,
                     label: source.label,
+                    // The identity behind the label. A label is a display string with no route back
+                    // to its owning service; the path is what exactly one other descriptor declares
+                    // as its own telemetry.path, so it resolves to that owner unambiguously.
+                    path: source.path,
                     // generatedAt comes from the *whole* parsed source file, not sourceValue - a
                     // sourceKey extraction (e.g. "servers") can slice away a sibling top-level
                     // generatedAt field, so this must be read before that slicing.
@@ -325,7 +329,7 @@ export function getTelemetrySourceFreshness(stats, key) {
     const ageText = state === TELEMETRY_FRESHNESS_STATES.STALE && meta.generatedAt > 0
         ? formatRelativeAge(Date.now() - meta.generatedAt)
         : null;
-    return { sourceLabel: meta.label, state, ageText, offline: state === TELEMETRY_FRESHNESS_STATES.STALE };
+    return { sourceLabel: meta.label, sourcePath: meta.path, state, ageText, offline: state === TELEMETRY_FRESHNESS_STATES.STALE };
 }
 
 export function applyPluginIntegrationOptions(ns, integration, rawOptions, logAction, context = {}) {
@@ -755,6 +759,7 @@ export function getPluginIntegrationOverviewGauges(integration, stats, context =
                 order: Number(gauge.order) || 0,
                 offline: offline || Boolean(sourceFreshness?.offline),
                 sourceLabel: sourceFreshness?.sourceLabel,
+                sourcePath: sourceFreshness?.sourcePath,
             };
         })
         .filter(Boolean)
@@ -806,6 +811,7 @@ export function getPluginIntegrationSections(integration, stats, panelId, contex
                     data: sectionOffline ? [] : (Array.isArray(source) ? source : []),
                     offline: sectionOffline,
                     sourceLabel: sourceFreshness?.sourceLabel,
+                    sourcePath: sourceFreshness?.sourcePath,
                     sourceAgeText: sourceFreshness?.ageText,
                 };
             }
@@ -821,6 +827,7 @@ export function getPluginIntegrationSections(integration, stats, panelId, contex
                     rows: Array.isArray(source) ? source : [],
                     offline: sectionOffline,
                     sourceLabel: sourceFreshness?.sourceLabel,
+                    sourcePath: sourceFreshness?.sourcePath,
                     sourceAgeText: sourceFreshness?.ageText,
                 };
             }
@@ -834,6 +841,7 @@ export function getPluginIntegrationSections(integration, stats, panelId, contex
                 items: Array.isArray(source) ? source : [],
                 offline: sectionOffline,
                 sourceLabel: sourceFreshness?.sourceLabel,
+                sourcePath: sourceFreshness?.sourcePath,
                 sourceAgeText: sourceFreshness?.ageText,
             };
         });
@@ -876,6 +884,7 @@ function buildPluginIntegrationGraphs(integration, stats, context = {}) {
                 data: sectionOffline ? [] : (Array.isArray(source) ? source : []),
                 offline: sectionOffline,
                 sourceLabel: sourceFreshness?.sourceLabel,
+                sourcePath: sourceFreshness?.sourcePath,
             };
         });
 }
