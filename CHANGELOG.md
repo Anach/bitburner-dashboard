@@ -10,6 +10,17 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## 2026-09-07
+
+### Fixed
+
+- **Contract: commands can require their actual target worker.** Descriptor `actions[]` and
+  `resource-cards.itemAction` entries may now declare `runtimeScripts`, an exact script-path array
+  independent of the integration's own runtime. Dashboard controls disable with an offline reason
+  while a required worker is absent, and the queued command boundary rechecks immediately before
+  writing its port. This prevents a metadata-only aggregator from leaving a command on a stopped
+  worker's port for delivery after a later restart. Entries omitting `runtimeScripts` are unchanged.
+
 ## 2026-09-06
 
 ### Added

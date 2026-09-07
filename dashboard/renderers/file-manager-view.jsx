@@ -458,6 +458,10 @@ function normalizeSelectedIds(selectedIds, fallbackId = "") {
     return fallback ? [fallback] : [];
 }
 
+function getPreviewMaxChars(view) {
+    return Math.max(1000, Number(view?.preview?.maxChars) || 80000);
+}
+
 function getDirectoryFileEntries(files, directoryPath) {
     const normalizedDirectory = normalizeFilePath(directoryPath);
     if (!normalizedDirectory) return [];
@@ -911,11 +915,15 @@ export function FileManagerView({
         seenPreviewResultRef.current = resultTime;
         setDialog((current) => {
             if (!current || current.type !== "preview" || current.entry?.path !== lastPreviewResult?.path) return current;
-            const maxChars = Math.max(1000, Number(view?.preview?.maxChars) || 80000);
+            const maxChars = getPreviewMaxChars(view);
             const content = lastPreviewResult?.error
                 ? `[Unable to read file: ${lastPreviewResult.error}]`
                 : String(lastPreviewResult?.content ?? "");
-            return { ...current, content: content.slice(0, maxChars), truncated: content.length > maxChars };
+            return {
+                ...current,
+                content: content.slice(0, maxChars),
+                truncated: lastPreviewResult?.truncated === true || content.length > maxChars,
+            };
         });
     }, [lastPreviewResult?.timestamp, lastPreviewResult?.path]);
 
@@ -1004,7 +1012,7 @@ export function FileManagerView({
             content: null,
             truncated: false,
         });
-        onRequestPreview?.(entry.path);
+        onRequestPreview?.(entry.path, getPreviewMaxChars(view));
     };
 
     const openEntry = (paneId, entry) => {

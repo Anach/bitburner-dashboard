@@ -144,6 +144,7 @@ import {
 import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "dashboard/libs/action-ids.js";
 import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs/script-actions.js";
 import {
+    areRequiredRuntimeScriptsRunning,
     applyPluginIntegrationCommand,
     applyPluginIntegrationOptions,
     getPluginIntegrationOverviewGauges,
@@ -152,6 +153,7 @@ import {
     getScriptGroupHealth,
     isIntegrationScriptRunning,
     loadPluginIntegrationStats,
+    normalizeRequiredRuntimeScripts,
     normalizePluginIntegrationOptions,
     shouldStartPluginIntegrationAfterOptionChange,
 } from "dashboard/libs/plugin-integration.js";
@@ -1429,17 +1431,27 @@ function setDashboardFileActionResult(viewId, status, message, details = {}) {
 
 function getDashboardFileManagerRenderSignature(viewId, snapshot, themeSignature = "", layoutSignature = "") {
     if (!snapshot || typeof snapshot !== "object") return "";
-    const filePaths = (Array.isArray(snapshot.files) ? snapshot.files : [])
-        .map((entry) => normalizeFilePath(entry?.path))
-        .filter(Boolean)
-        .sort((left, right) => left.localeCompare(right));
+    // File Manager owns a retained DOM while unrelated dashboard telemetry changes. Include only
+    // fields it visibly renders so it still refreshes after a file's running state, RAM, or
+    // modified timestamp changes without remounting for invisible snapshot details.
+    const fileState = (Array.isArray(snapshot.files) ? snapshot.files : [])
+        .map((entry) => ({
+            path: normalizeFilePath(entry?.path),
+            exists: entry?.exists !== false,
+            modifiedAt: Number(entry?.modifiedAt) || 0,
+            running: entry?.running === true,
+            runningThreads: Number(entry?.runningThreads) || 0,
+            ramPerThread: Number(entry?.ramPerThread) || 0,
+        }))
+        .filter((entry) => Boolean(entry.path))
+        .sort((left, right) => left.path.localeCompare(right.path));
     const lastActionResult = globalThis[DASHBOARD_FILE_ACTION_RESULT_KEY];
     const actionTimestamp = lastActionResult?.viewId === viewId
         ? Number(lastActionResult.timestamp) || 0
         : 0;
     return JSON.stringify({
         viewId,
-        filePaths,
+        fileState,
         manifest: snapshot.manifest ?? null,
         actionTimestamp,
         themeSignature,
@@ -1762,7 +1774,12 @@ function applyQueuedDashboardActions(ns) {
                 integration,
                 command.command,
                 (tone, message) => logMajorAction(ns, message, tone),
-                { running: isIntegrationScriptRunning(integration, latestHomeProcessFilenames), port: command.port }
+                {
+                    running: isIntegrationScriptRunning(integration, latestHomeProcessFilenames),
+                    port: command.port,
+                    runtimeScripts: command.runtimeScripts,
+                    runningFilenames: latestHomeProcessFilenames,
+                }
             );
         },
         dashboard: (command) => {
@@ -1780,14 +1797,18 @@ function applyQueuedDashboardActions(ns) {
             // safe main-loop context), never directly from the click handler that requested it,
             // which risks colliding with this loop's own in-flight ns.sleep().
             const path = String(command.path ?? "");
+            const maxChars = Math.max(1000, Number(command.maxChars) || 80000);
             let content = "";
             let error = "";
+            let truncated = false;
             try {
-                content = String(ns.read(path) ?? "");
+                const rawContent = String(ns.read(path) ?? "");
+                truncated = rawContent.length > maxChars;
+                content = rawContent.slice(0, maxChars);
             } catch (err) {
                 error = String(err?.message ?? err);
             }
-            globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] = { path, content, error, timestamp: Date.now() };
+            globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] = { path, content, error, truncated, timestamp: Date.now() };
         },
         script: (command) => {
             if (typeof command.actionId === "string" && typeof command.filename === "string") {
@@ -3243,7 +3264,7 @@ function isEmptyResourceCardValue(value) {
     return value === undefined || value === null || value === "";
 }
 
-function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" }) {
+function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "", runningFilenames = new Set() }) {
     const [editingIdentity, setEditingIdentity] = React.useState("");
     const [draftName, setDraftName] = React.useState("");
     // Scoped per section so two lists in the same service cannot share a filter, and so a service's
@@ -3293,6 +3314,9 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
     const itemAction = section?.itemAction && typeof section.itemAction === "object"
         ? section.itemAction
         : null;
+    const itemActionRuntimeScripts = normalizeRequiredRuntimeScripts(itemAction?.runtimeScripts);
+    const itemActionWorkerRunning = areRequiredRuntimeScriptsRunning(itemActionRuntimeScripts, runningFilenames);
+    const itemActionWorkerOffline = itemActionRuntimeScripts.length > 0 && !itemActionWorkerRunning;
     const utilization = section?.utilization && typeof section.utilization === "object"
         ? section.utilization
         : null;
@@ -3358,7 +3382,7 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
     // Lets any resource-cards section (not just the one that happens to support renaming) offer a
     // per-row button, e.g. Augment Manager's per-augment "Buy".
     const runItemAction = (identity) => {
-        if (!itemAction || !serviceId) return;
+        if (!itemAction || !serviceId || itemActionWorkerOffline) return;
         const commandPrefix = typeof itemAction.commandPrefix === "string" ? itemAction.commandPrefix : "";
         if (!commandPrefix) return;
 
@@ -3374,6 +3398,7 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
             // own command-drain loop. Without it a card action could only ever reach the port its
             // own descriptor declares.
             ...(Number.isFinite(Number(itemAction.port)) ? { port: Number(itemAction.port) } : {}),
+            ...(itemActionRuntimeScripts.length > 0 ? { runtimeScripts: itemActionRuntimeScripts } : {}),
         });
         if (itemAction.startRuntime === true && scriptPath) {
             enqueueDashboardAction({
@@ -3650,12 +3675,16 @@ function ResourceCardList({ section, index = 0, serviceId = "", scriptPath = "" 
                             {itemAction ? (
                                 <button
                                     type="button"
-                                    title={itemAction.title ?? "Run"}
-                                    disabled={typeof itemAction.disabledKey === "string"
-                                        && !getGraphValue(item, itemAction.disabledKey)}
+                                    title={itemActionWorkerOffline
+                                        ? `Required action worker is offline: ${itemActionRuntimeScripts.join(", ")}.`
+                                        : itemAction.title ?? "Run"}
+                                    disabled={itemActionWorkerOffline
+                                        || (typeof itemAction.disabledKey === "string"
+                                            && !getGraphValue(item, itemAction.disabledKey))}
                                     style={{
                                         ...WIDGET_STYLES.actionButton,
-                                        ...(typeof itemAction.disabledKey === "string" && !getGraphValue(item, itemAction.disabledKey)
+                                        ...(itemActionWorkerOffline
+                                            || (typeof itemAction.disabledKey === "string" && !getGraphValue(item, itemAction.disabledKey))
                                             ? WIDGET_STYLES.actionButtonDisabled
                                             : {}),
                                         marginTop: "4px",
@@ -4401,6 +4430,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const getSections = (overrides = {}) => getServiceSections(selectedService, { ...serviceContext, ...overrides });
     const getInputs = (overrides = {}) => getServiceInputs(selectedService, { ...serviceContext, ...overrides });
     const serviceActions = getServiceActions(selectedService, serviceContext);
+    const runningHomeFilenames = new Set(homeScripts.filter((script) => script?.running).map((script) => script.filename));
     const pluginScript = selectedService?.pluginFile
         ? homeScripts.find((script) => script?.filename === selectedService.pluginFile)
         : null;
@@ -4767,6 +4797,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 serviceId: action.serviceId,
                 command: action.command,
                 ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
+                ...(Array.isArray(action.runtimeScripts) ? { runtimeScripts: action.runtimeScripts } : {}),
             });
             return;
         }
@@ -5195,6 +5226,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                 index={index}
                                 serviceId={selectedService?.id ?? ""}
                                 scriptPath={selectedService?.pluginFile ?? ""}
+                                runningFilenames={runningHomeFilenames}
                             />
                         );
                     }
@@ -6549,10 +6581,11 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         viewId: activeView.id,
                         ...action,
                     })}
-                    onRequestPreview={(path) => enqueueDashboardAction({
+                    onRequestPreview={(path, maxChars) => enqueueDashboardAction({
                         kind: "file-preview",
                         viewId: activeView.id,
                         path,
+                        maxChars,
                     })}
                     lastPreviewResult={globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] ?? null}
                     onInputFocusChange={setOptionsInputFocus}

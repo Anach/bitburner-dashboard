@@ -89,6 +89,24 @@ export function isIntegrationScriptRunning(integration, runningFilenames) {
     return managedScripts.some((filename) => runningFilenames.has(filename));
 }
 
+// A metadata-only integration can dispatch a command to a worker it does not own. Its own
+// `requiresRuntime: false` must not turn a stopped target worker into a delayed port command, so
+// a dispatch may opt into this independent, exact-script gate. Accept both a single string and an
+// array to keep the descriptor contract convenient while always exposing a stable array to callers.
+export function normalizeRequiredRuntimeScripts(value) {
+    const candidates = Array.isArray(value) ? value : [value];
+    return [...new Set(candidates
+        .filter((scriptPath) => typeof scriptPath === "string")
+        .map((scriptPath) => scriptPath.trim())
+        .filter(Boolean))];
+}
+
+export function areRequiredRuntimeScriptsRunning(runtimeScripts, runningFilenames) {
+    const requiredScripts = normalizeRequiredRuntimeScripts(runtimeScripts);
+    return requiredScripts.length === 0
+        || (runningFilenames instanceof Set && requiredScripts.every((scriptPath) => runningFilenames.has(scriptPath)));
+}
+
 function getTelemetryFieldValue(stats, key) {
     if (typeof key !== "string" || key.length === 0) return undefined;
     return key.split(".").reduce((value, segment) => {
@@ -386,6 +404,13 @@ export function applyPluginIntegrationCommand(ns, integration, command, logActio
     const scriptPath = integration?.scriptPath;
     const displayName = integration?.menuLabel ?? "Plugin";
     const commandMetadata = getObject(integration?.commands);
+    const requiredRuntimeScripts = normalizeRequiredRuntimeScripts(context.runtimeScripts);
+    if (!areRequiredRuntimeScriptsRunning(requiredRuntimeScripts, context.runningFilenames)) {
+        if (typeof logAction === "function") {
+            logAction("warning", `${displayName} action worker is not running (${requiredRuntimeScripts.join(", ")}); no command was sent.`);
+        }
+        return;
+    }
     const requiresRuntime = commandMetadata.requiresRuntime !== false;
     if (requiresRuntime && (typeof scriptPath !== "string" || context.running !== true)) {
         if (typeof logAction === "function") logAction("warning", `${displayName} is not running; start it before sending commands.`);
@@ -531,6 +556,9 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             || (!isSaveOptions
                 && action.requiresRuntime !== false
                 && integration?.commands?.requiresRuntime !== false);
+        const requiredRuntimeScripts = normalizeRequiredRuntimeScripts(action.runtimeScripts);
+        const actionWorkerRunning = areRequiredRuntimeScriptsRunning(requiredRuntimeScripts, context.runningFilenames);
+        const actionWorkerOffline = requiredRuntimeScripts.length > 0 && !actionWorkerRunning;
         // A "clipboard" action just hands the player a string to paste - it dispatches nothing, so
         // it must not be gated on the integration's script running, and its payload comes from
         // telemetry rather than from the descriptor (the target changes as the game progresses).
@@ -551,11 +579,14 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ? action.clearsOptionKeys.filter((key) => typeof key === "string" && key.length > 0)
             : [];
         const clearedOptionOverrides = Object.fromEntries(clearsOptionKeys.map((key) => [key, false]));
+        const tooltip = actionWorkerOffline
+            ? `${typeof action.tooltip === "string" && action.tooltip ? `${action.tooltip}\n` : ""}Required action worker is offline: ${requiredRuntimeScripts.join(", ")}.`
+            : action.tooltip;
         return {
             id: `${idPrefix}-${action.id}`,
             label: variant?.label ?? action.label,
             icon: icon(action.icon ?? ""),
-            ...(typeof action.tooltip === "string" && action.tooltip ? { tooltip: action.tooltip } : {}),
+            ...(typeof tooltip === "string" && tooltip ? { tooltip } : {}),
             tone: variant?.tone ?? (enabled
                 ? action.activeTone ?? action.enabledTone ?? "success"
                 : action.inactiveTone ?? action.disabledTone ?? "danger"),
@@ -573,6 +604,7 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             // own independent command-drain loop on their own port - same rationale as
             // optionBindings' port override below in applyPluginIntegrationOptions.
             ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
+            ...(requiredRuntimeScripts.length > 0 ? { runtimeScripts: requiredRuntimeScripts } : {}),
             // Opt-in actions report the value they are about to select so the click handler can
             // persist it alongside the live port command. Plain toggles derive the inverse boolean;
             // enum/mode buttons declare their exact optionValue in metadata.
@@ -593,6 +625,7 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
                 ? clipboardText.length === 0
                 : Boolean(
                     (requiresRuntime && !running)
+                    || actionWorkerOffline
                     || (locked && action.lockWhenIntegrationLocked)
                     || !enabledByState
                 ),
@@ -1008,6 +1041,7 @@ export function buildPluginIntegrationService(plugin) {
             const running = isIntegrationScriptRunning(integration, runningFilenames);
             return buildPluginIntegrationActions({ ...integration, commands: { ...integration.commands, actionKind: "plugin-command" } }, options, telemetryByServiceId?.[integration.serviceId], {
                 running,
+                runningFilenames,
                 idPrefix: integration.serviceId,
                 iconBrackets: true,
                 startingOrder: 30,
