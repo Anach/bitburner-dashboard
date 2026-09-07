@@ -77,6 +77,11 @@ import { getDashboardRestartArgs, parseDashboardLaunchOptions, shouldAutoStartSe
 import { normalizeDashboardActionCommand } from "dashboard/libs/action-command.js";
 import { executeDashboardAction } from "dashboard/libs/action-executor.js";
 import { dispatchDashboardActions } from "dashboard/libs/dashboard-action-dispatch.js";
+import {
+    DASHBOARD_ACTIONS_PER_PASS,
+    enqueueDashboardQueueAction,
+    takeDashboardQueueActions,
+} from "dashboard/libs/dashboard-action-queue.js";
 import { buildDashboardActionCommand as buildActionCommand } from "dashboard/libs/dashboard-action-command.js";
 import {
     buildPluginDashboardOptionInputs,
@@ -141,6 +146,7 @@ import {
     normalizeFileManifest,
     normalizeFilePath,
 } from "dashboard/libs/file-utils.js";
+import { normalizeFilePreviewMaxChars } from "dashboard/libs/file-preview.js";
 import { DASHBOARD_ACTION_IDS, SCRIPT_ACTION_IDS } from "dashboard/libs/action-ids.js";
 import { buildScriptActions, resolveScriptActionExecution } from "dashboard/libs/script-actions.js";
 import {
@@ -202,6 +208,7 @@ let activeDashboardTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_GAME);
 
 const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
+const DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY = "__dashboard_action_queue_feedback_v1";
 const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
 // Filter/search/toggle state for resource-card lists, kept on globalThis for the same reason scroll
@@ -251,7 +258,7 @@ const PLUGIN_RUNTIME_EXCLUDED_FOLDERS = DEFAULT_HIDDEN_SCRIPT_FOLDERS;
 const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
-const DASHBOARD_MINIMIZED_UI_TICK_MS = 250;
+const DASHBOARD_MINIMIZED_UI_TICK_MS = 1000;
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 // A shared reference for "this view isn't active" instead of a fresh {} literal each tick, so an
 // inactive File Manager/Script Log view compares equal to itself across ticks.
@@ -1395,11 +1402,30 @@ function setDashboardOptionsInputFocusState(focused) {
     globalThis[DASHBOARD_OPTIONS_INPUT_FOCUS_KEY] = Boolean(focused);
 }
 
-function enqueueDashboardAction(command) {
-    if (!command || typeof command !== "object") return;
+function recordDashboardActionQueueFeedback(message) {
+    const previous = globalThis[DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY] ?? {};
+    globalThis[DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY] = {
+        message: String(message ?? "Dashboard action was rejected."),
+        rejectedCount: Math.max(0, Number(previous.rejectedCount) || 0) + 1,
+        pending: true,
+        lastReportedAt: Number(previous.lastReportedAt) || 0,
+    };
+}
+
+function enqueueDashboardAction(command, { continuation = false } = {}) {
     const existingQueue = Array.isArray(globalThis[DASHBOARD_ACTION_QUEUE_KEY]) ? globalThis[DASHBOARD_ACTION_QUEUE_KEY] : [];
-    existingQueue.push(command);
-    globalThis[DASHBOARD_ACTION_QUEUE_KEY] = existingQueue;
+    try {
+        const result = enqueueDashboardQueueAction(existingQueue, command, { continuation });
+        globalThis[DASHBOARD_ACTION_QUEUE_KEY] = result.queue;
+        if (!result.accepted) recordDashboardActionQueueFeedback(result.reason);
+        return result.accepted;
+    } catch (error) {
+        const message = error && typeof error === "object" && "message" in error
+            ? String(error.message)
+            : "Invalid dashboard action.";
+        recordDashboardActionQueueFeedback(message);
+        return false;
+    }
 }
 
 export function requestDashboardRestartFromTitle(now = Date.now()) {
@@ -1420,8 +1446,36 @@ function setDashboardTailTitle(ns, title) {
 
 function flushDashboardActionQueue() {
     const queue = Array.isArray(globalThis[DASHBOARD_ACTION_QUEUE_KEY]) ? globalThis[DASHBOARD_ACTION_QUEUE_KEY] : [];
-    globalThis[DASHBOARD_ACTION_QUEUE_KEY] = [];
-    return queue;
+    const { actions, remaining } = takeDashboardQueueActions(queue, DASHBOARD_ACTIONS_PER_PASS);
+    globalThis[DASHBOARD_ACTION_QUEUE_KEY] = remaining;
+    return actions;
+}
+
+function restoreDeferredDashboardActions(continuation, deferredCommands = []) {
+    const deferred = Array.isArray(deferredCommands) ? deferredCommands : [];
+    const next = [
+        ...(continuation && typeof continuation === "object" ? [continuation] : []),
+        ...deferred,
+    ];
+    if (next.length === 0) return;
+    const queue = Array.isArray(globalThis[DASHBOARD_ACTION_QUEUE_KEY]) ? globalThis[DASHBOARD_ACTION_QUEUE_KEY] : [];
+    globalThis[DASHBOARD_ACTION_QUEUE_KEY] = [...next, ...queue];
+}
+
+function reportDashboardActionQueueFeedback(ns) {
+    const feedback = globalThis[DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY];
+    if (!feedback?.pending) return;
+    const now = Date.now();
+    const lastReportedAt = Number(feedback.lastReportedAt) || 0;
+    if (now - lastReportedAt < 3000) return;
+    const rejectedCount = Math.max(1, Number(feedback.rejectedCount) || 1);
+    globalThis[DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY] = {
+        ...feedback,
+        pending: false,
+        rejectedCount: 0,
+        lastReportedAt: now,
+    };
+    logMajorAction(ns, `${feedback.message} (${rejectedCount} request${rejectedCount === 1 ? "" : "s"} rejected.)`, "warning");
 }
 
 function setDashboardFileActionResult(viewId, status, message, details = {}) {
@@ -1455,11 +1509,16 @@ function getDashboardFileManagerRenderSignature(viewId, snapshot, themeSignature
     const actionTimestamp = lastActionResult?.viewId === viewId
         ? Number(lastActionResult.timestamp) || 0
         : 0;
+    const lastPreviewResult = globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY];
+    const previewTimestamp = lastPreviewResult?.viewId === viewId
+        ? Number(lastPreviewResult.timestamp) || 0
+        : 0;
     return JSON.stringify({
         viewId,
         fileState,
         manifest: snapshot.manifest ?? null,
         actionTimestamp,
+        previewTimestamp,
         themeSignature,
         layoutSignature,
     });
@@ -1708,7 +1767,7 @@ function completeDashboardAction(ns, command, result) {
     const tone = result?.tone ?? (result?.ok ? "success" : "error");
     if (command.kind === "file") {
         setDashboardFileActionResult(command.viewId, result?.ok ? "success" : "error", message, result);
-        ns.toast(message, tone === "danger" ? "error" : tone, 4500);
+        if (result?.pending !== true) ns.toast(message, tone === "danger" ? "error" : tone, 4500);
         ns.print(`[FILE MANAGER] ${message}`);
     } else {
         logMajorAction(ns, message, tone);
@@ -1722,7 +1781,7 @@ function executeQueuedNetscriptAction(ns, command) {
     let executableCommand = command;
     try {
         executableCommand = buildExecutableDashboardCommand(ns, command);
-        if (!executableCommand) return false;
+        if (!executableCommand) return { handled: false, continuation: null };
         executableCommand = normalizeDashboardActionCommand(executableCommand);
         const result = executeDashboardAction(ns, executableCommand);
         completeDashboardAction(ns, executableCommand, result);
@@ -1730,21 +1789,22 @@ function executeQueuedNetscriptAction(ns, command) {
             const restartArgs = "restartArgs" in result && Array.isArray(result.restartArgs) ? result.restartArgs : [];
             ns.spawn(DASHBOARD_SCRIPT, { threads: 1, spawnDelay: 0 }, ...restartArgs);
         }
-        return true;
+        return { handled: true, continuation: result?.pendingCommand ?? null };
     } catch (error) {
         const message = error && typeof error === "object" && "message" in error
             ? String(error.message)
             : String(error);
         completeDashboardAction(ns, executableCommand, { ok: false, message, tone: "error" });
-        return false;
+        return { handled: false, continuation: null };
     }
 }
 
 function applyQueuedDashboardActions(ns) {
     if (!ns) return;
+    reportDashboardActionQueueFeedback(ns);
     const queue = flushDashboardActionQueue();
     if (!Array.isArray(queue) || queue.length === 0) return;
-    dispatchDashboardActions(ns, queue, {
+    const dispatchResult = dispatchDashboardActions(ns, queue, {
         "window-mode": (command) => {
             const requestedMode = normalizeDashboardWindowMode(command.mode);
             if (requestedMode !== dashboardTailLayoutState.mode) {
@@ -1795,7 +1855,10 @@ function applyQueuedDashboardActions(ns) {
             if (command.actionId === "refresh") {
                 setDashboardFileActionResult(command.viewId, "success", "Home filesystem rescanned.");
             } else {
-                executeQueuedNetscriptAction(ns, command);
+                const result = executeQueuedNetscriptAction(ns, command);
+                if (result?.continuation) {
+                    return { deferRemaining: true, continuation: result.continuation };
+                }
             }
         },
         "file-preview": (command) => {
@@ -1803,7 +1866,7 @@ function applyQueuedDashboardActions(ns) {
             // safe main-loop context), never directly from the click handler that requested it,
             // which risks colliding with this loop's own in-flight ns.sleep().
             const path = String(command.path ?? "");
-            const maxChars = Math.max(1000, Number(command.maxChars) || 80000);
+            const maxChars = normalizeFilePreviewMaxChars(command.maxChars);
             let content = "";
             let error = "";
             let truncated = false;
@@ -1814,7 +1877,15 @@ function applyQueuedDashboardActions(ns) {
             } catch (err) {
                 error = String(err?.message ?? err);
             }
-            globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] = { path, content, error, truncated, timestamp: Date.now() };
+            globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] = {
+                viewId: String(command.viewId ?? ""),
+                path,
+                requestId: String(command.requestId ?? ""),
+                content,
+                error,
+                truncated,
+                timestamp: Date.now(),
+            };
         },
         script: (command) => {
             if (typeof command.actionId === "string" && typeof command.filename === "string") {
@@ -1829,6 +1900,7 @@ function applyQueuedDashboardActions(ns) {
             logMajorAction(ns, `Dashboard action failed (${actionName}): ${message}`, "danger");
         },
     });
+    restoreDeferredDashboardActions(dispatchResult?.continuation, dispatchResult?.deferredCommands);
 }
 
 function getScriptLaunchArgs(filename) {
@@ -6599,11 +6671,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                         viewId: activeView.id,
                         ...action,
                     })}
-                    onRequestPreview={(path, maxChars) => enqueueDashboardAction({
+                    onRequestPreview={(path, maxChars, requestId) => enqueueDashboardAction({
                         kind: "file-preview",
                         viewId: activeView.id,
                         path,
                         maxChars,
+                        requestId,
                     })}
                     lastPreviewResult={globalThis[DASHBOARD_FILE_PREVIEW_RESULT_KEY] ?? null}
                     onInputFocusChange={setOptionsInputFocus}

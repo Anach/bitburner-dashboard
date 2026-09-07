@@ -51,6 +51,19 @@ function normalizeProtection(rawProtection) {
     };
 }
 
+function normalizeFileBatch(rawBatch) {
+    if (!rawBatch || typeof rawBatch !== "object" || Array.isArray(rawBatch)) return null;
+    const total = Math.floor(Number(rawBatch.total));
+    const completedCount = Math.floor(Number(rawBatch.completedCount));
+    const skippedCount = Math.floor(Number(rawBatch.skippedCount));
+    if (!Number.isInteger(total) || total < 1 || total > 1000
+        || !Number.isInteger(completedCount) || completedCount < 0 || completedCount > total
+        || !Number.isInteger(skippedCount) || skippedCount < 0 || skippedCount > total) {
+        throw new Error("Invalid file batch state.");
+    }
+    return { total, completedCount, skippedCount };
+}
+
 function normalizeDashboardCommand(rawCommand) {
     const actionId = String(rawCommand.actionId ?? "");
     if (!DASHBOARD_ACTIONS.has(actionId)) throw new Error(`Unknown dashboard action: ${actionId || "(missing)"}`);
@@ -100,6 +113,8 @@ function normalizeFileCommand(rawCommand) {
     if (actionId === "archive-many") {
         command.stalePaths = normalizePathList(Array.isArray(rawCommand.stalePaths) ? rawCommand.stalePaths : []);
     }
+    const batch = normalizeFileBatch(rawCommand.batch);
+    if (batch) command.batch = batch;
     return command;
 }
 

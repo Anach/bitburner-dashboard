@@ -12,6 +12,7 @@ import {
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
+const FILE_MUTATIONS_PER_ACTION = 10;
 
 function success(message, tone = "success", details = {}) {
     return { ok: true, message, tone, ...details };
@@ -272,11 +273,18 @@ function performFileAction(ns, command) {
         return success(`Deleted ${source}.`, "warning", { actionId, path: source, viewId: command.viewId, kind: "file" });
     }
 
-    let completedCount = 0;
-    const skipped = [];
+    const previousBatch = command.batch ?? {};
+    let completedCount = Math.max(0, Number(previousBatch.completedCount) || 0);
+    let skippedCount = Math.max(0, Number(previousBatch.skippedCount) || 0);
+    const totalCount = Math.max(
+        Number(previousBatch.total) || 0,
+        completedCount + skippedCount + command.paths.length,
+    );
+    const batchPaths = command.paths.slice(0, FILE_MUTATIONS_PER_ACTION);
+    const remainingPaths = command.paths.slice(FILE_MUTATIONS_PER_ACTION);
     const reservedTargets = new Set();
     const stalePaths = new Set(command.stalePaths ?? []);
-    for (const path of command.paths) {
+    for (const path of batchPaths) {
         try {
             if (actionId === "delete-many") {
                 deleteFile(ns, path, protection);
@@ -300,20 +308,39 @@ function performFileAction(ns, command) {
             }
             completedCount += 1;
         } catch (error) {
-            skipped.push(path);
+            skippedCount += 1;
         }
     }
     const verb = actionId === "copy-many" ? "Copied" : actionId === "move-many" ? "Moved" : actionId === "delete-many" ? "Deleted" : "Archived";
     const noun = actionId === "archive-many" ? "stale file" : "selected file";
+    if (remainingPaths.length > 0) {
+        const processedCount = completedCount + skippedCount;
+        return {
+            ok: true,
+            pending: true,
+            message: `${verb} ${processedCount}/${totalCount} ${noun}${totalCount === 1 ? "" : "s"}...`,
+            tone: "info",
+            kind: "file",
+            actionId,
+            viewId: command.viewId,
+            completedCount,
+            skippedCount,
+            pendingCommand: {
+                ...command,
+                paths: remainingPaths,
+                batch: { total: totalCount, completedCount, skippedCount },
+            },
+        };
+    }
     return {
-        ok: completedCount > 0 || skipped.length === 0,
-        message: `${verb} ${completedCount} ${noun}${completedCount === 1 ? "" : "s"}${skipped.length > 0 ? `; skipped ${skipped.length}` : ""}.`,
-        tone: skipped.length > 0 ? "warning" : actionId === "delete-many" ? "warning" : "success",
+        ok: completedCount > 0 || skippedCount === 0,
+        message: `${verb} ${completedCount} ${noun}${completedCount === 1 ? "" : "s"}${skippedCount > 0 ? `; skipped ${skippedCount}` : ""}.`,
+        tone: skippedCount > 0 ? "warning" : actionId === "delete-many" ? "warning" : "success",
         kind: "file",
         actionId,
         viewId: command.viewId,
         completedCount,
-        skipped,
+        skippedCount,
     };
 }
 

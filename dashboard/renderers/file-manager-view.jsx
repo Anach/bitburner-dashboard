@@ -30,6 +30,7 @@ import {
     normalizeFileManifest,
     normalizeFilePath,
 } from "dashboard/libs/file-utils.js";
+import { normalizeFilePreviewMaxChars } from "dashboard/libs/file-preview.js";
 import { normalizeManualSections } from "dashboard/libs/manual-strings.js";
 
 let React = null;
@@ -459,7 +460,97 @@ function normalizeSelectedIds(selectedIds, fallbackId = "") {
 }
 
 function getPreviewMaxChars(view) {
-    return Math.max(1000, Number(view?.preview?.maxChars) || 80000);
+    return normalizeFilePreviewMaxChars(view?.preview?.maxChars);
+}
+
+function normalizePreviewRequest(value) {
+    if (!value || typeof value !== "object") return null;
+    const path = normalizeFilePath(value.path);
+    const requestId = String(value.requestId ?? "").trim();
+    return path && requestId ? { path, requestId } : null;
+}
+
+function buildPreviewDialog(entry, request, result, view) {
+    if (!entry || !request) return null;
+    const matchesResult = result?.viewId === view?.id
+        && result?.path === request.path
+        && result?.requestId === request.requestId;
+    const maxChars = getPreviewMaxChars(view);
+    const content = matchesResult
+        ? (result?.error ? `[Unable to read file: ${result.error}]` : String(result?.content ?? ""))
+        : null;
+    return {
+        type: "preview",
+        entry,
+        requestId: request.requestId,
+        content: content === null ? null : content.slice(0, maxChars),
+        truncated: matchesResult && (result?.truncated === true || content.length > maxChars),
+    };
+}
+
+const RESTORABLE_DIALOG_TYPES = new Set([
+    "preview",
+    "copy",
+    "move",
+    "archive",
+    "delete",
+    "copy-many",
+    "move-many",
+    "delete-many",
+    "cleanup",
+]);
+
+function serializeFileDialog(dialog) {
+    if (!dialog || !RESTORABLE_DIALOG_TYPES.has(dialog.type)) return null;
+    const entries = Array.isArray(dialog.entries)
+        ? dialog.entries
+        : dialog.entry ? [dialog.entry] : [];
+    const entryPaths = entries
+        .map((entry) => normalizeFilePath(entry?.path))
+        .filter(Boolean);
+    if (entryPaths.length === 0) return null;
+    const saved = { type: dialog.type, entryPaths };
+    if (typeof dialog.target === "string") saved.target = dialog.target;
+    if (typeof dialog.requestId === "string") saved.requestId = dialog.requestId;
+    if (dialog.requiresSecondConfirm === true) saved.requiresSecondConfirm = true;
+    if (dialog.confirmedOnce === true) saved.confirmedOnce = true;
+    if (Number.isFinite(Number(dialog.blockedCount))) saved.blockedCount = Math.max(0, Number(dialog.blockedCount));
+    return saved;
+}
+
+function restoreFileDialog(saved, files, lastPreviewResult, view, archiveRoot) {
+    if (!saved || typeof saved !== "object" || !RESTORABLE_DIALOG_TYPES.has(saved.type)) return null;
+    const entryPaths = Array.isArray(saved.entryPaths) ? saved.entryPaths.map(normalizeFilePath).filter(Boolean) : [];
+    const entriesByPath = new Map((Array.isArray(files) ? files : []).map((entry) => [entry.path, entry]));
+    const entries = entryPaths.map((path) => entriesByPath.get(path)).filter(Boolean);
+    // Never retain a confirmation for an incomplete or externally changed selection.
+    if (entries.length === 0 || entries.length !== entryPaths.length) return null;
+    if (saved.type === "preview") {
+        return buildPreviewDialog(entries[0], { path: entryPaths[0], requestId: String(saved.requestId ?? "") }, lastPreviewResult, view);
+    }
+    if (["copy-many", "move-many"].includes(saved.type)) {
+        return { type: saved.type, entries, target: String(saved.target ?? "") };
+    }
+    if (saved.type === "delete-many") {
+        return {
+            type: saved.type,
+            entries,
+            requiresSecondConfirm: saved.requiresSecondConfirm === true,
+            confirmedOnce: saved.confirmedOnce === true,
+        };
+    }
+    if (saved.type === "cleanup") {
+        return {
+            type: saved.type,
+            entries,
+            blockedCount: Math.max(0, Number(saved.blockedCount) || 0),
+            archiveRoot,
+        };
+    }
+    if (["copy", "move", "archive"].includes(saved.type)) {
+        return { type: saved.type, entry: entries[0], target: String(saved.target ?? "") };
+    }
+    return { type: saved.type, entry: entries[0] };
 }
 
 function getDirectoryFileEntries(files, directoryPath) {
@@ -811,7 +902,13 @@ export function FileManagerView({
     const [showHidden, setShowHidden] = React.useState(() => typeof savedState.showHidden === "boolean"
         ? savedState.showHidden
         : layout.showHiddenDefault !== false);
-    const [dialog, setDialog] = React.useState(null);
+    const savedPreviewRequest = normalizePreviewRequest(savedState.previewRequest);
+    const savedPendingDialog = savedState.pendingDialog ?? (savedPreviewRequest
+        ? { type: "preview", entryPaths: [savedPreviewRequest.path], requestId: savedPreviewRequest.requestId }
+        : null);
+    const [dialog, setDialog] = React.useState(() => {
+        return restoreFileDialog(savedPendingDialog, files, lastPreviewResult, view, archiveRoot);
+    });
     const hasManual = normalizeManualSections(manual).length > 0;
     const [showManual, setShowManual] = React.useState(() => hasManual && Boolean(savedState.showManual));
     const [notice, setNotice] = React.useState("");
@@ -829,6 +926,7 @@ export function FileManagerView({
     const selectionModifiersRef = React.useRef({ toggle: false, range: false });
     const seenActionResultRef = React.useRef(0);
     const seenPreviewResultRef = React.useRef(0);
+    const previewRequestSequenceRef = React.useRef(0);
     const hiddenFolderKey = hiddenFolders.join("|");
     const buildEntries = (pane) => buildFilePaneEntries(files, pane.path, {
         query,
@@ -867,6 +965,7 @@ export function FileManagerView({
     const selectedEntry = selectedByPane[activePane];
     const selectedEntries = selectedEntriesByPane[activePane];
     const deletableEntries = resolveDeleteEntries(selectedEntries, files);
+    const pendingDialog = serializeFileDialog(dialog);
 
     React.useEffect(() => {
         onStateChange?.({
@@ -885,8 +984,9 @@ export function FileManagerView({
             leftScrollTop: paneScrollTops.left,
             rightScrollTop: paneScrollTops.right,
             showManual,
+            pendingDialog,
         });
-    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showHidden, query, statusFilter, paneScrollTops.left, paneScrollTops.right, showManual]);
+    }, [activePane, panes.left.path, panes.left.selectedId, panes.left.selectedIds, panes.left.anchorId, panes.right.path, panes.right.selectedId, panes.right.selectedIds, panes.right.anchorId, showHidden, query, statusFilter, paneScrollTops.left, paneScrollTops.right, showManual, JSON.stringify(pendingDialog)]);
 
     React.useEffect(() => {
         shellRef.current?.focus?.();
@@ -911,10 +1011,12 @@ export function FileManagerView({
 
     React.useEffect(() => {
         const resultTime = Number(lastPreviewResult?.timestamp) || 0;
-        if (!resultTime || resultTime <= seenPreviewResultRef.current) return;
+        if (!resultTime || resultTime <= seenPreviewResultRef.current || lastPreviewResult?.viewId !== view?.id) return;
         seenPreviewResultRef.current = resultTime;
         setDialog((current) => {
-            if (!current || current.type !== "preview" || current.entry?.path !== lastPreviewResult?.path) return current;
+            if (!current || current.type !== "preview"
+                || current.entry?.path !== lastPreviewResult?.path
+                || current.requestId !== lastPreviewResult?.requestId) return current;
             const maxChars = getPreviewMaxChars(view);
             const content = lastPreviewResult?.error
                 ? `[Unable to read file: ${lastPreviewResult.error}]`
@@ -925,7 +1027,7 @@ export function FileManagerView({
                 truncated: lastPreviewResult?.truncated === true || content.length > maxChars,
             };
         });
-    }, [lastPreviewResult?.timestamp, lastPreviewResult?.path]);
+    }, [lastPreviewResult?.timestamp, lastPreviewResult?.viewId, lastPreviewResult?.path, lastPreviewResult?.requestId, view?.id]);
 
     React.useEffect(() => {
         const entry = selectedByPane[activePane];
@@ -1006,13 +1108,15 @@ export function FileManagerView({
         // Content isn't available yet - ns.read() can't be called directly from a click handler
         // (it would race the main dashboard loop's own in-flight ns.sleep()). Show a loading state
         // and populate content once onRequestPreview's result comes back on a later tick.
+        const requestId = `${Date.now()}-${++previewRequestSequenceRef.current}`;
         setDialog({
             type: "preview",
             entry,
+            requestId,
             content: null,
             truncated: false,
         });
-        onRequestPreview?.(entry.path, getPreviewMaxChars(view));
+        onRequestPreview?.(entry.path, getPreviewMaxChars(view), requestId);
     };
 
     const openEntry = (paneId, entry) => {

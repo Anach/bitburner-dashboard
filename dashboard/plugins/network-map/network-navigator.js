@@ -1,8 +1,9 @@
 import { CITY_NAMES, getCityLocations } from "dashboard/plugins/network-map/city-locations.js";
-import { discoverNetwork, pathToHost } from "dashboard/libs/topology.js";
+import { pathToHost } from "dashboard/libs/topology.js";
 import { startHomeScript } from "dashboard/libs/runtime-actions.js";
 import { readApiAccessSnapshot } from "dashboard/libs/capabilities.js";
 import { NETWORK_NAVIGATOR_COMMAND_PORT } from "dashboard/libs/port-registry.js";
+import { createNetworkMapCatalogCache, getNetworkMapCatalog } from "dashboard/plugins/network-map/network-map-catalog.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
@@ -287,7 +288,7 @@ function isHacknetServerHostname(hostname) {
     return hostname.startsWith("hacknet-server-") || hostname.startsWith("hacknet-node-");
 }
 
-function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastCommand, activeModeId, xpPerSecondByHost, companyProgressByCity, singularityLastCommand) {
+function buildSnapshot(ns, graph, fileCatalogByHost, singularityAvailable, formulasAvailable, lastCommand, activeModeId, xpPerSecondByHost, companyProgressByCity, singularityLastCommand) {
     const player = ns.getPlayer();
     const hackingLevel = Number(player?.skills?.hacking) || 0;
     const activelyHackedTargets = collectActiveHackTargets(ns, graph.servers);
@@ -309,15 +310,7 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
         const requiredHackingSkill = Number(server.requiredHackingSkill) || 0;
         const route = pathToHost(graph.parentMap, server.hostname, "home") ?? [];
         const terminalConnectCommand = buildTerminalConnectCommand(route);
-        let files = [];
-        try {
-            files = ns.ls(server.hostname);
-        } catch (error) {
-            files = [];
-        }
-        const hasContract = files.some((filename) => filename.endsWith(".cct"));
-        const contractCount = files.filter((filename) => filename.endsWith(".cct")).length;
-        const hasStoryFile = files.some((filename) => filename.endsWith(".lit") || filename.endsWith(".msg"));
+        const fileCatalog = fileCatalogByHost?.get(server.hostname) ?? {};
         const moneyMaximum = Number(server.moneyMax) || 0;
         const moneyAvailable = Number(server.moneyAvailable) || 0;
         const minimumSecurity = Number(server.minDifficulty) || 0;
@@ -343,9 +336,9 @@ function buildSnapshot(ns, graph, singularityAvailable, formulasAvailable, lastC
             purchased: Boolean(server.purchasedByPlayer),
             cloud: cloudServers.has(server.hostname),
             hacknet: isHacknetServerHostname(server.hostname),
-            hasContract,
-            contractCount,
-            story: STORY_SERVERS.has(server.hostname) || hasStoryFile,
+            hasContract: fileCatalog.hasContract === true,
+            contractCount: Number(fileCatalog.contractCount) || 0,
+            story: STORY_SERVERS.has(server.hostname) || fileCatalog.hasStoryFile === true,
             currentlyBeingHacked: activelyHackedTargets.has(server.hostname),
             xpPerSecondPerThread,
             xpScoreIsEstimate: !usingPreciseXpScore,
@@ -461,8 +454,8 @@ export async function main(ns) {
     let lastCommand = null;
     let activeModeId = DEFAULT_MODE_ID;
     let lastSnapshotSignature = "";
+    const networkCatalogCache = createNetworkMapCatalogCache();
     while (true) {
-        const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
         // This launcher only needs two gates. Reuse the Service Supervisor's shared Singularity
         // result rather than retaining another getResetInfo() call; fileExists() is already in
         // this script's static call graph through startHomeScript().
@@ -476,6 +469,7 @@ export async function main(ns) {
         if (formulasAvailable) startHomeScript(ns, FORMULAS_WORKER_SCRIPT);
         if (singularityAvailable) startHomeScript(ns, SINGULARITY_WORKER_SCRIPT);
 
+        let refreshCatalog = false;
         while (ns.peek(NETWORK_NAVIGATOR_COMMAND_PORT) !== "NULL PORT DATA") {
             const command = String(ns.readPort(NETWORK_NAVIGATOR_COMMAND_PORT));
             if (command.startsWith(SET_MODE_PREFIX)) {
@@ -485,6 +479,7 @@ export async function main(ns) {
             }
             if (command === "Refresh") {
                 lastCommand = makeCommandResult("refresh", "", true, "Navigation telemetry refreshed.");
+                refreshCatalog = true;
                 continue;
             }
             // Anything else (ConnectDirect/ConnectRoute/ConnectHop/OpenLocation/WorkCompany) is
@@ -493,12 +488,16 @@ export async function main(ns) {
             // command is just silently ignored rather than erroring.
         }
 
+        const catalog = getNetworkMapCatalog(ns, networkCatalogCache, Date.now(), { force: refreshCatalog });
+        const graph = catalog.graph;
+
         const formulasData = loadFreshWorkerData(ns, DATA_PATHS.networkNavigatorFormulasStatsJson);
         const singularityData = loadFreshWorkerData(ns, DATA_PATHS.networkNavigatorSingularityStatsJson);
 
         const snapshot = buildSnapshot(
             ns,
             graph,
+            catalog.fileCatalogByHost,
             singularityAvailable,
             formulasAvailable,
             lastCommand,

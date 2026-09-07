@@ -14,6 +14,11 @@ integration.
 
 ### Added
 
+- **Dashboard action queue contract.** Dashboard UI requests now enter a bounded, validated,
+  generic queue: 60 user slots plus four reserved continuation slots, with rate-limited visible
+  rejection feedback. Repeated window-mode, minimize, filesystem-refresh, and same-file preview
+  requests coalesce; lifecycle, port-command, and mutation records retain FIFO order.
+
 - **Menu glyph reference.** `dashboard/libs/menu-glyphs.js` is now the single source for every
   main-menu glyph's symbol, colour, visibility, priority, and slot cost. It also adds the missing
   Hacknet Server API marker used by Net Shop and Server Manager.
@@ -40,6 +45,24 @@ integration.
   supervision.
 
 ### Fixed
+
+- **Network Navigator cache tiers.** Network topology and remote contract/lore catalogues now
+  refresh every ten seconds, or immediately after the Map's Refresh action. Server state, active
+  hacking targets, player state, and optional worker results remain live on the two-second pass.
+  The Formulas worker reuses the current base-map host list instead of independently rescanning
+  while that telemetry is fresh.
+
+- **File Manager dialog delivery.** Pending previews and Copy, Move, Archive, Delete, bulk, and
+  cleanup confirmations now retain their actionable paths, destination, and delete-arm state
+  across the dashboard's normal retained-view refresh. Restored confirmations resolve their paths
+  against the current snapshot and close safely if the selection changed; preview results still
+  require the exact original request identity.
+
+- **Dashboard browser-safety and hidden-workload bounds.** A queue pass executes at most four
+  records, while File Manager bulk operations yield after ten mutations and resume ahead of later
+  actions with aggregate progress. File previews share a 100,000-character hard cap at both the
+  view and execution boundaries. A minimized Dashboard now uses its normal one-second cadence
+  rather than polling Home, telemetry, and layout four times per second. Static RAM is unchanged.
 
 - **System Overview stale graph state.** Priority History now preserves descriptor-reported
   source staleness as well as the owning service's runtime state, so a stale attributed source

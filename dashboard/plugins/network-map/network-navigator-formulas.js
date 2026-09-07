@@ -12,6 +12,22 @@ import { discoverNetwork } from "dashboard/libs/topology.js";
 // optional viewTelemetry contributions can provide selection state independently of this worker.
 const SNAPSHOT_INTERVAL_MS = 2000;
 const OUTPUT_PATH = "data/network_navigator_formulas_stats.json";
+const BASE_STATS_PATH = "data/network_navigator_stats.json";
+const BASE_STATS_STALE_AFTER_MS = 15000;
+
+function getKnownServers(ns) {
+    try {
+        const snapshot = JSON.parse(ns.read(BASE_STATS_PATH) || "{}");
+        const generatedAt = Number(snapshot.generatedAt) || 0;
+        const servers = [...new Set((Array.isArray(snapshot.nodes) ? snapshot.nodes : [])
+            .map((node) => String(node?.hostname ?? ""))
+            .filter(Boolean))];
+        if (servers.length > 0 && Date.now() - generatedAt <= BASE_STATS_STALE_AFTER_MS) return servers;
+    } catch (error) {
+        // A first launch or reset may not have base telemetry yet; discover once as a fallback.
+    }
+    return discoverNetwork(ns, "home", { exclude: ["darkweb"] }).servers;
+}
 
 function computeXpPerSecond(ns, server, player) {
     try {
@@ -29,11 +45,11 @@ export async function main(ns) {
     ns.disableLog("ALL");
 
     while (true) {
-        const graph = discoverNetwork(ns, "home", { exclude: ["darkweb"] });
+        const servers = getKnownServers(ns);
         const player = ns.getPlayer();
 
         const xpPerSecondByHost = {};
-        for (const hostname of graph.servers) {
+        for (const hostname of servers) {
             const server = ns.getServer(hostname);
             xpPerSecondByHost[hostname] = computeXpPerSecond(ns, server, player);
         }
