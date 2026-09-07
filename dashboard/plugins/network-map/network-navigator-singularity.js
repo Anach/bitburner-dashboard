@@ -142,6 +142,7 @@ export async function main(ns) {
     const queuedActions = [];
 
     while (true) {
+        let queueRejection = null;
         const completedAction = readCompletedAction(ns, activeAction);
         if (completedAction) {
             lastCommand = completedAction;
@@ -154,7 +155,19 @@ export async function main(ns) {
             const command = String(ns.readPort(NETWORK_NAVIGATOR_SINGULARITY_COMMAND_PORT));
             const action = describeAction(command);
             if (!action) continue;
-            if (queuedActions.length >= MAX_QUEUED_ACTIONS) queuedActions.shift();
+            if (queuedActions.length >= MAX_QUEUED_ACTIONS) {
+                const message = "Navigation queue is full; wait for an action to finish before sending another.";
+                queueRejection = {
+                    kind: action.kind,
+                    target: action.target,
+                    status: "error",
+                    message,
+                    timestamp: Date.now(),
+                };
+                ns.print(`[QUEUE FULL] ${message}`);
+                ns.toast(message, "warning", 5000);
+                continue;
+            }
             queuedActions.push(action);
         }
 
@@ -190,6 +203,10 @@ export async function main(ns) {
                 lastCommand = makePendingResult(activeAction, actionStatus.detail);
             }
         }
+        // A queue rejection must stay visible for this telemetry cycle even if an existing action
+        // also updates its progress below. Preserve the queued FIFO work rather than discarding
+        // its oldest command to make room for the newest click.
+        if (queueRejection) lastCommand = queueRejection;
 
         const baseStats = loadJsonFile(ns, BASE_STATS_PATH);
         const companyProgressByCity = buildActiveCityProgress(ns, String(baseStats?.activeModeId ?? ""));

@@ -23,6 +23,11 @@ integration.
 
 ### Fixed
 
+- **Network Navigator worker ownership and command queue.** Dashboard Stop/Restart now manages
+  the Navigator's capability-gated Formula and Singularity Home workers without adding their RAM
+  to Start Order capacity. A full Singularity navigation queue now preserves queued FIFO actions
+  and visibly rejects the new action instead of silently discarding the oldest one.
+
 - **Mail Client workspace actions and Darknet deployment.** Mark-read, mark-unread, read-all,
   and delete actions now update the retained mailbox workspace immediately, then remain queued for
   the scanner to persist on its normal cycle. Darknet agents now copy their full direct-import set

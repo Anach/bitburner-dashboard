@@ -9,6 +9,11 @@ export const DASHBOARD_PLUGIN_METADATA = {
         { "type": "api", "id": "singularity", "required": false }
     ],
     "daemon": true,
+    "managedScripts": [
+        "dashboard/plugins/network-map/network-navigator-formulas.js",
+        "dashboard/plugins/network-map/network-navigator-singularity.js"
+    ],
+    "capacityPlanningScripts": [],
     "panels": [
         { "id": "status", "label": "Status", "title": "Network Telemetry", "accent": "#6ee7a8", "subtitle": "Known server topology, city locations, and navigation capability" }
     ],
