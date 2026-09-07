@@ -165,6 +165,12 @@ import {
     getPluginMenuRequirementBadgeBudget,
     getPluginRequirementsForPanel,
 } from "dashboard/libs/plugin-requirements.js";
+import {
+    buildMenuOriginGlyph,
+    getMenuDaemonStatusGlyph,
+    getMenuHealthGlyph,
+    sortOptionalMenuGlyphs,
+} from "dashboard/libs/menu-glyphs.js";
 import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
 import { NETWORK_CHILD_STATUS_FILE } from "dashboard/libs/network-child-request.js";
 import { loadManualStrings, normalizeManualSections } from "dashboard/libs/manual-strings.js";
@@ -4595,27 +4601,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     const renderHealthBadge = (level) => {
-        if (level !== "warn" && level !== "danger") return null;
+        const glyph = getMenuHealthGlyph(level);
+        if (!glyph) return null;
         return (
-            <span style={{ flex: "0 0 auto", marginLeft: "6px", color: level === "danger" ? "#ff9a9a" : "#ffd88a" }}>
-                {level === "danger" ? "!!" : "!"}
+            <span title={glyph.label} aria-label={glyph.label} style={{ flex: "0 0 auto", marginLeft: "6px", color: glyph.color }}>
+                {glyph.symbol}
             </span>
         );
-    };
-
-    const getMenuOriginGlyph = (origin) => {
-        const presentation = origin === "core"
-            ? { symbol: "C", title: "Dashboard core", color: "#c8e0ff" }
-            : origin === "plugin"
-                ? { symbol: "P", title: "Dashboard plugin", color: "#d9c4ff" }
-                : origin === "integration"
-                    ? { symbol: "I", title: "External integration", color: "#9ee9c0" }
-                    : null;
-        return presentation ? {
-            id: `menu-origin-${origin}`,
-            label: presentation.title,
-            ...presentation,
-        } : null;
     };
 
     const renderMenuRequirementBadges = (badges) => (
@@ -6819,15 +6811,13 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                             const itemHasRuntime = Boolean(itemRuntimeService?.pluginFile);
                                             const itemRunning = itemHasRuntime
                                                 && homeScripts.some((script) => script?.filename === itemRuntimeService.pluginFile && script?.running);
-                                            const itemStatusDotColor = itemRuntimeService?.pluginMetadata?.daemon !== true
+                                            const itemStatusGlyph = itemRuntimeService?.pluginMetadata?.daemon !== true
                                                 ? null
-                                                : itemRunning
-                                                    ? "#6ee7a8"
-                                                    : "#ff8080";
+                                                : getMenuDaemonStatusGlyph(itemRunning);
                                             const itemMenuMetadata = item.dashboardViewId ? item : itemService;
-                                            const originGlyph = getMenuOriginGlyph(item.menuOrigin);
+                                            const originGlyph = buildMenuOriginGlyph(item.menuOrigin);
                                             const allItemRequirementBadges = showMainMenuUnlockGlyphs
-                                                ? [
+                                                ? sortOptionalMenuGlyphs([
                                                     ...(itemMenuMetadata
                                                         ? buildPluginMenuRequirementBadges([
                                                             ...(Array.isArray(itemMenuMetadata.pluginMetadata?.menuUnlocks)
@@ -6841,14 +6831,14 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                         ])
                                                         : []),
                                                     ...(originGlyph ? [originGlyph] : []),
-                                                ]
+                                                ])
                                                 : [];
                                             const itemRequirementBadges = compactPluginMenuRequirementBadges(
                                                 allItemRequirementBadges,
                                                 getPluginMenuRequirementBadgeBudget(
                                                     menuUnlockGlyphMaxCount,
                                                     itemLevel,
-                                                    Boolean(itemStatusDotColor),
+                                                    Boolean(itemStatusGlyph),
                                                 ),
                                             );
                                             return (
@@ -6880,7 +6870,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                     </span>
                                                     {renderHealthBadge(itemLevel)}
                                                 </span>
-                                                {itemRequirementBadges.length > 0 || itemStatusDotColor ? (
+                                                {itemRequirementBadges.length > 0 || itemStatusGlyph ? (
                                                     <span style={{
                                                         display: "inline-flex",
                                                         alignItems: "center",
@@ -6889,8 +6879,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                         marginLeft: "auto",
                                                     }}>
                                                         {renderMenuRequirementBadges(itemRequirementBadges)}
-                                                        {itemStatusDotColor ? (
-                                                            <span style={{ color: itemStatusDotColor }}>●</span>
+                                                        {itemStatusGlyph ? (
+                                                            <span title={itemStatusGlyph.label} aria-label={itemStatusGlyph.label} style={{ color: itemStatusGlyph.color }}>
+                                                                {itemStatusGlyph.symbol}
+                                                            </span>
                                                         ) : null}
                                                     </span>
                                                 ) : null}

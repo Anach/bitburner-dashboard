@@ -1,4 +1,10 @@
 import { buildCapabilitySnapshot, isCapabilityRequirementMet } from "dashboard/libs/capabilities.js";
+import {
+    buildMenuGlyphOverflow,
+    getMenuGlyphSlotCost,
+    getMenuRequirementGlyphDefinition,
+    sortOptionalMenuGlyphs,
+} from "dashboard/libs/menu-glyphs.js";
 
 const API_LABELS = {
     singularity: "Singularity API",
@@ -8,6 +14,7 @@ const API_LABELS = {
     sleeve: "Sleeve API",
     stanek: "Stanek's Gift API",
     darknet: "Darknet API",
+    hacknetServers: "Hacknet Server API",
 };
 
 const STOCK_ACCESS_LABELS = {
@@ -15,39 +22,6 @@ const STOCK_ACCESS_LABELS = {
     tix: "TIX API",
     "4s": "4S Market Data",
     "4s-tix": "4S Market Data TIX API",
-};
-
-const MENU_REQUIREMENT_BADGES = {
-    "api:singularity": { symbol: "∞", color: "#facc6b", label: "Singularity API" },
-    "api:gang": { symbol: "G", color: "#fb7185", label: "Gang API" },
-    "api:sleeve": { symbol: "Ⅱ", color: "#fb923c", label: "Sleeve API" },
-    "api:grafting": { symbol: "+", color: "#4f7fd9", label: "Grafting API" },
-    "api:bladeburner": { symbol: "†", color: "#7dd3fc", label: "Bladeburner API" },
-    "api:darknet": { symbol: "D", color: "#6ee7a8", label: "Darknet access" },
-    "api:corporation": { symbol: "C", color: "#fbbf24", label: "Corporation API" },
-    "api:stanek": { symbol: "◇", color: "#c084fc", label: "Stanek's Gift API" },
-    "program:Formulas.exe": { symbol: "ƒ", color: "#d8b4fe", label: "Formulas.exe" },
-};
-
-const GROUPED_MENU_REQUIREMENT_BADGES = {
-    stock: {
-        id: "stock:trading",
-        symbol: "$",
-        color: "#5eead4",
-        label: "Trading APIs",
-    },
-    sourceFile: {
-        id: "sourceFile:any",
-        symbol: "§",
-        color: "#60a5fa",
-        label: "Source Files",
-    },
-    augmentation: {
-        id: "augmentation:any",
-        symbol: "Δ",
-        color: "#d8b4fe",
-        label: "Augmentations",
-    },
 };
 
 const PANEL_REQUIREMENTS_BY_SERVICE_KEY = "__dashboardPanelRequirementsByService";
@@ -105,12 +79,10 @@ export function buildPluginMenuRequirementBadges(requirements = []) {
     for (const requirement of Array.isArray(requirements) ? requirements : []) {
         if (!requirement || typeof requirement !== "object") continue;
 
-        const requirementKey = `${requirement.type}:${requirement.id}`;
-        const definition = GROUPED_MENU_REQUIREMENT_BADGES[requirement.type]
-            ?? MENU_REQUIREMENT_BADGES[requirementKey];
+        const definition = getMenuRequirementGlyphDefinition(requirement);
         if (!definition) continue;
 
-        const id = definition.id ?? requirementKey;
+        const id = definition.id;
         if (badges.has(id)) continue;
         const label = typeof requirement.menuLabel === "string" && requirement.menuLabel.length > 0
             ? requirement.menuLabel
@@ -121,10 +93,11 @@ export function buildPluginMenuRequirementBadges(requirements = []) {
             color: definition.color,
             label,
             title: `${definition.symbol} - ${label}`,
+            priority: definition.priority,
         });
     }
 
-    return [...badges.values()];
+    return sortOptionalMenuGlyphs([...badges.values()]);
 }
 
 /**
@@ -138,25 +111,16 @@ export function compactPluginMenuRequirementBadges(badges = [], maxBadges = 5) {
 
     const visibleCount = Math.max(0, limit - 1);
     const hiddenBadges = normalizedBadges.slice(visibleCount);
-    const hiddenKey = hiddenBadges
-        .map((badge) => `${badge.symbol} - ${badge.label}`)
-        .join("\n");
     return [
         ...normalizedBadges.slice(0, visibleCount),
-        {
-            id: "menu-unlock-overflow",
-            symbol: `+${hiddenBadges.length}`,
-            color: "#9ab0cc",
-            label: `${hiddenBadges.length} more unlocks`,
-            title: `Additional unlocks:\n${hiddenKey}`,
-        },
+        buildMenuGlyphOverflow(hiddenBadges),
     ];
 }
 
 export function getPluginMenuRequirementBadgeBudget(maxGlyphCount, healthLevel = "neutral", hasRuntimeStatus = false) {
     const limit = Math.max(0, Math.floor(Number(maxGlyphCount) || 0));
-    const healthGlyphCount = healthLevel === "danger" ? 2 : healthLevel === "warn" ? 1 : 0;
-    const runtimeGlyphCount = hasRuntimeStatus ? 1 : 0;
+    const healthGlyphCount = getMenuGlyphSlotCost(`health:${healthLevel}`);
+    const runtimeGlyphCount = hasRuntimeStatus ? getMenuGlyphSlotCost("daemon:running") : 0;
     return Math.max(0, limit - healthGlyphCount - runtimeGlyphCount);
 }
 

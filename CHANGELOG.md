@@ -14,7 +14,10 @@ integration.
 
 ### Added
 
-- **Menu-origin glyphs.** Navigation entries now show a compact `C`, `P`, or `I` glyph for
+- **Menu glyph reference.** `dashboard/libs/menu-glyphs.js` is now the single source for every
+  main-menu glyph's symbol, colour, visibility, priority, and slot cost. It also adds the missing
+  Hacknet Server API marker used by Net Shop and Server Manager.
+- **Menu-origin glyphs.** Navigation entries now show a compact `C`, `P`, or `E` glyph for
   Dashboard core, a packaged dashboard plugin, or an independently runnable integration. Origin
   is derived from the discovered descriptor location rather than descriptor-maintained labels, and
   joins the optional, capped requirement-glyph row after API and requirement markers, so it is the
