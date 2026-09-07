@@ -245,7 +245,10 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 {selectedGraphs.length > 0 ? <div style={{ ...styles.homeGraphGrid, marginTop: 0, gridTemplateColumns: `repeat(${graphColumns}, minmax(0, 1fr))` }}>
                     {selectedGraphs.map((graph) => {
                         const runtime = serviceRuntimeById?.[graph.serviceId];
-                        const offline = Boolean(runtime?.requiresRuntime && !runtime?.running);
+                        // A graph can be stale independently of its owning runtime when its descriptor
+                        // merges an attributed telemetry source. Preserve that source-freshness state
+                        // alongside the ordinary daemon-runtime check, just as the service panel does.
+                        const offline = Boolean(graph.offline) || Boolean(runtime?.requiresRuntime && !runtime?.running);
                         return <DataGraph
                             key={graph.id}
                             section={{ ...graph, height: graphHeight }}

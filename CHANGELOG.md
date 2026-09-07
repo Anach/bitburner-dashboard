@@ -23,6 +23,10 @@ integration.
 
 ### Fixed
 
+- **System Overview stale graph state.** Priority History now preserves descriptor-reported
+  source staleness as well as the owning service's runtime state, so a stale attributed source
+  correctly reports `Service is offline.` instead of implying that it is still collecting data.
+
 - **Script Log availability cues and disabled recent history.** Sidebar rows now distinguish
   observed live output, retained output from stopped scripts, confirmed-empty output, and running
   processes that have not yet been sampled. The view continues to read only the selected running
