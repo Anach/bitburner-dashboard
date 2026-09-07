@@ -23,6 +23,12 @@ integration.
 
 ### Fixed
 
+- **Script Log availability cues and disabled recent history.** Sidebar rows now distinguish
+  observed live output, retained output from stopped scripts, confirmed-empty output, and running
+  processes that have not yet been sampled. The view continues to read only the selected running
+  process's log buffer. A descriptor may set `recentLimit: 0` to suppress recent scripts and skip
+  that history read altogether.
+
 - **Telemetry source-link coverage.** System Overview graph footers now retain their descriptor
   source path, Player Status derives its footer and route from its contributing descriptor, and
   core Dashboard footers - including System Health and Running Scripts in both summary surfaces -

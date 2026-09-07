@@ -230,6 +230,19 @@ function entryMatches(entry, query, filter) {
     return `${entry.filename} ${entry.argsText} ${entry.pid}`.toLowerCase().includes(normalizedQuery);
 }
 
+function getLogAvailabilityPresentation(entry) {
+    if (entry?.logAvailability === "live") {
+        return { color: COLORS.green, label: "LIVE LOGS", title: "Observed current-session output" };
+    }
+    if (entry?.logAvailability === "stale") {
+        return { color: COLORS.amber, label: "RETAINED LOGS", title: "Retained output from a stopped process" };
+    }
+    if (entry?.logAvailability === "empty") {
+        return { color: COLORS.muted, label: "NO LOGS", title: "No retained output was observed" };
+    }
+    return { color: COLORS.muted, label: "NOT SAMPLED", title: "Select this running process to inspect its retained output" };
+}
+
 export function ScriptLogView({
     view,
     snapshot,
@@ -376,24 +389,29 @@ export function ScriptLogView({
                         style={STYLES.scriptList}
                         onScroll={(event) => setListScrollTop(Math.max(0, event.currentTarget.scrollTop))}
                     >
-                        {visibleEntries.map((entry) => (
-                            <button
+                        {visibleEntries.map((entry) => {
+                            const logPresentation = getLogAvailabilityPresentation(entry);
+                            return <button
                                 type="button"
                                 data-dashboard-theme-role="navigation-item"
                                 key={entry.id}
-                                title={`${entry.filename} ${entry.argsText}`}
-                                style={{ ...STYLES.scriptButton, ...(selectedEntry?.id === entry.id ? STYLES.scriptActive : {}) }}
+                                title={`${entry.filename} ${entry.argsText} - ${logPresentation.title}`}
+                                style={{
+                                    ...STYLES.scriptButton,
+                                    ...(selectedEntry?.id === entry.id ? STYLES.scriptActive : {}),
+                                    ...(entry.logAvailability === "live" || entry.logAvailability === "stale" ? {} : { opacity: 0.68 }),
+                                }}
                                 onClick={() => {
                                     setSelectedId(entry.id);
                                     setScrollTop(0);
                                 }}
                             >
                                 <span style={STYLES.scriptName}>{entry.filename}</span>
-                                <span style={{ ...STYLES.scriptMeta, color: entry.status === "running" ? COLORS.green : COLORS.amber }}>
-                                    {entry.status.toUpperCase()} · PID {entry.pid} · {entry.threads}t{entry.argsText ? ` · ${entry.argsText}` : ""}
+                                <span style={{ ...STYLES.scriptMeta, color: logPresentation.color }}>
+                                    {entry.status.toUpperCase()} · {logPresentation.label} · PID {entry.pid} · {entry.threads}t{entry.argsText ? ` · ${entry.argsText}` : ""}
                                 </span>
-                            </button>
-                        ))}
+                            </button>;
+                        })}
                         {visibleEntries.length === 0 ? <div style={STYLES.empty}>No scripts match this filter.</div> : null}
                     </div>
                 </aside>
