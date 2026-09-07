@@ -23,6 +23,17 @@ integration.
 
 ### Fixed
 
+- **Telemetry source-link coverage.** System Overview graph footers now retain their descriptor
+  source path, Player Status derives its footer and route from its contributing descriptor, and
+  core Dashboard footers - including System Health and Running Scripts in both summary surfaces -
+  now open Dashboard Options. The existing plain-text fallback remains for an unknown or
+  already-selected source.
+
+- **Player Status Current Work recovery.** When enabled Current Work telemetry is missing or
+  stale, Player Status now asks its temporary Singularity worker to recover immediately and retries
+  every five seconds until it is healthy. Its ordinary ownership reconciliation remains at thirty
+  seconds.
+
 - **Network Navigator worker ownership and command queue.** Dashboard Stop/Restart now manages
   the Navigator's capability-gated Formula and Singularity Home workers without adding their RAM
   to Start Order capacity. A full Singularity navigation queue now preserves queued FIFO actions

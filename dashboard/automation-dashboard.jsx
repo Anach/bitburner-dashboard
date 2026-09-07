@@ -3891,6 +3891,10 @@ function buildDashboardHudDefinition(services, telemetryByServiceId, options = {
         })).filter((group) => group.items.length > 0);
         definitions.push({
             serviceId: service.id,
+            // Keep the telemetry identity with this HUD contribution so an overview widget can
+            // return to its owning menu entry without knowing which plugin supplied it.
+            sourceLabel: service.menuLabel,
+            sourcePath: service.pluginMetadata?.telemetry?.path ?? service.id,
             title: String(hud.title ?? service.menuLabel ?? "Player"),
             generatedAt: Number(getDashboardViewValue(telemetry, hud.updatedAtKey)) || 0,
             groups,
@@ -5340,6 +5344,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             tone: "info",
             sourceKind: "system",
             sourceLabel: "Dashboard",
+            sourcePath: "global.dashboardOptions",
             order: 1000,
         }
     ].sort((left, right) => (Number(left.order) || 0) - (Number(right.order) || 0));

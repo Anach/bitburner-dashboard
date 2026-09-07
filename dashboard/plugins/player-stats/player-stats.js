@@ -13,23 +13,27 @@ const CURRENT_WORK_SCRIPT = "dashboard/plugins/player-stats/player-stats-singula
 const CURRENT_WORK_OPTION_KEY = "playerStatsCurrentWorkEnabled";
 const CURRENT_WORK_STALE_MS = 15000;
 const CURRENT_WORK_RECONCILE_MS = 30000;
+const CURRENT_WORK_RECOVERY_RETRY_MS = 5000;
 
-function readCurrentWork(ns, hasSingularity, enabled) {
-    if (!enabled) return { label: "Disabled", detail: "Enable Singularity API" };
-    if (!hasSingularity) return { label: "Unavailable", detail: "Singularity req." };
+export function readCurrentWork(ns, hasSingularity, enabled) {
+    if (!enabled) return { label: "Disabled", detail: "Enable Singularity API", needsReconcile: false };
+    if (!hasSingularity) return { label: "Unavailable", detail: "Singularity req.", needsReconcile: false };
     try {
-        if (!ns.fileExists(CURRENT_WORK_PATH, "home")) return { label: "Starting", detail: "Waiting for Work worker" };
+        if (!ns.fileExists(CURRENT_WORK_PATH, "home")) {
+            return { label: "Starting", detail: "Waiting for Work worker", needsReconcile: true };
+        }
         const raw = ns.read(CURRENT_WORK_PATH);
         const parsed = raw ? JSON.parse(raw) : null;
         if (!parsed || Date.now() - Number(parsed.generatedAt || 0) > CURRENT_WORK_STALE_MS) {
-            return { label: "Starting", detail: "Waiting for Work worker" };
+            return { label: "Starting", detail: "Waiting for Work worker", needsReconcile: true };
         }
         return {
             label: String(parsed.label ?? "Unavailable"),
             detail: String(parsed.detail ?? "No current work data"),
+            needsReconcile: false,
         };
     } catch (error) {
-        return { label: "Unavailable", detail: "Work telemetry error" };
+        return { label: "Unavailable", detail: "Work telemetry error", needsReconcile: true };
     }
 }
 
@@ -185,10 +189,16 @@ export async function main(ns) {
             false
         );
         const now = Date.now();
+        const work = readCurrentWork(ns, hasSingularity, currentWorkEnabled);
         if (hasSingularity && currentWorkEnabled) {
-            if (now >= nextCurrentWorkReconcileAt) {
+            if (work.needsReconcile || now >= nextCurrentWorkReconcileAt) {
                 reconcileTemporaryHomeScripts(ns, [CURRENT_WORK_SCRIPT], [CURRENT_WORK_SCRIPT]);
-                nextCurrentWorkReconcileAt = now + CURRENT_WORK_RECONCILE_MS;
+                // A healthy worker is reconciled occasionally for ownership hygiene. Missing or
+                // stale telemetry is a crash/recovery signal, so retry promptly without turning
+                // the parent into a permanent ps()/scriptKill() owner.
+                nextCurrentWorkReconcileAt = now + (work.needsReconcile
+                    ? CURRENT_WORK_RECOVERY_RETRY_MS
+                    : CURRENT_WORK_RECONCILE_MS);
             }
             currentWorkDisabledReconciled = false;
         } else if (!currentWorkDisabledReconciled) {
@@ -197,7 +207,6 @@ export async function main(ns) {
             nextCurrentWorkReconcileAt = 0;
         }
 
-        const work = readCurrentWork(ns, hasSingularity, currentWorkEnabled);
         const status = {
             ...buildPlayerStatus(ns, bitNodeSkillMultipliers, work),
             hasSingularity,

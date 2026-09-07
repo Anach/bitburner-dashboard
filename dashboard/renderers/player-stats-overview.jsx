@@ -3,6 +3,13 @@ import {
     buildDashboardTheme,
     createDashboardThemedReact,
 } from "dashboard/libs/theme-adapter.js";
+import {
+    getTelemetrySourceLinkInteractionHandlers,
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+    normalizeTelemetrySourceLabel,
+} from "dashboard/libs/telemetry-source-link.js";
 
 let React = null;
 let rawReact = null;
@@ -44,6 +51,36 @@ function getReact() {
     return React;
 }
 
+function renderSourceLabel(react, styles, sourceLabel, sourcePath) {
+    const label = normalizeTelemetrySourceLabel(sourceLabel);
+    const target = getTelemetrySourceTarget(sourcePath, "", label);
+    if (!target) return <div style={styles.homeMetricSource}>{label}</div>;
+    return <button
+        type="button"
+        title={`Go to ${label}`}
+        style={getTelemetrySourceLinkStyle(styles.homeMetricSource)}
+        {...getTelemetrySourceLinkInteractionHandlers(styles.homeMetricSource)}
+        onClick={(event) => {
+            event.stopPropagation();
+            navigateToTelemetrySource(target);
+        }}
+    >{label}</button>;
+}
+
+function getHudSources(definitions) {
+    const sources = new Map();
+    for (const definition of Array.isArray(definitions) ? definitions : []) {
+        const label = normalizeTelemetrySourceLabel(definition?.sourceLabel ?? definition?.title);
+        if (!label) continue;
+        const path = typeof definition?.sourcePath === "string" && definition.sourcePath
+            ? definition.sourcePath
+            : definition?.serviceId;
+        const key = `${path ?? ""}:${label}`;
+        if (!sources.has(key)) sources.set(key, { label, path });
+    }
+    return [...sources.values()];
+}
+
 export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, orientation = "horizontal" }) {
     const react = getReact();
     const styles = getWidgetStyles();
@@ -54,6 +91,7 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
     const groups = (Array.isArray(definitions) ? definitions : [])
         .flatMap((definition) => definition.groups ?? [])
         .filter((group) => !selectedGroupIds || selectedGroupIds.has(group.sourceId));
+    const sources = getHudSources(definitions);
     const vertical = String(orientation).trim().toLowerCase() === "vertical";
 
     return <>
@@ -80,6 +118,8 @@ export function PlayerStatsOverview({ definitions, dashboardTheme, groupIds, ori
             </div>
         </section>)}
     </div>
-    <div style={styles.homeMetricSource}>Player Status</div>
+    {sources.map((source) => <div key={`${source.path ?? ""}:${source.label}`}>
+        {renderSourceLabel(react, styles, source.label, source.path)}
+    </div>)}
     </>;
 }

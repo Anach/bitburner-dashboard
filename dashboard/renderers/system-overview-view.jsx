@@ -11,6 +11,12 @@ import {
     runDashboardFrameControlMouseDown,
 } from "dashboard/libs/frame-controls.js";
 import { selectDashboardViewItems, selectDashboardViewServiceGroups } from "dashboard/libs/dashboard-view-selection.js";
+import {
+    getTelemetrySourceLinkInteractionHandlers,
+    getTelemetrySourceLinkStyle,
+    getTelemetrySourceTarget,
+    navigateToTelemetrySource,
+} from "dashboard/libs/telemetry-source-link.js";
 import { DataGraph } from "dashboard/renderers/dashboard-graphs.jsx";
 import {
     HomeGaugeCard,
@@ -44,6 +50,21 @@ function getReact() {
         React = createDashboardThemedReact(rawReact, getDashboardTheme);
     }
     return React;
+}
+
+function renderSourceLabel(react, styles, sourceLabel, sourcePath) {
+    const target = getTelemetrySourceTarget(sourcePath, "", sourceLabel);
+    if (!target) return <div style={styles.homeMetricSource}>{sourceLabel}</div>;
+    return <button
+        type="button"
+        title={`Go to ${sourceLabel}`}
+        style={getTelemetrySourceLinkStyle(styles.homeMetricSource)}
+        {...getTelemetrySourceLinkInteractionHandlers(styles.homeMetricSource)}
+        onClick={(event) => {
+            event.stopPropagation();
+            navigateToTelemetrySource(target);
+        }}
+    >{sourceLabel}</button>;
 }
 
 export function SystemOverview({ view, metrics, playerHudDefinitions, playerStatsEnabled, playerStatusHeaderActions = [], onSelectPlayerStatusHeaderAction, dashboardTheme, gauges, healthServices, serviceGroups, serviceHealthById, serviceRuntimeById, graphs, scrollRef, onScroll, onExit, windowControl, killAllControl, closeControl, minimizeControl, compactControls = false, widgetStyles }) {
@@ -183,7 +204,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                     </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px" }}>
-                    <div style={styles.homeMetricSource}>Dashboard</div>
+                    {renderSourceLabel(react, styles, "Dashboard", "global.dashboardOptions")}
                     {hiddenAlertCount > 0 ? <div style={styles.homePanelSubtitle}>+{hiddenAlertCount} more alert{hiddenAlertCount === 1 ? "" : "s"}</div> : null}
                 </div>
             </HomePanel></div>;
@@ -210,7 +231,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 {selectedGroups.length > 0
                     ? <HomeServiceLandscape groups={selectedGroups} healthById={serviceHealthById} />
                     : <div style={styles.muted}>{emptyText}</div>}
-                <div style={styles.homeMetricSource}>Dashboard</div>
+                {renderSourceLabel(react, styles, "Dashboard", "global.dashboardOptions")}
             </HomePanel></div>;
         }
 
@@ -232,6 +253,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                             presentation="terminal"
                             offline={offline}
                             sourceLabel={graph.sourceLabel}
+                            sourcePath={graph.sourcePath ?? graph.serviceId}
                         />;
                     })}
                 </div> : <div style={styles.muted}>{emptyText}</div>}
