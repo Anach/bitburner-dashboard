@@ -1,8 +1,16 @@
 import { MAILBOX_FEED_PORT } from "dashboard/libs/port-registry.js";
+import { isMailboxCandidate } from "dashboard/plugins/mail-client/mail-client-files.js";
 import { stripLitMarkup } from "dashboard/plugins/mail-client/mail-client-lit-text.js";
 
-const dnetFiles = ["dashboard/plugins/mail-client/mail-client-darknet-agent.js"];
-const dnetFile = 0;
+// A remote Darknet instance must receive every direct import before it can compile. Keep this
+// alongside the agent rather than relying on a host retaining stale files from an earlier run.
+const DARKNET_AGENT_FILES = [
+    "dashboard/plugins/mail-client/mail-client-darknet-agent.js",
+    "dashboard/plugins/mail-client/mail-client-files.js",
+    "dashboard/plugins/mail-client/mail-client-lit-text.js",
+    "dashboard/libs/port-registry.js",
+];
+const DARKNET_AGENT_SCRIPT = DARKNET_AGENT_FILES[0];
 const DARKNET_ACCESS_PROGRAM = "DarkscapeNavigator.exe";
 const SCANNER_SCRIPT = "dashboard/plugins/mail-client/mail-client-scanner.js";
 
@@ -93,11 +101,11 @@ class DarkNet {
         return this.result.success;
     }
     setupNewServer() {
-        this.startProcess(dnetFiles[dnetFile], 1, this.host);
+        this.startProcess(DARKNET_AGENT_SCRIPT, 1, this.host);
     }
     startProcess(file, threads, args) {
         if (!this.ns.scriptRunning(file, this.name)) {
-            this.ns.scp(dnetFiles, this.name, "home");
+            this.ns.scp(DARKNET_AGENT_FILES, this.name, "home");
             const id = this.ns.exec(file, this.name, { threads, temporary: true }, args);
             if (id == 0) { this.ns.print("Failed to exec " + file + " on " + this.name + " from " + this.host); }
             else { this.ns.print("Running " + file + " on " + this.name); }
@@ -203,8 +211,8 @@ class DarkNet {
     checkFiles() {
         const files = this.ns.ls(this.name);
         for (const file of files) {
-            if (file.startsWith("data/")) continue;
-            const type = file.split(".").at(-1);
+            if (!isMailboxCandidate(file)) continue;
+            const type = file.toLowerCase().split(".").at(-1);
             if (type == "lit" || type == "txt" || type == "msg") {
                 this.ns.tryWritePort(MAILBOX_FEED_PORT, {
                     source: this.name,

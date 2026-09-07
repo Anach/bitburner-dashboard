@@ -17,10 +17,17 @@ integration.
 - **Contract: view menu badges and daemon-runtime links.** Full-window view descriptors may declare
   `menuUnlocks` and `requirements` for the normal main-menu unlock glyphs. A view may also declare
   `runtimeServiceId`; when it resolves to a `daemon: true` service, its row shows that service's
-  runtime dot. View-only and on-demand services stay dot-free, and links do not add lifecycle
-  ownership or supervision.
+  runtime dot. Network Map, System Overview, and Net Shop now use the informative unlock metadata.
+  View-only and on-demand services stay dot-free, and links do not add lifecycle ownership or
+  supervision.
 
 ### Fixed
+
+- **Mail Client workspace actions and Darknet deployment.** Mark-read, mark-unread, read-all,
+  and delete actions now update the retained mailbox workspace immediately, then remain queued for
+  the scanner to persist on its normal cycle. Darknet agents now copy their full direct-import set
+  before remote execution and apply the same mailbox-file eligibility filter as ordinary network
+  readers.
 
 - **Contract: commands can require their actual target worker.** Descriptor `actions[]` and
   `resource-cards.itemAction` entries may now declare `runtimeScripts`, an exact script-path array
