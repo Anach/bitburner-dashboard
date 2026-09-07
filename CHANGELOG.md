@@ -14,6 +14,13 @@ integration.
 
 ### Added
 
+- **Menu-origin glyphs.** Navigation entries now show a compact `C`, `P`, or `I` glyph for
+  Dashboard core, a packaged dashboard plugin, or an independently runnable integration. Origin
+  is derived from the discovered descriptor location rather than descriptor-maintained labels, and
+  joins the optional, capped requirement-glyph row after API and requirement markers, so it is the
+  first glyph to collapse when space is limited. Health warnings and daemon-status dots remain
+  independent.
+
 - **Contract: optional reset-file manifests and public File Shredder plugin.** File Shredder is
   now a self-contained direct plugin under `dashboard/plugins/file-shredder/`, retaining its
   stable service identity, persistent reset detection, status panel, and normal lifecycle

@@ -48,6 +48,7 @@ export function discoverDashboardViews(ns, scriptFilenames = []) {
         discovered.push({
             ...metadata,
             descriptorFile: filename,
+            menuOrigin: pluginDescriptor ? "plugin" : "integration",
             pluginFolder: pluginDescriptor
                 ? filename.slice(DASHBOARD_PLUGIN_FOLDER_PREFIX.length).split("/")[0]
                 : "",
@@ -130,6 +131,7 @@ export function discoverDashboardPlugins(ns, scriptFilenames = [], options = {})
         discovered.push({
             filename: scriptPath,
             integrationFile: normalized,
+            menuOrigin: pluginDescriptor ? "plugin" : "integration",
             adapter: metadata.adapter,
             serviceId: typeof metadata.serviceId === "string" ? metadata.serviceId : "",
             shortcutId: typeof metadata.shortcutId === "string" ? metadata.shortcutId : "",
@@ -182,6 +184,7 @@ export function buildDashboardPluginShortcuts(pluginDefinitions = []) {
             launchArgs: Array.isArray(plugin.metadata?.launchArgs) ? plugin.metadata.launchArgs : [],
             temporary: plugin.metadata?.temporary !== false,
             integrationFile: plugin.integrationFile,
+            menuOrigin: plugin.menuOrigin,
             metadata: plugin.metadata,
         });
     }
@@ -221,6 +224,7 @@ export function buildDashboardPluginServices(pluginDefinitions = [], adapterFact
             pluginFile: plugin.filename,
             pluginIntegrationFile: plugin.integrationFile,
             pluginAdapter: adapter,
+            menuOrigin: plugin.menuOrigin,
             pluginMetadata: plugin.metadata,
         };
 

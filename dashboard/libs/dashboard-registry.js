@@ -260,6 +260,7 @@ export function buildDashboardMenuGroups(services = [], menuGroups = [], options
                 id: service.id,
                 label: service.menuLabel,
                 menuOrder: service.menuOrder,
+                menuOrigin: service.menuOrigin,
                 alwaysVisible: Boolean(service.alwaysVisible),
                 ...(service.shortcut === true ? {
                     shortcut: true,

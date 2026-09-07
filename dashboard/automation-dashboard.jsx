@@ -2796,7 +2796,7 @@ function getDashboardServiceRegistry() {
     }
 
     const fallbackRegistry = {
-        ...validateDashboardServices(DASHBOARD_SERVICES),
+        ...validateDashboardServices(DASHBOARD_SERVICES.map((service) => ({ ...service, menuOrigin: "core" }))),
         shortcuts: [],
         shortcutById: new Map(),
     };
@@ -2971,7 +2971,9 @@ function rebuildDashboardServiceRegistry(ns, homeScripts = []) {
     const pluginShortcuts = buildDashboardPluginShortcuts(pluginDefinitions);
 
     const pluginIds = new Set(pluginServices.map((service) => service.id));
-    const coreServices = DASHBOARD_SERVICES.filter((service) => !pluginIds.has(service.id));
+    const coreServices = DASHBOARD_SERVICES
+        .filter((service) => !pluginIds.has(service.id))
+        .map((service) => ({ ...service, menuOrigin: "core" }));
     const mergedServices = [...coreServices, ...pluginServices];
     const contributedServices = applyDashboardServiceTableContributions(
         applyDashboardServiceTelemetryContributions(mergedServices)
@@ -4063,6 +4065,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     menuOrder: view.menuOrder,
                     alwaysVisible: true,
                     dashboardViewId: view.id,
+                    menuOrigin: view.menuOrigin,
                     menuUnlocks: view.menuUnlocks,
                     requirements: view.requirements,
                     runtimeServiceId: view.runtimeServiceId,
@@ -4598,6 +4601,21 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                 {level === "danger" ? "!!" : "!"}
             </span>
         );
+    };
+
+    const getMenuOriginGlyph = (origin) => {
+        const presentation = origin === "core"
+            ? { symbol: "C", title: "Dashboard core", color: "#c8e0ff" }
+            : origin === "plugin"
+                ? { symbol: "P", title: "Dashboard plugin", color: "#d9c4ff" }
+                : origin === "integration"
+                    ? { symbol: "I", title: "External integration", color: "#9ee9c0" }
+                    : null;
+        return presentation ? {
+            id: `menu-origin-${origin}`,
+            label: presentation.title,
+            ...presentation,
+        } : null;
     };
 
     const renderMenuRequirementBadges = (badges) => (
@@ -6807,17 +6825,23 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                     ? "#6ee7a8"
                                                     : "#ff8080";
                                             const itemMenuMetadata = item.dashboardViewId ? item : itemService;
-                                            const allItemRequirementBadges = showMainMenuUnlockGlyphs && itemMenuMetadata
-                                                ? buildPluginMenuRequirementBadges([
-                                                    ...(Array.isArray(itemMenuMetadata.pluginMetadata?.menuUnlocks)
-                                                        ? itemMenuMetadata.pluginMetadata.menuUnlocks
-                                                        : Array.isArray(itemMenuMetadata.menuUnlocks)
-                                                            ? itemMenuMetadata.menuUnlocks
+                                            const originGlyph = getMenuOriginGlyph(item.menuOrigin);
+                                            const allItemRequirementBadges = showMainMenuUnlockGlyphs
+                                                ? [
+                                                    ...(itemMenuMetadata
+                                                        ? buildPluginMenuRequirementBadges([
+                                                            ...(Array.isArray(itemMenuMetadata.pluginMetadata?.menuUnlocks)
+                                                                ? itemMenuMetadata.pluginMetadata.menuUnlocks
+                                                                : Array.isArray(itemMenuMetadata.menuUnlocks)
+                                                                    ? itemMenuMetadata.menuUnlocks
+                                                                    : []),
+                                                            ...(Array.isArray(itemMenuMetadata.requirements)
+                                                                ? itemMenuMetadata.requirements
+                                                                : []),
+                                                        ])
                                                         : []),
-                                                    ...(Array.isArray(itemMenuMetadata.requirements)
-                                                        ? itemMenuMetadata.requirements
-                                                        : []),
-                                                ])
+                                                    ...(originGlyph ? [originGlyph] : []),
+                                                ]
                                                 : [];
                                             const itemRequirementBadges = compactPluginMenuRequirementBadges(
                                                 allItemRequirementBadges,
