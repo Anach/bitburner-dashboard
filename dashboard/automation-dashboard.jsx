@@ -4059,6 +4059,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                     menuOrder: view.menuOrder,
                     alwaysVisible: true,
                     dashboardViewId: view.id,
+                    menuUnlocks: view.menuUnlocks,
+                    requirements: view.requirements,
+                    runtimeServiceId: view.runtimeServiceId,
                 })),
             ...group.items,
         ]),
@@ -6783,27 +6786,31 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                 : item.shortcut
                                                     ? false
                                                 : !activeView && selectedItem === item.id;
-                                            const itemService = item.dashboardViewId
-                                                || item.shortcut
+                                            const itemService = item.dashboardViewId || item.shortcut
                                                 ? null
                                                 : dashboardServiceRegistry.services.find((candidate) => candidate.id === item.id);
-                                            const itemHasRuntime = Boolean(itemService?.pluginFile);
+                                            const linkedRuntimeService = item.dashboardViewId && item.runtimeServiceId
+                                                ? dashboardServiceRegistry.byId.get(item.runtimeServiceId) ?? null
+                                                : null;
+                                            const itemRuntimeService = linkedRuntimeService ?? itemService;
+                                            const itemHasRuntime = Boolean(itemRuntimeService?.pluginFile);
                                             const itemRunning = itemHasRuntime
-                                                && homeScripts.some((script) => script?.filename === itemService.pluginFile && script?.running);
-                                            const itemStatusDotColor = !itemHasRuntime
+                                                && homeScripts.some((script) => script?.filename === itemRuntimeService.pluginFile && script?.running);
+                                            const itemStatusDotColor = itemRuntimeService?.pluginMetadata?.daemon !== true
                                                 ? null
                                                 : itemRunning
                                                     ? "#6ee7a8"
-                                                    : itemService?.pluginMetadata?.daemon === true
-                                                        ? "#ff8080"
-                                                        : "#ffd88a";
-                                            const allItemRequirementBadges = showMainMenuUnlockGlyphs && itemService
+                                                    : "#ff8080";
+                                            const itemMenuMetadata = item.dashboardViewId ? item : itemService;
+                                            const allItemRequirementBadges = showMainMenuUnlockGlyphs && itemMenuMetadata
                                                 ? buildPluginMenuRequirementBadges([
-                                                    ...(Array.isArray(itemService.pluginMetadata?.menuUnlocks)
-                                                        ? itemService.pluginMetadata.menuUnlocks
+                                                    ...(Array.isArray(itemMenuMetadata.pluginMetadata?.menuUnlocks)
+                                                        ? itemMenuMetadata.pluginMetadata.menuUnlocks
+                                                        : Array.isArray(itemMenuMetadata.menuUnlocks)
+                                                            ? itemMenuMetadata.menuUnlocks
                                                         : []),
-                                                    ...(Array.isArray(itemService.requirements)
-                                                        ? itemService.requirements
+                                                    ...(Array.isArray(itemMenuMetadata.requirements)
+                                                        ? itemMenuMetadata.requirements
                                                         : []),
                                                 ])
                                                 : [];

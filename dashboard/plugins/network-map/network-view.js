@@ -13,6 +13,10 @@ export const DASHBOARD_VIEW_METADATA = {
     "renderer": "network-map",
     "menuGroup": "software",
     "menuLabel": "Network Map",
+    "runtimeServiceId": "navigation.network",
+    "menuUnlocks": [
+        { "type": "api", "id": "singularity" }
+    ],
     "title": "Network Navigator",
     "subtitle": "Known normal-network routes, access state, and server resources.",
     "widgets": [],

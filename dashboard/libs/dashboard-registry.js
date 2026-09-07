@@ -189,8 +189,11 @@ export function validateDashboardViews(views = [], menuGroupIds, viewRenderers, 
             if (valid) widgetIds.add(widget.id);
             return valid;
         });
+        const runtimeServiceId = typeof view.runtimeServiceId === "string"
+            ? view.runtimeServiceId.trim()
+            : "";
         seenIds.add(view.id);
-        validViews.push({ ...view, menuGroup, widgets });
+        validViews.push({ ...view, menuGroup, widgets, runtimeServiceId });
     }
     return { views: validViews, byId: new Map(validViews.map((view) => [view.id, view])) };
 }

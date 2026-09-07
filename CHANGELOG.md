@@ -12,6 +12,14 @@ integration.
 
 ## 2026-09-07
 
+### Added
+
+- **Contract: view menu badges and daemon-runtime links.** Full-window view descriptors may declare
+  `menuUnlocks` and `requirements` for the normal main-menu unlock glyphs. A view may also declare
+  `runtimeServiceId`; when it resolves to a `daemon: true` service, its row shows that service's
+  runtime dot. View-only and on-demand services stay dot-free, and links do not add lifecycle
+  ownership or supervision.
+
 ### Fixed
 
 - **Contract: commands can require their actual target worker.** Descriptor `actions[]` and
