@@ -14,6 +14,14 @@ integration.
 
 ### Added
 
+- **Contract: optional reset-file manifests and public File Shredder plugin.** File Shredder is
+  now a self-contained direct plugin under `dashboard/plugins/file-shredder/`, retaining its
+  stable service identity, persistent reset detection, status panel, and normal lifecycle
+  controls. The plugin owns dashboard data cleanup; installed sources may independently contribute
+  a versioned JSON manifest under `dashboard/reset-files/`. Missing or malformed contributions are
+  ignored safely, while dashboard-only installs remain fully functional. Dashboard options, the
+  deployment manifest, and File Shredder's own reset marker are never eligible for cleanup.
+
 - **Contract: view menu badges and daemon-runtime links.** Full-window view descriptors may declare
   `menuUnlocks` and `requirements` for the normal main-menu unlock glyphs. A view may also declare
   `runtimeServiceId`; when it resolves to a `daemon: true` service, its row shows that service's

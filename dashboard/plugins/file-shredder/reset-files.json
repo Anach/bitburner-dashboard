@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "files": [
+    "data/dashboard_capabilities.json",
+    "data/mail_client_state.json",
+    "data/network_child_status.json",
+    "data/network_navigator_action_result.json",
+    "data/network_navigator_formulas_stats.json",
+    "data/network_navigator_singularity_stats.json",
+    "data/network_navigator_stats.json",
+    "data/player_status.json",
+    "data/player_status_singularity.json"
+  ],
+  "prefixes": [
+    "data/network-child-requests/"
+  ]
+}
