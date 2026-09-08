@@ -8,6 +8,7 @@ export const DASHBOARD_PLUGIN_METADATA = {
     "description": "Publishes player state for dashboard HUD surfaces. Singularity-powered Current Work telemetry is isolated behind a default-off feature toggle.",
     "daemon": true,
     "managedScripts": ["dashboard/plugins/player-stats/player-stats-singularity.js"],
+    "externalLifecycle": { "states": ["running", "stopped"] },
     "options": {
         "playerStatsCurrentWorkEnabled": { "default": false, "type": "boolean" },
         "playerStatsCurrentWorkVisible": { "default": true, "type": "boolean" }

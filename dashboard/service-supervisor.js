@@ -16,6 +16,10 @@ import {
     resolveServiceStartupRamLimit,
 } from "dashboard/libs/dashboard-ram-settings.js";
 import { loadDashboardScriptMetadata } from "dashboard/libs/script-list.js";
+import {
+    normalizeExternalLifecycleAuthorities,
+    readExternalLifecycleLease,
+} from "dashboard/libs/external-service-lifecycle.js";
 
 export const DASHBOARD_SCRIPT_METADATA = {
     "daemon": true
@@ -46,9 +50,15 @@ const SERVICE_STARTUP_OPTIMIZER_STATE_KEYS = new Set([
 // configuration (not data/ runtime telemetry), read once and cached for this daemon's lifetime - see
 // dashboard/examples/example-service-startup-optimizer-services.js for the shape and where to put it.
 const STARTUP_OPTIMIZER_SERVICES_CONFIG_FILE = "dashboard/service-startup-optimizer-services.json";
+// Optional, companion-owned external lifecycle authorities. The Dashboard never names a sender or
+// service itself: the static manifest supplies both, and a service must separately opt in through
+// descriptor metadata before any short-lived request can affect it.
+const EXTERNAL_LIFECYCLE_AUTHORITIES_CONFIG_FILE = "dashboard/external-service-lifecycle-authorities.json";
+const EXTERNAL_LIFECYCLE_WORKER_SCRIPT = "dashboard/libs/external-service-lifecycle-worker.js";
 let cachedFileSignature = "";
 let cachedManagedServices = [];
 let cachedStartupOptimizerServiceIds = null;
+let cachedExternalLifecycleAuthorities = null;
 
 function readDashboardOptions(ns) {
     if (!ns.fileExists(DASHBOARD_OPTIONS_FILE, "home")) return {};
@@ -114,6 +124,59 @@ export function readServiceStartupOptimizerState(ns, now = Date.now()) {
     } catch (error) {
         return [];
     }
+}
+
+function readExternalLifecycleAuthorities(ns) {
+    if (cachedExternalLifecycleAuthorities) return cachedExternalLifecycleAuthorities;
+    let authorities = [];
+    if (ns.fileExists(EXTERNAL_LIFECYCLE_AUTHORITIES_CONFIG_FILE, "home")) {
+        try {
+            authorities = normalizeExternalLifecycleAuthorities(
+                JSON.parse(ns.read(EXTERNAL_LIFECYCLE_AUTHORITIES_CONFIG_FILE)),
+            );
+        } catch (error) {
+            // A standalone dashboard or malformed optional companion config stays inert.
+        }
+    }
+    cachedExternalLifecycleAuthorities = authorities;
+    return cachedExternalLifecycleAuthorities;
+}
+
+export function readExternalLifecycleRequests(ns, now = Date.now()) {
+    const requests = [];
+    for (const authority of readExternalLifecycleAuthorities(ns)) {
+        if (!ns.fileExists(authority.statePath, "home")) continue;
+        try {
+            requests.push(...readExternalLifecycleLease(JSON.parse(ns.read(authority.statePath)), authority, now));
+        } catch (error) {
+            // Every authority file is an independent fail-closed boundary.
+        }
+    }
+    return requests;
+}
+
+function serviceAllowsExternalLifecycleState(service, desiredState) {
+    const allowedStates = service?.metadata?.externalLifecycle?.states;
+    return Array.isArray(allowedStates) && allowedStates.includes(desiredState);
+}
+
+// `kill` and `scan` intentionally live in a one-shot worker. An optional paused service must not
+// permanently charge their RAM to the otherwise always-on Supervisor just because an external
+// lifecycle authority happens to be installed.
+function queueExternalLifecycleStop(ns, service) {
+    const homeScripts = [
+        service.filename,
+        ...(Array.isArray(service.metadata?.managedScripts) ? service.metadata.managedScripts : []),
+    ].filter((filename) => typeof filename === "string" && filename.length > 0);
+    const networkScripts = (Array.isArray(service.metadata?.managedNetworkScripts)
+        ? service.metadata.managedNetworkScripts
+        : []).filter((filename) => typeof filename === "string" && filename.length > 0);
+    const pid = ns.run(
+        EXTERNAL_LIFECYCLE_WORKER_SCRIPT,
+        { threads: 1, temporary: true, preventDuplicates: true },
+        JSON.stringify({ homeScripts, networkScripts }),
+    );
+    if (pid > 0) ns.print(`[LIFECYCLE] Queued external stop for ${service.serviceId}.`);
 }
 
 function reportLaunchIssue(ns, script, status, previousIssues) {
@@ -299,6 +362,7 @@ export async function main(ns) {
     let nextServiceReconcileAt = 0;
     let previousNetworkChildIssue = "";
     let previousStartupOptimizerSignature = "";
+    let previousExternalLifecycleSignature = "";
 
     while (true) {
         try {
@@ -332,8 +396,16 @@ export async function main(ns) {
             enabled: startupOptimizerEnabled,
             optimizedServiceIds: [...optimizedServiceIds].sort(),
         });
-        if (startupOptimizerSignature !== previousStartupOptimizerSignature) {
+        const externalLifecycleRequests = readExternalLifecycleRequests(ns, now);
+        const externalLifecycleSignature = JSON.stringify(externalLifecycleRequests
+            .map(({ serviceId, desiredState, reason }) => ({ serviceId, desiredState, reason }))
+            .sort((left, right) => left.serviceId.localeCompare(right.serviceId)));
+        if (
+            startupOptimizerSignature !== previousStartupOptimizerSignature
+            || externalLifecycleSignature !== previousExternalLifecycleSignature
+        ) {
             previousStartupOptimizerSignature = startupOptimizerSignature;
+            previousExternalLifecycleSignature = externalLifecycleSignature;
             nextServiceReconcileAt = 0;
         }
 
@@ -366,6 +438,15 @@ export async function main(ns) {
             "w",
         );
 
+        const externalLifecycleByServiceId = new Map(externalLifecycleRequests
+            .map((request) => [request.serviceId, request]));
+        for (const service of services) {
+            const request = externalLifecycleByServiceId.get(service.serviceId);
+            if (request?.desiredState === "stopped" && serviceAllowsExternalLifecycleState(service, request.desiredState)) {
+                queueExternalLifecycleStop(ns, service);
+            }
+        }
+
         if (ns.fileExists(AUTOSTART_PAUSE_FILE, "home")) {
             ns.print("[LIFECYCLE] Autostart is paused (Kill All Scripts); skipping this cycle.");
             await ns.sleep(NETWORK_CHILD_RECONCILE_INTERVAL_MS);
@@ -387,9 +468,20 @@ export async function main(ns) {
         // that upstream dedup direction never changing.
         const configuredServiceStartOrder = getServiceStartOrder(options);
         const optimizedServiceIdSet = new Set(optimizedServiceIds);
+        const externallyRequestedRunningIds = services
+            .filter((service) => {
+                const request = externalLifecycleByServiceId.get(service.serviceId);
+                return request?.desiredState === "running" && serviceAllowsExternalLifecycleState(service, request.desiredState);
+            })
+            .map((service) => service.serviceId);
+        const externallyRequestedRunningIdSet = new Set(externallyRequestedRunningIds);
         const effectiveServiceStartOrder = startupOptimizerEnabled && optimizedServiceIds.length > 0
-            ? [...optimizedServiceIds, ...configuredServiceStartOrder.filter((id) => !optimizedServiceIdSet.has(id))].join(",")
-            : options?.serviceStartOrder;
+            ? [...externallyRequestedRunningIds, ...optimizedServiceIds, ...configuredServiceStartOrder
+                .filter((id) => !optimizedServiceIdSet.has(id) && !externallyRequestedRunningIdSet.has(id))].join(",")
+            : externallyRequestedRunningIds.length > 0
+                ? [...externallyRequestedRunningIds, ...configuredServiceStartOrder
+                    .filter((id) => !externallyRequestedRunningIdSet.has(id))].join(",")
+                : options?.serviceStartOrder;
         const orderedServices = sortByServiceStartOrder(services, { ...options, serviceStartOrder: effectiveServiceStartOrder });
         const strictServiceStartOrder = isStrictServiceStartOrderEnabled(options);
         // The transient reserve protects free Home capacity, while the service limit bounds the
@@ -413,7 +505,11 @@ export async function main(ns) {
         for (const service of orderedServices) {
             const requirements = Array.isArray(service.requirements) ? service.requirements : [];
             if (!areCapabilityRequirementsMet(requirements, capabilities)) continue;
-            if (!isServiceAutostartEnabled(service.serviceId, options)) continue;
+            const externalRequest = externalLifecycleByServiceId.get(service.serviceId);
+            const externalLifecycleStateAllowed = serviceAllowsExternalLifecycleState(service, externalRequest?.desiredState);
+            if (externalLifecycleStateAllowed && externalRequest.desiredState === "stopped") continue;
+            const externallyRequestedRunning = externalLifecycleStateAllowed && externalRequest.desiredState === "running";
+            if (!externallyRequestedRunning && !isServiceAutostartEnabled(service.serviceId, options)) continue;
 
             const script = service.filename;
             const result = startManagedService(ns, service, runningFiles, {
