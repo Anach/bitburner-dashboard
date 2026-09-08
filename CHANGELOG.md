@@ -14,10 +14,11 @@ integration.
 
 ### Added
 
-- **Contract: descriptor-defined System Overview row minima.** A view may optionally declare
-  `layout.rowMinHeights` as numbered pixel minima. Unspecified rows remain content-sized; configured
-  rows use `minmax` so taller content is never clipped. System Overview currently leaves the map
-  empty, preserving its existing layout until a row is deliberately tuned.
+- **Contract: descriptor-defined System Overview row sizing.** A view may optionally declare
+  `layout.rowMinHeights` as numbered pixel minima, or `layout.rowHeights` for an explicit row size
+  when a spanning widget must not inflate that row. Unspecified rows remain content-sized; minimum
+  rows use `minmax` so taller content is never clipped. System Overview fixes its gauge row at
+  180px, preventing the Player Status sidebar from creating a visible gap before Priority History.
 
 - **Minimized-tail restore polish.** While minimized, Dashboard performs a layout-only 100 ms
   native-tail check and reapplies its saved geometry as soon as the titlebar is expanded. Telemetry,

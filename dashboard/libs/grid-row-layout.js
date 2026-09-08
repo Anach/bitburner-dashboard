@@ -14,19 +14,26 @@ function normalizeRowHeight(value) {
         : null;
 }
 
-// Descriptors set only the rows they need to tune. Unspecified rows remain content-sized, while
-// minmax preserves content rather than clipping a panel that needs more vertical space.
-export function buildGridTemplateRows(rawRowMinHeights, widgets = []) {
-    const rowHeights = new Map();
-    if (rawRowMinHeights && typeof rawRowMinHeights === "object" && !Array.isArray(rawRowMinHeights)) {
-        for (const [rawRow, rawHeight] of Object.entries(rawRowMinHeights)) {
+function normalizeRowHeightMap(rawValues) {
+    const result = new Map();
+    if (rawValues && typeof rawValues === "object" && !Array.isArray(rawValues)) {
+        for (const [rawRow, rawHeight] of Object.entries(rawValues)) {
             const row = normalizeRowNumber(rawRow);
             const height = normalizeRowHeight(rawHeight);
-            if (row !== null && height !== null) rowHeights.set(row, height);
+            if (row !== null && height !== null) result.set(row, height);
         }
     }
+    return result;
+}
 
-    let maximumRow = Math.max(0, ...rowHeights.keys());
+// Descriptors can reserve a hard row height to prevent a spanning widget from inflating an earlier
+// row. rowMinHeights remains available for rows that should grow with their content.
+export function buildGridTemplateRows(layout, widgets = []) {
+    const rawLayout = layout && typeof layout === "object" && !Array.isArray(layout) ? layout : {};
+    const rowHeights = normalizeRowHeightMap(rawLayout.rowHeights);
+    const rowMinHeights = normalizeRowHeightMap(rawLayout.rowMinHeights);
+
+    let maximumRow = Math.max(0, ...rowHeights.keys(), ...rowMinHeights.keys());
     for (const widget of Array.isArray(widgets) ? widgets : []) {
         const rowStart = normalizeRowNumber(widget?.rowStart);
         if (rowStart === null) continue;
@@ -36,7 +43,10 @@ export function buildGridTemplateRows(rawRowMinHeights, widgets = []) {
     if (maximumRow === 0) return "";
 
     return Array.from({ length: maximumRow }, (_, index) => {
-        const height = rowHeights.get(index + 1);
-        return height === undefined ? "auto" : `minmax(${height}px, auto)`;
+        const row = index + 1;
+        const fixedHeight = rowHeights.get(row);
+        if (fixedHeight !== undefined) return `${fixedHeight}px`;
+        const minimumHeight = rowMinHeights.get(row);
+        return minimumHeight === undefined ? "auto" : `minmax(${minimumHeight}px, auto)`;
     }).join(" ");
 }

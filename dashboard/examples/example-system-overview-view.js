@@ -11,9 +11,11 @@ export const DASHBOARD_VIEW_METADATA = {
         "columns": 4,
         "gap": 10,
         "rowMinHeights": {
-            "1": 96,
+        },
+        "rowHeights": {
+            "1": 130,
             "2": 180,
-            "3": 260
+            "3": 180
         }
     },
     "widgets": [

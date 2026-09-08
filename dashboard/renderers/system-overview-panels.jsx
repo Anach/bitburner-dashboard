@@ -65,7 +65,7 @@ export function HomePanel({ title, subtitle = "", headerActions = null, children
     if (!react) return null;
     return (
         <section data-dashboard-theme-role="card-frame" style={{ ...styles.homePanel, opacity: muted ? 0.7 : 1 }}>
-            <div style={styles.homePanelHeader}>
+            <div style={{ ...styles.homePanelHeader, ...(headerActions ? { alignItems: "center" } : {}) }}>
                 <div style={styles.homePanelTitle}>{title}</div>
                 {headerActions
                     ? <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>{headerActions}</div>

@@ -88,7 +88,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
     const gridTemplateColumns = hasPlayerStatsWidget && columns > 1
         ? `repeat(${columns - 1}, minmax(0, 1fr)) ${playerStatsWidgetWidth}px`
         : `repeat(${columns}, minmax(0, 1fr))`;
-    const gridTemplateRows = buildGridTemplateRows(view?.layout?.rowMinHeights, widgets);
+    const gridTemplateRows = buildGridTemplateRows(view?.layout, widgets);
     const renderWidget = (widget) => {
         const configuredSpan = Math.floor(Number(widget?.columnSpan));
         const columnSpan = Number.isFinite(configuredSpan)
