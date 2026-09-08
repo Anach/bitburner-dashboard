@@ -57,6 +57,13 @@ integration.
 
 ### Fixed
 
+- **Persistent action-button delivery.** Dashboard actions now dispatch on mouse-down, so a
+  `printRaw()` redraw cannot consume the mouse-up click; keyboard activation remains single-fire.
+  Button-driven option changes save through the remount-safe action queue immediately, retain their
+  optimistic selected state until the options file confirms it, and coalesce rapid changes to the
+  latest complete snapshot. Typed settings retain their normal debounce and the dashboard's
+  background refresh cadence is unchanged.
+
 - **Network Navigator cache tiers.** Network topology and remote contract/lore catalogues now
   refresh every ten seconds, or immediately after the Map's Refresh action. Server state, active
   hacking targets, player state, and optional worker results remain live on the two-second pass.

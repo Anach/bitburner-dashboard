@@ -209,6 +209,10 @@ let activeDashboardTheme = buildDashboardTheme(DASHBOARD_THEME_MODE_GAME);
 const DASHBOARD_UI_STATE_KEY = "__dashboard_ui_state_v1";
 const DASHBOARD_ACTION_QUEUE_KEY = "__dashboard_action_queue_v1";
 const DASHBOARD_ACTION_QUEUE_FEEDBACK_KEY = "__dashboard_action_queue_feedback_v1";
+// Button-driven option changes must outlive DashboardWidget's per-tick React remount. This is
+// intentionally an in-memory acknowledgement only: the options file remains authoritative across
+// script/game restarts, and the entry clears as soon as that file catches up.
+const DASHBOARD_PENDING_OPTIONS_KEY = "__dashboard_pending_options_v1";
 const DASHBOARD_TITLE_RESTART_REQUESTED_AT_KEY = "__dashboard_title_restart_requested_at_v1";
 const DASHBOARD_SCROLL_STATE_KEY = "__dashboard_scroll_state_v1";
 // Filter/search/toggle state for resource-card lists, kept on globalThis for the same reason scroll
@@ -1659,6 +1663,31 @@ function normalizeDashboardOptionsForCompare(rawOptions = {}) {
 
 function areDashboardOptionsEqual(leftOptions, rightOptions) {
     return dashboardOptionsEqual(leftOptions, rightOptions, getDashboardServiceRegistry().services);
+}
+
+function getPendingDashboardOptions() {
+    const pending = globalThis[DASHBOARD_PENDING_OPTIONS_KEY];
+    if (!pending || typeof pending !== "object" || Array.isArray(pending)) return null;
+    const rawOptions = pending.options;
+    if (!rawOptions || typeof rawOptions !== "object" || Array.isArray(rawOptions)) return null;
+    return normalizeDashboardOptionsForCompare(rawOptions);
+}
+
+function setPendingDashboardOptions(options) {
+    globalThis[DASHBOARD_PENDING_OPTIONS_KEY] = {
+        options: normalizeDashboardOptionsForCompare(options),
+    };
+}
+
+function getDashboardOptionsForRender(persistedOptions) {
+    const incomingOptions = normalizeDashboardOptionsForCompare(persistedOptions ?? getDefaultOptions());
+    const pendingOptions = getPendingDashboardOptions();
+    if (!pendingOptions) return incomingOptions;
+    if (areDashboardOptionsEqual(incomingOptions, pendingOptions)) {
+        globalThis[DASHBOARD_PENDING_OPTIONS_KEY] = null;
+        return incomingOptions;
+    }
+    return pendingOptions;
 }
 
 function loadDashboardOptions(ns) {
@@ -4046,7 +4075,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
 
 function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused, networkChildStatus }) {
     const [uiState, setUiState] = React.useState(loadUiState);
-    const [options, setOptions] = React.useState(() => persistedOptions ?? getDefaultOptions());
+    const [options, setOptions] = React.useState(() => getDashboardOptionsForRender(persistedOptions));
     const gameThemeSignature = getGameThemeSignature(gameTheme);
     const gameStylesSignature = getGameStylesSignature(gameStyles);
     const dashboardLayout = layoutSnapshot ?? buildDashboardLayoutSnapshot({
@@ -4121,7 +4150,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const optionsFocusReleaseTimerRef = React.useRef(null);
     const autoSyncTimerRef = React.useRef(null);
     const pendingSavedOptionsRef = React.useRef(null);
-    const lastAutoSyncedOptionsRef = React.useRef(normalizeDashboardOptionsForCompare(persistedOptions ?? getDefaultOptions()));
+    const lastAutoSyncedOptionsRef = React.useRef(getDashboardOptionsForRender(persistedOptions));
     const leftColumnRef = React.useRef(null);
     const centerColumnRef = React.useRef(null);
     const rightColumnRef = React.useRef(null);
@@ -4228,10 +4257,21 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     };
 
     React.useEffect(() => {
-        const incomingOptions = persistedOptions ?? getDefaultOptions();
+        const incomingOptions = normalizeDashboardOptionsForCompare(persistedOptions ?? getDefaultOptions());
+        const pendingOptions = getPendingDashboardOptions();
         setOptions((currentOptions) => {
             // Avoid clobbering active edits while any option control is focused.
             if (optionsInputFocusedRef.current) return currentOptions;
+            // React state is discarded by each printRaw() remount, while the saved option may not
+            // be applied until the next safe action-queue pass. Keep showing the acknowledged
+            // button value through that gap instead of briefly restoring the old disk value.
+            if (pendingOptions && !areDashboardOptionsEqual(incomingOptions, pendingOptions)) {
+                optionsDirtyRef.current = true;
+                pendingSavedOptionsRef.current = pendingOptions;
+                lastAutoSyncedOptionsRef.current = pendingOptions;
+                return areDashboardOptionsEqual(currentOptions, pendingOptions) ? currentOptions : pendingOptions;
+            }
+            if (pendingOptions) globalThis[DASHBOARD_PENDING_OPTIONS_KEY] = null;
             if (optionsDirtyRef.current) {
                 // A save was just enqueued (250ms debounce below) but the main-loop action queue
                 // hasn't necessarily written it to disk by the time this fires - persistedOptions
@@ -4825,6 +4865,31 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }));
     };
 
+    // Operational buttons do not use the ordinary input debounce. printRaw() remounts this
+    // component about once per second, which can discard that timer after a click but before it
+    // writes. The global queue survives remounts and performs the actual ns.write() in the main
+    // loop; the pending snapshot above keeps the optimistic state visible until it round-trips.
+    const persistDashboardOptionsNow = (rawOptions) => {
+        const normalizedNext = normalizeDashboardOptionsForCompare(rawOptions);
+        if (!enqueueDashboardAction({ kind: "save-options", options: { ...normalizedNext } })) return false;
+        if (autoSyncTimerRef.current) {
+            clearTimeout(autoSyncTimerRef.current);
+            autoSyncTimerRef.current = null;
+        }
+        optionsDirtyRef.current = true;
+        setPendingDashboardOptions(normalizedNext);
+        setOptions(normalizedNext);
+        lastAutoSyncedOptionsRef.current = normalizedNext;
+        pendingSavedOptionsRef.current = normalizedNext;
+        return true;
+    };
+
+    const persistDashboardOptionOverridesNow = (optionOverrides) => {
+        const overrides = optionOverrides && typeof optionOverrides === "object" ? optionOverrides : {};
+        const currentOptions = getPendingDashboardOptions() ?? options;
+        return persistDashboardOptionsNow({ ...currentOptions, ...overrides });
+    };
+
     const runServiceAction = (action) => {
         if (!action) return;
         if (action.kind === "clipboard") {
@@ -4855,40 +4920,24 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             const optionOverrides = action.optionOverrides && typeof action.optionOverrides === "object"
                 ? action.optionOverrides
                 : null;
-            // Mark dirty (matching updateOptionInput) so the persistedOptions sync effect
-            // doesn't clobber this with a stale disk read before the debounced auto-save
-            // below has actually written it out - that race is what caused a toggle to look
-            // like it instantly reverted right after being clicked.
-            optionsDirtyRef.current = true;
-            // Update React state directly (same as updateOptionInput does for regular settings
-            // fields) instead of only enqueueing a disk write - the existing auto-sync effect
-            // already persists any options change, so a toggle button needs to go through the
-            // same state update to be reflected immediately instead of only on next remount.
-            setOptions((current) => (optionOverrides ? { ...current, ...optionOverrides } : { ...current }));
+            persistDashboardOptionOverridesNow(optionOverrides);
             return;
         }
         if (action.kind === "plugin-command") {
             if (typeof action.command !== "string" || action.command.length === 0) return;
-            if (typeof action.optionKey === "string" && action.optionKey.length > 0) {
-                // Same rationale as the save-options branch above: persist the toggle's new value
-                // to the options store (not just the live port command) so a full relaunch
-                // re-primes the freshly (re)started script with this choice instead of the
-                // options file's stale default. clearedOptionOverrides (mutual-exclusion pairs -
-                // see plugin-integration.js's buildPluginIntegrationActions) merges in the same way.
-                optionsDirtyRef.current = true;
-                setOptions((current) => ({
-                    ...current,
-                    [action.optionKey]: action.optionValue,
-                    ...action.clearedOptionOverrides,
-                }));
-            }
-            enqueueDashboardAction({
+            const commandQueued = enqueueDashboardAction({
                 kind: "plugin-command",
                 serviceId: action.serviceId,
                 command: action.command,
                 ...(Number.isFinite(Number(action.port)) ? { port: Number(action.port) } : {}),
                 ...(Array.isArray(action.runtimeScripts) ? { runtimeScripts: action.runtimeScripts } : {}),
             });
+            if (commandQueued && typeof action.optionKey === "string" && action.optionKey.length > 0) {
+                persistDashboardOptionOverridesNow({
+                    [action.optionKey]: action.optionValue,
+                    ...action.clearedOptionOverrides,
+                });
+            }
             return;
         }
         if (action.kind === "dashboard") {
@@ -4927,6 +4976,21 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         }
     };
 
+    const runServiceActionOnMouseDown = (event, action) => {
+        if (action?.disabled) return;
+        runDashboardFrameControlMouseDown(event, () => {
+            setPressedActionButtonId(action.id);
+            runServiceAction(action);
+        });
+    };
+
+    const runServiceActionOnClick = (event, action) => {
+        if (action?.disabled) return;
+        // Mouse clicks already ran on mousedown. The frame helper deliberately permits only
+        // detail===0 here, preserving keyboard activation without duplicate dispatch.
+        runDashboardFrameControlClick(event, () => runServiceAction(action));
+    };
+
     const renderServiceActions = (actions, layout = "default") => {
         if (!Array.isArray(actions) || actions.length === 0) {
             return null;
@@ -4955,14 +5019,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             ...(pressedActionButtonId === action.id && !action.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
                             ...(action.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                         }}
-                        onClick={() => {
-                            if (action.disabled) return;
-                            runServiceAction(action);
-                        }}
-                        onMouseDown={() => {
-                            if (action.disabled) return;
-                            setPressedActionButtonId(action.id);
-                        }}
+                        onClick={(event) => runServiceActionOnClick(event, action)}
+                        onMouseDown={(event) => runServiceActionOnMouseDown(event, action)}
                         onMouseUp={() => setPressedActionButtonId("")}
                         onMouseLeave={() => setPressedActionButtonId("")}
                         onBlur={() => setPressedActionButtonId("")}
@@ -5066,19 +5124,7 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     // still-unsaved change. Enqueueing the save immediately (globalThis-backed queue, unaffected
     // by remounts) sidesteps the race entirely.
     const persistServiceStartOrderNow = (nextIds) => {
-        const normalizedNext = normalizeDashboardOptionsForCompare({ ...options, serviceStartOrder: nextIds.join(",") });
-        optionsDirtyRef.current = true;
-        setOptions((current) => ({ ...current, serviceStartOrder: nextIds.join(",") }));
-        if (autoSyncTimerRef.current) {
-            clearTimeout(autoSyncTimerRef.current);
-            autoSyncTimerRef.current = null;
-        }
-        enqueueDashboardAction({ kind: "save-options", options: { ...normalizedNext } });
-        lastAutoSyncedOptionsRef.current = normalizedNext;
-        // Same handoff as the debounced auto-save: leave dirty set until the [persistedOptions]
-        // effect confirms this exact snapshot has round-tripped through disk, instead of clearing
-        // it immediately and risking a stale disk read reverting the reorder before the save lands.
-        pendingSavedOptionsRef.current = normalizedNext;
+        persistDashboardOptionOverridesNow({ serviceStartOrder: nextIds.join(",") });
     };
 
     const moveServiceInStartOrder = (serviceId, direction) => {
@@ -5709,14 +5755,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                 ...(pressedActionButtonId === action.id && !action.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
                                                 ...(action.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                                             }}
-                                            onClick={() => {
-                                                if (action.disabled) return;
-                                                runServiceAction(action);
-                                            }}
-                                            onMouseDown={() => {
-                                                if (action.disabled) return;
-                                                setPressedActionButtonId(action.id);
-                                            }}
+                                            onClick={(event) => runServiceActionOnClick(event, action)}
+                                            onMouseDown={(event) => runServiceActionOnMouseDown(event, action)}
                                             onMouseUp={() => setPressedActionButtonId("")}
                                             onMouseLeave={() => setPressedActionButtonId("")}
                                             onBlur={() => setPressedActionButtonId("")}
@@ -5966,14 +6006,8 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                                                     ...(pressedActionButtonId === action.id && !action.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
                                                     ...(action.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
                                                 }}
-                                                onClick={() => {
-                                                    if (action.disabled) return;
-                                                    runServiceAction(action);
-                                                }}
-                                                onMouseDown={() => {
-                                                    if (action.disabled) return;
-                                                    setPressedActionButtonId(action.id);
-                                                }}
+                                                onClick={(event) => runServiceActionOnClick(event, action)}
+                                                onMouseDown={(event) => runServiceActionOnMouseDown(event, action)}
                                                 onMouseUp={() => setPressedActionButtonId("")}
                                                 onMouseLeave={() => setPressedActionButtonId("")}
                                                 onBlur={() => setPressedActionButtonId("")}

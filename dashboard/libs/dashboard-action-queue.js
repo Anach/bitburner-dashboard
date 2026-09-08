@@ -120,6 +120,9 @@ export function normalizeDashboardQueueAction(command, { allowContinuation = fal
 
 export function getDashboardActionCoalesceKey(command) {
     if (command?.kind === "window-mode" || command?.kind === "minimize-tail") return command.kind;
+    // A persisted options action always carries the complete normalized snapshot. Retaining only
+    // the latest one prevents rapid button toggles from consuming the normal action capacity.
+    if (command?.kind === "save-options") return "save-options";
     if (command?.kind === "file" && command.actionId === "refresh") return `file:refresh:${command.viewId}`;
     if (command?.kind === "file-preview") return `file-preview:${command.viewId}:${command.path}`;
     return "";
