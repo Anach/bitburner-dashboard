@@ -184,9 +184,12 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
 
         if (!ns.hasRootAccess(host)) continue;
 
-        const lastAttempt = readerLaunchState.get(host) ?? 0;
-        if (Date.now() - lastAttempt < READER_RETRY_MS) continue;
-        if (ns.scriptRunning(READER_SCRIPT, host)) continue;
+        // Readers are one-shot scripts with no await points. A successful launch lease prevents
+        // duplicates between scans, so a separate scriptRunning() probe only adds 1 GB to the
+        // always-on scanner without improving ownership. Failed copy/launch attempts deliberately
+        // do not acquire the lease and are retried on the next five-second discovery pass.
+        const lastLaunch = readerLaunchState.get(host) ?? 0;
+        if (Date.now() - lastLaunch < READER_RETRY_MS) continue;
 
         const readerCost = ns.getScriptRam(READER_SCRIPT, "home");
         const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
@@ -195,9 +198,9 @@ function scanNetworkForPendingFiles(ns, messages, hosts, readerLaunchState) {
         // Always re-copy the reader and its imports rather than only when missing: a host that
         // still holds older code would otherwise keep running stale capture logic forever, while
         // a fresh host cannot compile the reader without the imported modules beside it.
-        ns.scp(READER_FILES, host, "home");
-        ns.exec(READER_SCRIPT, host, { threads: 1, temporary: true });
-        readerLaunchState.set(host, Date.now());
+        if (!ns.scp(READER_FILES, host, "home")) continue;
+        const readerPid = ns.exec(READER_SCRIPT, host, { threads: 1, temporary: true });
+        if (readerPid > 0) readerLaunchState.set(host, Date.now());
     }
 }
 
@@ -247,9 +250,11 @@ function ensureDarknetAgentRunning(ns) {
     // The dnet API (ns.dnet.*) throws outright without DarkscapeNavigator.exe; don't even
     // attempt to launch the agent until the player has actually purchased it.
     if (!ns.fileExists(DARKNET_ACCESS_PROGRAM, "home")) return;
-    if (ns.scriptRunning(DARKNET_AGENT_SCRIPT, "home")) return;
     if (!ns.fileExists(DARKNET_AGENT_SCRIPT, "home")) return;
-    ns.exec(DARKNET_AGENT_SCRIPT, "home", { threads: 1, temporary: true });
+    // Keep the expensive dnet child unique without charging scriptRunning() to this resident
+    // scanner. `preventDuplicates` covers the same script/host/args identity and naturally starts
+    // a replacement on the next scan if the existing temporary agent has exited.
+    ns.exec(DARKNET_AGENT_SCRIPT, "home", { threads: 1, temporary: true, preventDuplicates: true });
 }
 
 function drainCommands(ns, messages, queuedCommands = []) {

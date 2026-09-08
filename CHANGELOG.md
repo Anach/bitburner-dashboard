@@ -14,6 +14,13 @@ integration.
 
 ### Added
 
+- **Contract: optional external Service Supervisor lifecycle authorities.** A companion source may
+  provide `dashboard/external-service-lifecycle-authorities.json`, mapping a static authority ID,
+  short-lived state path, and allowed descriptor service IDs. A service separately opts in with
+  `externalLifecycle.states`; the Supervisor validates every lease and retains final start/stop
+  ownership. Missing or malformed configuration remains inert, so standalone Dashboard installs
+  have no new dependency. Network Navigator and Player Status are the initial opt-in services.
+
 - **Contract: descriptor-defined System Overview row sizing.** A view may optionally declare
   `layout.rowMinHeights` as numbered pixel minima, or `layout.rowHeights` for an explicit row size
   when a spanning widget must not inflate that row. Unspecified rows remain content-sized; minimum
@@ -56,6 +63,13 @@ integration.
   supervision.
 
 ### Fixed
+
+- **Mail Client reader admission.** The persistent scanner no longer reserves `scriptRunning()`:
+  its existing successful-launch lease already prevents duplicate one-shot remote readers, while
+  the optional Darknet agent now uses `exec`'s native duplicate prevention. A failed reader copy
+  or execution remains retryable on the next five-second discovery pass rather than suppressing
+  retries for 30 seconds. Scanner RAM falls from 5.25 GB to 4.25 GB; the responsive discovery
+  cadence and persistent workspace model are unchanged.
 
 - **Persistent action-button delivery.** Dashboard actions now dispatch on mouse-down, so a
   `printRaw()` redraw cannot consume the mouse-up click; keyboard activation remains single-fire.
