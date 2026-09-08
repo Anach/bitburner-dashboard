@@ -259,6 +259,7 @@ const TAIL_WIDTH = DEFAULT_TAIL_WIDTH;
 const TAIL_HEIGHT = DEFAULT_TAIL_HEIGHT;
 const DASHBOARD_UI_TICK_MS = 1000;
 const DASHBOARD_MINIMIZED_UI_TICK_MS = 1000;
+const DASHBOARD_MINIMIZED_RESTORE_POLL_MS = 30;
 const dashboardSnapshotCoordinator = createDashboardSnapshotCoordinator();
 // A shared reference for "this view isn't active" instead of a fresh {} literal each tick, so an
 // inactive File Manager/Script Log view compares equal to itself across ticks.
@@ -7266,6 +7267,33 @@ function syncDashboardTailLayout(ns, options = getDefaultOptions()) {
     });
 }
 
+// The native titlebar expands before the next dashboard render cycle can observe it. While the
+// tail is minimized, probe only its existing layout state between normal one-second UI ticks; on
+// restore, put the saved geometry back before React has a chance to show the compact column.
+// This deliberately does not refresh telemetry, snapshots, or the dashboard tree more often.
+async function waitForDashboardUiTick(ns, layoutSnapshot, options) {
+    if (!layoutSnapshot?.minimized) {
+        await ns.sleep(DASHBOARD_UI_TICK_MS);
+        return;
+    }
+
+    const deadline = Date.now() + DASHBOARD_MINIMIZED_UI_TICK_MS;
+    while (true) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return;
+        await ns.sleep(Math.min(DASHBOARD_MINIMIZED_RESTORE_POLL_MS, remainingMs));
+
+        try {
+            if (ns.self()?.tailProperties?.minimized === false) {
+                syncDashboardTailLayout(ns, options);
+                return;
+            }
+        } catch (error) {
+            // Keep the normal one-second cycle if tail properties are transiently unavailable.
+        }
+    }
+}
+
 function syncDashboardCurrentWorkFocus(ns, layoutSnapshot, capabilitySnapshot, enabled) {
     const focused = resolveDashboardCurrentWorkFocusRequest(
         layoutSnapshot,
@@ -7631,8 +7659,7 @@ export async function main(ns) {
                 || networkMapRenderStable || startOrderRenderStable) {
                 // Keep processing actions and state, but preserve the active DOM interaction until it finishes.
                 if (!isDaemon) break;
-                const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
-                await ns.sleep(tickMs);
+                await waitForDashboardUiTick(ns, layoutSnapshot, persistedOptions);
                 applyQueuedDashboardActions(ns);
                 continue;
             }
@@ -7707,8 +7734,7 @@ export async function main(ns) {
 
         if (!isDaemon) break;
 
-        const tickMs = layoutSnapshot.minimized ? DASHBOARD_MINIMIZED_UI_TICK_MS : DASHBOARD_UI_TICK_MS;
-        await ns.sleep(tickMs);
+        await waitForDashboardUiTick(ns, layoutSnapshot, persistedOptions);
         applyQueuedDashboardActions(ns);
     }
 }

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "files": [
+    "data/example-service-state.json",
+    "data/example-service-history.txt"
+  ],
+  "prefixes": [
+    "data/example-service-requests/"
+  ]
+}

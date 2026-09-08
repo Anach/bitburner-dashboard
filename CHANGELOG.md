@@ -14,6 +14,16 @@ integration.
 
 ### Added
 
+- **Contract: descriptor-defined System Overview row minima.** A view may optionally declare
+  `layout.rowMinHeights` as numbered pixel minima. Unspecified rows remain content-sized; configured
+  rows use `minmax` so taller content is never clipped. System Overview currently leaves the map
+  empty, preserving its existing layout until a row is deliberately tuned.
+
+- **Minimized-tail restore polish.** While minimized, Dashboard performs a layout-only 100 ms
+  native-tail check and reapplies its saved geometry as soon as the titlebar is expanded. Telemetry,
+  snapshots, and React rendering retain their one-second minimized cadence, avoiding the temporary
+  narrow-column frame without increasing background refresh work.
+
 - **Dashboard action queue contract.** Dashboard UI requests now enter a bounded, validated,
   generic queue: 60 user slots plus four reserved continuation slots, with rate-limited visible
   rejection feedback. Repeated window-mode, minimize, filesystem-refresh, and same-file preview

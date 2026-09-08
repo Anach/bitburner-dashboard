@@ -11,6 +11,7 @@ import {
     runDashboardFrameControlMouseDown,
 } from "dashboard/libs/frame-controls.js";
 import { selectDashboardViewItems, selectDashboardViewServiceGroups } from "dashboard/libs/dashboard-view-selection.js";
+import { buildGridTemplateRows } from "dashboard/libs/grid-row-layout.js";
 import {
     getTelemetrySourceLinkInteractionHandlers,
     getTelemetrySourceLinkStyle,
@@ -87,6 +88,7 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
     const gridTemplateColumns = hasPlayerStatsWidget && columns > 1
         ? `repeat(${columns - 1}, minmax(0, 1fr)) ${playerStatsWidgetWidth}px`
         : `repeat(${columns}, minmax(0, 1fr))`;
+    const gridTemplateRows = buildGridTemplateRows(view?.layout?.rowMinHeights, widgets);
     const renderWidget = (widget) => {
         const configuredSpan = Math.floor(Number(widget?.columnSpan));
         const columnSpan = Number.isFinite(configuredSpan)
@@ -281,6 +283,11 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
                 </button>}
             </div>
         </div>
-        <div style={{ ...styles.homeWidgetGrid, gridTemplateColumns, gap: `${gap}px` }}>{widgets.map(renderWidget)}</div>
+        <div style={{
+            ...styles.homeWidgetGrid,
+            gridTemplateColumns,
+            ...(gridTemplateRows ? { gridTemplateRows } : {}),
+            gap: `${gap}px`,
+        }}>{widgets.map(renderWidget)}</div>
     </main>;
 }

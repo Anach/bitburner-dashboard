@@ -9,7 +9,12 @@ export const DASHBOARD_VIEW_METADATA = {
     "subtitle": "Core dashboard status, capacity, and available service health.",
     "layout": {
         "columns": 4,
-        "gap": 10
+        "gap": 10,
+        "rowMinHeights": {
+            "1": 96,
+            "2": 180,
+            "3": 260
+        }
     },
     "widgets": [
         {
