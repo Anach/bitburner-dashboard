@@ -14,6 +14,18 @@ integration.
 
 ### Added
 
+- **Confirmed, capability-gated Soft Reset control.** System Overview now places an amber Soft
+  Reset control before Kill-All. It remains disabled until Source-File 4 is available, requires a
+  browser confirmation, and starts a disposable helper so the resident dashboard does not inherit
+  the costly Singularity reset API. The helper uses `init/init.js` as its reset callback; that
+  bootstrap performs File Shredder's disposable reset sweep before choosing Full Dashboard or Lite.
+
+- **File Shredder is on-demand after bootstrap.** Its reset sweep runs automatically through
+  `init/init.js`, then exits rather than retaining a daemon. A confirmed **Run File Shredder**
+  control in its Options panel force-clears current-run files live without restarting the dashboard;
+  active services may republish current telemetry on their next cycle. Generic Start/Restart controls
+  are hidden to keep that destructive action explicit.
+
 - **BBS Connect direct plugin.** The complete persistent workspace and standalone-tail BBS Connect
   package now lives under `dashboard/plugins/bbs-connect/`, with no scripts-repository runtime
   dependency. Its public seed example and native application registry are intentionally empty; players

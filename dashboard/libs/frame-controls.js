@@ -41,6 +41,11 @@ const FRAME_CONTROL_VARIANT_STYLES = Object.freeze({
         background: "rgba(44, 12, 12, 0.82)",
         color: "#ffd2d2",
     }),
+    warn: Object.freeze({
+        border: "1px solid rgba(255, 198, 92, 0.58)",
+        background: "rgba(52, 34, 9, 0.82)",
+        color: "#ffe1a2",
+    }),
 });
 
 const FRAME_CONTROL_GROUP_STYLE = Object.freeze({

@@ -1,5 +1,7 @@
 export const DASHBOARD_ACTION_IDS = {
     RESTART_DASHBOARD: "restart-dashboard",
+    SOFT_RESET: "soft-reset",
+    FILE_SHREDDER_SWEEP: "file-shredder-sweep",
     START_INTEGRATIONS: "start-integrations",
     KILL_ALL_SCRIPTS: "kill-all-scripts",
     KILL_ALL_HOME_SCRIPTS: "kill-all-home-scripts",

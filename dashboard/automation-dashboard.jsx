@@ -4073,7 +4073,7 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     };
 }
 
-function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused, networkChildStatus }) {
+function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused, networkChildStatus, capabilitySnapshot }) {
     const [uiState, setUiState] = React.useState(loadUiState);
     const [options, setOptions] = React.useState(() => getDashboardOptionsForRender(persistedOptions));
     const gameThemeSignature = getGameThemeSignature(gameTheme);
@@ -4565,7 +4565,9 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
         : null;
     const autostartAction = buildServiceAutostartAction(selectedService, options);
     const standardScriptActions = [
-        ...(pluginScript ? buildScriptActions(pluginScript, { includeDisabledStates: true }) : []),
+        ...(pluginScript && selectedService?.pluginMetadata?.lifecycleControls !== false
+            ? buildScriptActions(pluginScript, { includeDisabledStates: true })
+            : []),
         ...(autostartAction ? [autostartAction] : []),
     ];
     const panelActions = isPluginService
@@ -4786,6 +4788,10 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
             return `${action.label}\nScript: ${action.filename}`;
         }
         if (action.kind === "dashboard") {
+            if (action.actionId === DASHBOARD_ACTION_IDS.FILE_SHREDDER_SWEEP) {
+                requestFileShredderSweep();
+                return;
+            }
             return `${action.label}\nDashboard action: ${action.actionId}`;
         }
         if (action.kind === "save-options") {
@@ -5564,6 +5570,21 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const globalKillAction = buildDashboardActions([DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS], {
         disabledActionIds: hasKillAllTargets && !killAllPending ? [] : [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS],
     })[0];
+    const softResetAvailable = isCapabilityRequirementMet({ type: "api", id: "singularity" }, capabilitySnapshot);
+    const softResetAction = buildDashboardActions([DASHBOARD_ACTION_IDS.SOFT_RESET], {
+        disabledActionIds: softResetAvailable ? [] : [DASHBOARD_ACTION_IDS.SOFT_RESET],
+    })[0];
+    const requestSoftReset = () => {
+        if (softResetAction.disabled) return;
+        if (globalThis.confirm?.("Soft reset now? All running scripts will stop, then init/init.js will restart the dashboard or Dashboard Lite.")) {
+            enqueueDashboardAction({ kind: "dashboard", actionId: DASHBOARD_ACTION_IDS.SOFT_RESET });
+        }
+    };
+    const requestFileShredderSweep = () => {
+        if (globalThis.confirm?.("Run File Shredder now? Registered run-scoped data will be removed and cannot be recovered. The dashboard will remain running; active services may republish their current telemetry.")) {
+            enqueueDashboardAction({ kind: "dashboard", actionId: DASHBOARD_ACTION_IDS.FILE_SHREDDER_SWEEP });
+        }
+    };
     const requestGlobalKill = () => {
         if (globalKillAction.disabled) return;
         killAllSnapshotRef.current = runningProcessSnapshot;
@@ -6648,6 +6669,31 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
                             ))}
                         <button
                             type="button"
+                            title={softResetAction.disabled
+                                ? "Soft Reset requires Source-File 4 (Singularity)."
+                                : "Soft reset the current BitNode after confirmation, then launch init/init.js to restore the dashboard."}
+                            disabled={softResetAction.disabled}
+                            style={{
+                                ...getDashboardFrameControlStyle("warn", systemOverviewControlStyle),
+                                ...(pressedActionButtonId === softResetAction.id && !softResetAction.disabled ? WIDGET_STYLES.actionButtonPressed : {}),
+                                ...(softResetAction.disabled ? WIDGET_STYLES.actionButtonDisabled : {}),
+                            }}
+                            onMouseDown={(event) => {
+                                if (softResetAction.disabled) return;
+                                runDashboardFrameControlMouseDown(event, () => {
+                                    setPressedActionButtonId(softResetAction.id);
+                                    requestSoftReset();
+                                });
+                            }}
+                            onClick={(event) => runDashboardFrameControlClick(event, requestSoftReset)}
+                            onMouseUp={() => setPressedActionButtonId("")}
+                            onMouseLeave={() => setPressedActionButtonId("")}
+                            onBlur={() => setPressedActionButtonId("")}
+                        >
+                            {renderActionLabel(softResetAction)}
+                        </button>
+                        <button
+                            type="button"
                             title={globalKillAction.disabled
                                 ? "No scripts other than the dashboard are currently running."
                                 : "Kill every running script on home and all reachable servers; preserve this dashboard."}
@@ -7719,6 +7765,7 @@ export async function main(ns) {
                 autostartPaused,
                 manualStrings,
                 networkChildStatus,
+                capabilitySnapshot,
             ];
             const canSkipRender = Array.isArray(lastRenderedSignature)
                 && renderSignature.length === lastRenderedSignature.length
@@ -7743,6 +7790,7 @@ export async function main(ns) {
                         layoutSnapshot={layoutSnapshot}
                         autostartPaused={autostartPaused}
                         networkChildStatus={networkChildStatus}
+                        capabilitySnapshot={capabilitySnapshot}
                     ></DashboardWidget>
                 );
                 ns.ui.renderTail();

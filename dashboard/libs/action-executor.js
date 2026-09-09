@@ -11,6 +11,8 @@ import {
 
 const DASHBOARD_SCRIPT = "dashboard/automation-dashboard.jsx";
 const SERVICE_SUPERVISOR_SCRIPT = "dashboard/service-supervisor.js";
+const SOFT_RESET_HELPER_SCRIPT = "dashboard/soft-reset.js";
+const FILE_SHREDDER_SWEEP_HELPER_SCRIPT = "init/reset-bootstrap.js";
 const AUTOSTART_PAUSE_FILE = "data/autostart_paused.txt";
 const FILE_MUTATIONS_PER_ACTION = 10;
 
@@ -345,6 +347,24 @@ function performFileAction(ns, command) {
 }
 
 function performDashboardAction(ns, command) {
+    if (command.actionId === DASHBOARD_ACTION_IDS.FILE_SHREDDER_SWEEP) {
+        if (!ns.fileExists(FILE_SHREDDER_SWEEP_HELPER_SCRIPT, "home")) {
+            return { ok: false, message: "File Shredder helper is missing. Sync init/reset-bootstrap.js and try again.", tone: "error" };
+        }
+        const pid = ns.exec(FILE_SHREDDER_SWEEP_HELPER_SCRIPT, "home", { threads: 1, temporary: true, preventDuplicates: true }, "--force");
+        return pid > 0
+            ? success("File Shredder sweep started.", "warn")
+            : { ok: false, message: "Could not start File Shredder; check available Home RAM.", tone: "error" };
+    }
+    if (command.actionId === DASHBOARD_ACTION_IDS.SOFT_RESET) {
+        if (!ns.fileExists(SOFT_RESET_HELPER_SCRIPT, "home")) {
+            return { ok: false, message: "Soft Reset helper is missing. Sync dashboard/soft-reset.js and try again.", tone: "error" };
+        }
+        const pid = ns.exec(SOFT_RESET_HELPER_SCRIPT, "home", { threads: 1, temporary: true, preventDuplicates: true });
+        return pid > 0
+            ? success("Soft Reset confirmed. Restarting through init/init.js...", "warn")
+            : { ok: false, message: "Could not start the Soft Reset helper; check available Home RAM and Singularity access.", tone: "error" };
+    }
     if (command.actionId === DASHBOARD_ACTION_IDS.RESTART_DASHBOARD) {
         return success("Restarting dashboard...", "info", {
             restartDashboard: true,

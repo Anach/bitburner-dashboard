@@ -2,6 +2,8 @@ import { DASHBOARD_ACTION_IDS } from "dashboard/libs/action-ids.js";
 import { normalizeActionTone } from "dashboard/libs/action-tones.js";
 
 const DASHBOARD_ACTION_METADATA = {
+    [DASHBOARD_ACTION_IDS.SOFT_RESET]: { label: "Soft Reset", tone: "warn" },
+    [DASHBOARD_ACTION_IDS.FILE_SHREDDER_SWEEP]: { label: "Run File Shredder", tone: "warn" },
     [DASHBOARD_ACTION_IDS.KILL_ALL_SCRIPTS]: { label: "Kill-All Scripts", tone: "danger" },
     [DASHBOARD_ACTION_IDS.KILL_ALL_HOME_SCRIPTS]: { label: "Kill Local", tone: "danger" },
     [DASHBOARD_ACTION_IDS.KILL_ALL_REMOTE_SCRIPTS]: { label: "Kill Remote", tone: "danger" },

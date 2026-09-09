@@ -599,6 +599,9 @@ export function buildPluginIntegrationActions(integration, options = {}, stats =
             ...(typeof action.group === "string" && action.group.length > 0 ? { group: action.group } : {}),
             ...(action.afterInputs === true ? { afterInputs: true } : {}),
             ...(isClipboard ? { text: clipboardText } : {}),
+            ...(actionKind === "dashboard" && typeof action.actionId === "string" && action.actionId.length > 0
+                ? { actionId: action.actionId }
+                : {}),
             command: action.command ?? variant?.command ?? (enabled ? action.disableCommand : action.enableCommand),
             // Per-action override for an integration whose merged components each still run their
             // own independent command-drain loop on their own port - same rationale as
