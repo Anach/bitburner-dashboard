@@ -586,7 +586,7 @@ function resolveDeleteEntries(selection, files) {
     return resolvedEntries;
 }
 
-function FilePane({ id, path, entries, selectedEntry, selectedIds, active, rowRefs, scrollRef, onScroll, onActivate, onSelect, onOpen, getSelectionModifiers }) {
+function FilePane({ id, path, entries, selectedEntry, selectedIds, active, rowRefs, scrollRef, onScroll, onScrollActivity, onActivate, onSelect, onOpen, getSelectionModifiers }) {
     const selectedIdSet = selectedIds instanceof Set ? selectedIds : new Set();
     return (
         <section
@@ -602,7 +602,15 @@ function FilePane({ id, path, entries, selectedEntry, selectedIds, active, rowRe
             <div style={STYLES.columnHeader}>
                 <span>Name</span><span>Type</span><span>RAM</span><span>Modified</span><span>State</span>
             </div>
-            <div ref={scrollRef} style={STYLES.rows} onScroll={onScroll}>
+            <div
+                ref={scrollRef}
+                style={STYLES.rows}
+                onWheel={onScrollActivity}
+                onScroll={(event) => {
+                    onScroll?.(event);
+                    onScrollActivity?.();
+                }}
+            >
                 {entries.length > 0 ? entries.map((entry) => {
                     const selected = selectedIdSet.has(entry.id);
                     const isDirectory = entry.entryType === "directory" || entry.entryType === "parent";
@@ -924,6 +932,8 @@ export function FileManagerView({
         right: Math.max(0, Number(savedState.rightScrollTop) || 0),
     }));
     const selectionModifiersRef = React.useRef({ toggle: false, range: false });
+    const hasMountedSelectionRef = React.useRef(false);
+    const scrollInteractionReleaseTimerRef = React.useRef(null);
     const seenActionResultRef = React.useRef(0);
     const seenPreviewResultRef = React.useRef(0);
     const previewRequestSequenceRef = React.useRef(0);
@@ -990,7 +1000,13 @@ export function FileManagerView({
 
     React.useEffect(() => {
         shellRef.current?.focus?.();
-        return () => onInputFocusChange?.(false);
+        return () => {
+            if (scrollInteractionReleaseTimerRef.current) {
+                clearTimeout(scrollInteractionReleaseTimerRef.current);
+                scrollInteractionReleaseTimerRef.current = null;
+            }
+            onInputFocusChange?.(false);
+        };
     }, []);
 
     React.useEffect(() => {
@@ -1030,6 +1046,10 @@ export function FileManagerView({
     }, [lastPreviewResult?.timestamp, lastPreviewResult?.viewId, lastPreviewResult?.path, lastPreviewResult?.requestId, view?.id]);
 
     React.useEffect(() => {
+        if (!hasMountedSelectionRef.current) {
+            hasMountedSelectionRef.current = true;
+            return;
+        }
         const entry = selectedByPane[activePane];
         if (!entry) return;
         rowRefs.current[`${activePane}:${entry.id}`]?.scrollIntoView?.({ block: "nearest" });
@@ -1101,6 +1121,17 @@ export function FileManagerView({
             [paneId]: { path: normalizeFilePath(path), selectedId: "", selectedIds: [], anchorId: "" },
         }));
         setPaneScrollTops((current) => ({ ...current, [paneId]: 0 }));
+    };
+
+    const protectPaneScrollInteraction = () => {
+        onInputFocusChange?.(true);
+        if (scrollInteractionReleaseTimerRef.current) {
+            clearTimeout(scrollInteractionReleaseTimerRef.current);
+        }
+        scrollInteractionReleaseTimerRef.current = setTimeout(() => {
+            scrollInteractionReleaseTimerRef.current = null;
+            onInputFocusChange?.(false);
+        }, 180);
     };
 
     const showPreview = (entry) => {
@@ -1478,6 +1509,7 @@ export function FileManagerView({
                     active={activePane === "left"}
                     rowRefs={rowRefs}
                     scrollRef={paneScrollRefs.left}
+                    onScrollActivity={protectPaneScrollInteraction}
                     onScroll={(event) => {
                         const scrollTop = event.currentTarget.scrollTop;
                         setPaneScrollTops((current) => ({ ...current, left: scrollTop }));
@@ -1496,6 +1528,7 @@ export function FileManagerView({
                     active={activePane === "right"}
                     rowRefs={rowRefs}
                     scrollRef={paneScrollRefs.right}
+                    onScrollActivity={protectPaneScrollInteraction}
                     onScroll={(event) => {
                         const scrollTop = event.currentTarget.scrollTop;
                         setPaneScrollTops((current) => ({ ...current, right: scrollTop }));
