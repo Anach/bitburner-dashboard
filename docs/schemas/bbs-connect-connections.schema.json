@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bbs-connect-connections.schema.json",
+  "title": "BBS Connect player catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "connections"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "hiddenIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/connectionId" }
+    },
+    "connections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/connection" }
+    }
+  },
+  "$defs": {
+    "connectionId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "sourcePatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["find", "replace"],
+      "properties": {
+        "find": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "replace": { "type": "string", "maxLength": 1000 },
+        "occurrences": { "type": "integer", "minimum": 1, "maximum": 20, "default": 1 }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "protocol"],
+      "properties": {
+        "id": { "$ref": "#/$defs/connectionId" },
+        "visible": { "type": "boolean", "default": true },
+        "label": { "type": "string", "minLength": 1 },
+        "protocol": { "const": "quickserve" },
+        "endpoint": { "type": "string", "pattern": "^https://" },
+        "path": {
+          "type": "string",
+          "pattern": "^data/bbs-connect-connections/.+\\.bbs\\.txt$"
+        },
+        "sourceUrl": { "type": "string" },
+        "license": { "type": "string" },
+        "description": { "type": "string" },
+        "refreshPolicy": { "enum": ["connect", "manual"], "default": "connect" },
+        "sourcePatches": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/sourcePatch" }
+        },
+        "order": { "type": "number" }
+      },
+      "anyOf": [
+        { "required": ["endpoint"] },
+        { "required": ["path"] }
+      ]
+    }
+  }
+}
+

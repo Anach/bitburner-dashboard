@@ -10,6 +10,19 @@ Entries marked **contract** change something a plugin descriptor or runtime depe
 view schemas are still beta contracts, so review those entries before updating an existing
 integration.
 
+## Unreleased
+
+### Added
+
+- **BBS Connect direct plugin.** The complete persistent workspace and standalone-tail BBS Connect
+  package now lives under `dashboard/plugins/bbs-connect/`, with no scripts-repository runtime
+  dependency. Its public seed example and native application registry are intentionally empty; players
+  import and manage QuickServe source links in their own non-staged
+  `data/bbs-connect-connections.json` file. The **C: CATALOG** screen validates a source in a
+  temporary QuickServe worker, confirms its detected name before installation, retains a
+  manual-refresh source cache, and provides live Show, Hide, and Remove controls. The player
+  catalog schema is documented under `docs/schemas/`.
+
 ## 2026-09-07
 
 ### Added
