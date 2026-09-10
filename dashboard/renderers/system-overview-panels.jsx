@@ -346,11 +346,18 @@ export function HomeGaugeCard({ gauge, size = 84 }) {
     </div>;
 }
 
-export function HomeServiceLandscape({ groups, healthById }) {
+export function HomeServiceLandscape({ groups, healthById, maxRows = 4, minColumns = 2 }) {
     const react = getReact();
     const styles = getWidgetStyles();
     if (!react) return null;
-    return <div style={styles.homeServiceGrid}>{(Array.isArray(groups) ? groups : []).map((group) => {
+    const selectedGroups = Array.isArray(groups) ? groups : [];
+    const rowLimit = Math.max(1, Math.floor(Number(maxRows)) || 4);
+    const minimumColumns = Math.max(1, Math.floor(Number(minColumns)) || 2);
+    // Keep the compact overview card from becoming taller than its reserved grid row. A minimum
+    // column count gives this view its deliberately dense three-column presentation today; the
+    // calculated count adds columns if future categories would otherwise exceed the row limit.
+    const columnCount = Math.max(minimumColumns, Math.ceil(selectedGroups.length / rowLimit));
+    return <div style={{ ...styles.homeServiceGrid, gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}>{selectedGroups.map((group) => {
         const counts = (group.services ?? []).reduce((result, service) => {
             const level = healthById?.[service.id]?.level ?? "neutral";
             if (level === "danger") result.danger += 1;

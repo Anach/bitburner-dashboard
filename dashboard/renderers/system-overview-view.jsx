@@ -229,9 +229,13 @@ export function SystemOverview({ view, metrics, playerHudDefinitions, playerStat
 
         if (widget.type === "service-health") {
             const selectedGroups = selectDashboardViewServiceGroups(serviceGroups, widget);
+            const configuredServiceRows = Math.floor(Number(widget.maxRows));
+            const maxRows = Number.isFinite(configuredServiceRows) ? Math.max(1, configuredServiceRows) : 4;
+            const configuredServiceColumns = Math.floor(Number(widget.minColumns));
+            const minColumns = Number.isFinite(configuredServiceColumns) ? Math.max(1, configuredServiceColumns) : 2;
             return <div key={widget.id} style={wrapperStyle}><HomePanel title={title} subtitle={subtitle} widgetStyles={styles}>
                 {selectedGroups.length > 0
-                    ? <HomeServiceLandscape groups={selectedGroups} healthById={serviceHealthById} />
+                    ? <HomeServiceLandscape groups={selectedGroups} healthById={serviceHealthById} maxRows={maxRows} minColumns={minColumns} />
                     : <div style={styles.muted}>{emptyText}</div>}
                 {renderSourceLabel(react, styles, "Dashboard", "global.dashboardOptions")}
             </HomePanel></div>;

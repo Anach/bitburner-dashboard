@@ -707,7 +707,7 @@ export function getPluginIntegrationOverviewLines(integration, stats, context = 
         if (context.includeMissingPlaceholders !== true) return [];
         return overviewFields.map((field) => ({
             label: field.overviewLabel ?? field.label,
-            value: "Not started",
+            value: "Offline",
             tone: "neutral",
             key: field.key,
             order: Number(field.overviewOrder) || 0,

@@ -951,8 +951,7 @@ const WIDGET_STYLES = {
     },
     homeServiceGrid: {
         display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        gap: "7px 12px"
+        gap: "5px 8px"
     },
     homeServiceRow: {
         display: "grid",
@@ -962,13 +961,13 @@ const WIDGET_STYLES = {
     homeServiceLabel: {
         display: "flex",
         justifyContent: "space-between",
-        gap: "8px",
+        gap: "5px",
         color: "#91b9a0",
-        fontSize: "9px"
+        fontSize: "8px"
     },
     homeServiceBar: {
         display: "flex",
-        height: "7px",
+        height: "6px",
         overflow: "hidden",
         borderRadius: "999px",
         background: "rgba(125, 160, 212, 0.11)"
