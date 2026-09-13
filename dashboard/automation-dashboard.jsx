@@ -296,6 +296,7 @@ const dashboardTailLayoutState = {
 const HEALTH_FILTER_MODES = new Set(["all", "warn", "danger"]);
 const WIDGET_STYLES = {
     shell: {
+        position: "relative",
         background: "#020202",
         color: "#c8ffc8",
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
@@ -1340,6 +1341,10 @@ function getDefaultUiState() {
         // tree every dashboard tick - a plain useState here would forget the highlighted row on
         // the very next refresh, seconds after the user clicked it.
         startOrderSelectedServiceId: "",
+        // Confirmation state is part of the durable dashboard interaction state for the same
+        // reason as the selected Start Order row: ns.printRaw() rebuilds the React tree while
+        // telemetry is live, so a component-local confirmation would flicker away immediately.
+        softResetConfirmation: false,
     };
 }
 
@@ -1394,7 +1399,8 @@ function loadUiState() {
         centerPanels: upgradedCenterPanels,
         startOrderSelectedServiceId: typeof saved.startOrderSelectedServiceId === "string"
             ? saved.startOrderSelectedServiceId
-            : base.startOrderSelectedServiceId
+            : base.startOrderSelectedServiceId,
+        softResetConfirmation: saved.softResetConfirmation === true,
     };
 }
 
@@ -4072,6 +4078,103 @@ function getDashboardResponsiveLayout(layoutSnapshot) {
     };
 }
 
+function SoftResetConfirmation({ onCancel, onConfirm }) {
+    const activate = (event, action) => {
+        event.preventDefault();
+        event.stopPropagation();
+        action();
+    };
+
+    return (
+        <div
+            role="presentation"
+            style={{
+                position: "absolute",
+                zIndex: 100,
+                inset: 0,
+                display: "grid",
+                placeItems: "center",
+                padding: "18px",
+                boxSizing: "border-box",
+                background: "rgba(0, 3, 1, 0.8)",
+                backdropFilter: "blur(3px)",
+            }}
+            onMouseDown={(event) => {
+                if (event.target === event.currentTarget) onCancel();
+            }}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") activate(event, onCancel);
+            }}
+        >
+            <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="soft-reset-confirmation-title"
+                style={{
+                    width: "min(480px, 100%)",
+                    boxSizing: "border-box",
+                    border: "1px solid rgba(255, 198, 92, 0.58)",
+                    borderRadius: "7px",
+                    color: "#c8ffc8",
+                    background: "linear-gradient(145deg, rgba(22, 16, 5, 0.99), rgba(5, 10, 8, 0.99))",
+                    boxShadow: "0 18px 60px rgba(0, 0, 0, 0.72), 0 0 24px rgba(255, 198, 92, 0.1)",
+                }}
+            >
+                <div style={{
+                    padding: "9px 11px",
+                    borderBottom: "1px solid rgba(255, 198, 92, 0.28)",
+                    color: "#ffe1a2",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                }}>
+                    <span id="soft-reset-confirmation-title">[!] Confirm Soft Reset</span>
+                </div>
+                <div style={{ padding: "12px 11px", display: "grid", gap: "9px", color: "#d3ffd3" }}>
+                    <div>Soft reset the current BitNode?</div>
+                    <div style={{ color: "#ffe1a2", fontSize: "11px", lineHeight: 1.4 }}>
+                        All running scripts will stop. init/init.js will then restart the dashboard or Dashboard Lite.
+                    </div>
+                </div>
+                <div style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "7px",
+                    padding: "8px 11px",
+                    borderTop: "1px solid rgba(255, 198, 92, 0.2)",
+                }}>
+                    <button
+                        type="button"
+                        autoFocus
+                        style={{ ...WIDGET_STYLES.actionButton, textAlign: "center" }}
+                        onMouseDown={(event) => activate(event, onCancel)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") activate(event, onCancel);
+                        }}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...WIDGET_STYLES.actionButton,
+                            ...ACTION_TONE_STYLES.warn,
+                            textAlign: "center",
+                        }}
+                        onMouseDown={(event) => activate(event, onConfirm)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") activate(event, onConfirm);
+                        }}
+                    >
+                        Soft Reset
+                    </button>
+                </div>
+            </section>
+        </div>
+    );
+}
+
 function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts, homeRamStatus, runningScriptCount, runningProcessSnapshot, telemetryByServiceId, pluginRequirements, manualStrings, fileManagerSnapshots, scriptLogSnapshots, layoutSnapshot, autostartPaused, networkChildStatus, capabilitySnapshot }) {
     const [uiState, setUiState] = React.useState(loadUiState);
     const [options, setOptions] = React.useState(() => getDashboardOptionsForRender(persistedOptions));
@@ -5573,11 +5676,20 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
     const softResetAction = buildDashboardActions([DASHBOARD_ACTION_IDS.SOFT_RESET], {
         disabledActionIds: softResetAvailable ? [] : [DASHBOARD_ACTION_IDS.SOFT_RESET],
     })[0];
+    const setSoftResetConfirmation = (visible) => {
+        setUiState((current) => {
+            const next = { ...current, softResetConfirmation: visible === true };
+            saveUiState(next);
+            return next;
+        });
+    };
     const requestSoftReset = () => {
         if (softResetAction.disabled) return;
-        if (globalThis.confirm?.("Soft reset now? All running scripts will stop, then init/init.js will restart the dashboard or Dashboard Lite.")) {
-            enqueueDashboardAction({ kind: "dashboard", actionId: DASHBOARD_ACTION_IDS.SOFT_RESET });
-        }
+        setSoftResetConfirmation(true);
+    };
+    const confirmSoftReset = () => {
+        setSoftResetConfirmation(false);
+        enqueueDashboardAction({ kind: "dashboard", actionId: DASHBOARD_ACTION_IDS.SOFT_RESET });
     };
     const requestFileShredderSweep = () => {
         if (globalThis.confirm?.("Run File Shredder now? Registered run-scoped data will be removed and cannot be recovered. The dashboard will remain running; active services may republish their current telemetry.")) {
@@ -6606,6 +6718,12 @@ function DashboardWidget({ persistedOptions, gameTheme, gameStyles, homeScripts,
 
     return (
         <DashboardShell dashboardTheme={dashboardTheme} dashboardLayout={dashboardLayout} widgetStyles={WIDGET_STYLES}>
+            {uiState.softResetConfirmation ? (
+                <SoftResetConfirmation
+                    onCancel={() => setSoftResetConfirmation(false)}
+                    onConfirm={confirmSoftReset}
+                />
+            ) : null}
             {activeView?.renderer === "system-overview" ? (
                 <SystemOverviewRenderer
                     view={activeView}
