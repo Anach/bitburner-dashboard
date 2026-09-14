@@ -14,6 +14,12 @@ integration.
 
 ### Added
 
+- **Current Work affiliation reputation.** When the optional Current Work Tracking worker reports
+  faction or company activity and the scripts-side Progression Report has a fresh affiliation
+  snapshot, Player Status now displays that affiliation's current reputation as a `Rep` line. The
+  dashboard only consumes the shared telemetry file; it adds no Singularity API call or resident
+  API RAM. The line is omitted safely while either optional source is unavailable.
+
 - **Confirmed, capability-gated Soft Reset control.** System Overview now places an amber Soft
   Reset control before Kill-All. It remains disabled until Source-File 4 is available and uses a
   terminal-themed, dashboard-native confirmation overlay that survives live React refreshes, rather

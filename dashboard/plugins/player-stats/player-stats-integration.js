@@ -30,7 +30,8 @@ export const DASHBOARD_PLUGIN_METADATA = {
             { "key": "hasSingularity", "label": "Singularity Access", "tone": "info", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
             { "key": "currentWorkEnabled", "label": "Work Tracking", "tone": "neutral", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
             { "key": "work", "label": "Current Work", "tone": "info", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
-            { "key": "workDetail", "label": "Progress", "tone": "neutral", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" }
+            { "key": "workDetail", "label": "Progress", "tone": "neutral", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" },
+            { "key": "workReputation", "label": "Current Work Rep", "tone": "success", "format": "number", "panelId": "status", "visibleOptionKey": "playerStatsCurrentWorkVisible" }
         ]
     },
     "viewWidgets": [
@@ -99,7 +100,8 @@ export const DASHBOARD_PLUGIN_METADATA = {
                 "visibleOptionKey": "playerStatsCurrentWorkVisible",
                 "items": [
                     { "key": "work", "label": "Activity", "tone": "neutral", "themeColor": "combat" },
-                    { "key": "workDetail", "label": "Progress", "tone": "neutral", "themeColor": "rep" }
+                    { "key": "workDetail", "label": "Progress", "tone": "neutral", "themeColor": "rep" },
+                    { "key": "workReputation", "label": "Rep", "tone": "success", "format": "number", "themeColor": "rep" }
                 ]
             },
             {

@@ -9,31 +9,55 @@ export const DASHBOARD_SCRIPT_METADATA = {
 const REFRESH_MS = 1000;
 const PLAYER_STATUS_PATH = "data/player_status.json";
 const CURRENT_WORK_PATH = "data/player_status_singularity.json";
+const AFFILIATION_PROGRESS_PATH = "data/progression_report_augment_fragment.json";
 const CURRENT_WORK_SCRIPT = "dashboard/plugins/player-stats/player-stats-singularity.js";
 const CURRENT_WORK_OPTION_KEY = "playerStatsCurrentWorkEnabled";
 const CURRENT_WORK_STALE_MS = 15000;
+const AFFILIATION_PROGRESS_STALE_MS = 90000;
 const CURRENT_WORK_RECONCILE_MS = 30000;
 const CURRENT_WORK_RECOVERY_RETRY_MS = 5000;
 
 export function readCurrentWork(ns, hasSingularity, enabled) {
-    if (!enabled) return { label: "Disabled", detail: "Enable Singularity API", needsReconcile: false };
-    if (!hasSingularity) return { label: "Unavailable", detail: "Singularity req.", needsReconcile: false };
+    if (!enabled) return { label: "Disabled", detail: "Enable Singularity API", affiliationType: "", affiliationName: "", needsReconcile: false };
+    if (!hasSingularity) return { label: "Unavailable", detail: "Singularity req.", affiliationType: "", affiliationName: "", needsReconcile: false };
     try {
         if (!ns.fileExists(CURRENT_WORK_PATH, "home")) {
-            return { label: "Starting", detail: "Waiting for Work worker", needsReconcile: true };
+            return { label: "Starting", detail: "Waiting for Work worker", affiliationType: "", affiliationName: "", needsReconcile: true };
         }
         const raw = ns.read(CURRENT_WORK_PATH);
         const parsed = raw ? JSON.parse(raw) : null;
         if (!parsed || Date.now() - Number(parsed.generatedAt || 0) > CURRENT_WORK_STALE_MS) {
-            return { label: "Starting", detail: "Waiting for Work worker", needsReconcile: true };
+            return { label: "Starting", detail: "Waiting for Work worker", affiliationType: "", affiliationName: "", needsReconcile: true };
         }
         return {
             label: String(parsed.label ?? "Unavailable"),
             detail: String(parsed.detail ?? "No current work data"),
+            affiliationType: String(parsed.affiliationType ?? ""),
+            affiliationName: String(parsed.affiliationName ?? ""),
             needsReconcile: false,
         };
     } catch (error) {
-        return { label: "Unavailable", detail: "Work telemetry error", needsReconcile: true };
+        return { label: "Unavailable", detail: "Work telemetry error", affiliationType: "", affiliationName: "", needsReconcile: true };
+    }
+}
+
+function readCurrentWorkReputation(ns, work) {
+    const affiliationType = String(work?.affiliationType ?? "");
+    const affiliationName = String(work?.affiliationName ?? "");
+    if (!affiliationName || !["faction", "company"].includes(affiliationType)) return null;
+    try {
+        if (!ns.fileExists(AFFILIATION_PROGRESS_PATH, "home")) return null;
+        const raw = ns.read(AFFILIATION_PROGRESS_PATH);
+        const fragment = raw ? JSON.parse(raw) : null;
+        if (!fragment || Date.now() - Number(fragment.generatedAt || 0) > AFFILIATION_PROGRESS_STALE_MS) return null;
+        const progressKey = affiliationType === "faction" ? "factionProgress" : "companyProgress";
+        const affiliation = Array.isArray(fragment[progressKey])
+            ? fragment[progressKey].find((entry) => entry?.name === affiliationName)
+            : null;
+        const reputation = Number(affiliation?.reputation);
+        return Number.isFinite(reputation) ? reputation : null;
+    } catch (error) {
+        return null;
     }
 }
 
@@ -159,6 +183,7 @@ export function buildPlayerStatus(ns, bitNodeSkillMultipliers = {}, work = { lab
         location: String(player?.location ?? "Unknown"),
         work: work.label,
         workDetail: work.detail,
+        ...(Number.isFinite(Number(work.reputation)) ? { workReputation: Number(work.reputation) } : {}),
         karma: Number(player?.karma) || 0,
         kills: Math.floor(Number(player?.numPeopleKilled) || 0),
         factions: Array.isArray(player?.factions) ? player.factions.length : 0,
@@ -190,6 +215,8 @@ export async function main(ns) {
         );
         const now = Date.now();
         const work = readCurrentWork(ns, hasSingularity, currentWorkEnabled);
+        const workReputation = readCurrentWorkReputation(ns, work);
+        if (workReputation !== null) work.reputation = workReputation;
         if (hasSingularity && currentWorkEnabled) {
             if (work.needsReconcile || now >= nextCurrentWorkReconcileAt) {
                 reconcileTemporaryHomeScripts(ns, [CURRENT_WORK_SCRIPT], [CURRENT_WORK_SCRIPT]);
